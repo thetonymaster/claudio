@@ -120,4 +120,8 @@ defmodule Claudio.MessagesTest do
     assert_received_tesla_call(env, [])
     assert_tesla_empty_mailbox()
   end
+
+  test "stream messages", %{client: client} do
+
+  end
 end
