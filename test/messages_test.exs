@@ -47,7 +47,7 @@ defmodule Claudio.MessagesTest do
                "messages" => [%{"role" => "user", "content" => "Hello, world"}]
              })
 
-    assert Map.get(response, "id") == "msg_016DmRZcBG7dB9ohnwhV3wmQ"
+    assert Map.get(response, :id) == "msg_016DmRZcBG7dB9ohnwhV3wmQ"
     assert_received_tesla_call(env, [])
     assert env.url == "https://api.anthropic.com/v1/messages"
 

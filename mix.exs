@@ -23,7 +23,8 @@ defmodule Claudio.MixProject do
     [
       {:tesla, "~> 1.11"},
       # optional, required by JSON middleware
-      {:jason, "~> 1.4"},
+      {:jason, "~> 1.4", only: :test},
+      {:poison, "~> 6.0"},
       # optional, required by Mint adapter, recommended
       {:mint, "~> 1.0"},
       {:mox, "~> 1.0", only: :test}

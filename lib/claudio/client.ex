@@ -16,7 +16,7 @@ defmodule Claudio.Client do
       Tesla.Middleware.PathParams,
       {Tesla.Middleware.BaseUrl, endpoint},
       {Tesla.Middleware.Headers, get_headers(auth)},
-      Tesla.Middleware.JSON,
+      {Tesla.Middleware.JSON, engine: Poison, engine_opts: [keys: :atoms]},
       Tesla.Middleware.Logger
     ]
   end
@@ -39,6 +39,6 @@ defmodule Claudio.Client do
   end
 
   defp config do
-    Application.get_env(:my_app, __MODULE__, [])
+    Application.get_env(:claudio, __MODULE__, [])
   end
 end
