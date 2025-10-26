@@ -302,4 +302,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - [Anthropic API Documentation](https://docs.anthropic.com/)
-- [GitHub Repository](https://github.com/alexandremcosta/claudio)
+- [GitHub Repository](https://github.com/thetonymaster/claudio)

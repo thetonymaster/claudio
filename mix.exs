@@ -2,7 +2,7 @@ defmodule Claudio.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/alexandremcosta/claudio"
+  @source_url "https://github.com/thetonymaster/claudio"
 
   def project do
     [
