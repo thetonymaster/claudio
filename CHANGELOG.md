@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased] - 2025-10-26
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2025-01-26
 
 ### Added
 
@@ -73,6 +78,14 @@
 
 ### Changed
 
+#### HTTP Client Migration
+- **Migrated from Tesla to Req** for better streaming performance and configurability
+- Fixed timeout configuration - now properly respects custom settings
+- Connection timeout default: 60s (configurable via `:timeout`)
+- Receive timeout default: 120s (configurable via `:recv_timeout`)
+- Streaming responses now complete quickly instead of timing out
+- Added retry support for transient failures
+
 #### Messages Module
 - Added new `create/2` function alongside legacy `create_message/2`
 - Both functions now return structured `APIError` on failure
@@ -81,9 +94,12 @@
 - Improved error handling with consistent error types
 
 #### Dependencies
-- Removed Jason from test-only dependency (was unused)
-- Re-added Jason for Tesla.Test helpers in test environment
+- Replaced Tesla and Mint with Req ~> 0.5
+- Added Bypass ~> 2.1 for testing (replaces Tesla mocks)
+- Added Plug Cowboy ~> 2.0 for test server
+- Moved Jason from test-only to production dependency
 - Poison remains the primary JSON library for production
+- Added ex_doc ~> 0.31 for documentation generation
 
 ### Maintained
 
@@ -106,6 +122,27 @@
 - 55 tests with 100% pass rate
 - Async tests where possible for performance
 - Comprehensive test coverage of new functionality
+
+## Configuration
+
+### Timeout Configuration
+```elixir
+# config/config.exs
+config :claudio, Claudio.Client,
+  timeout: 60_000,        # Connection timeout (default: 60s)
+  recv_timeout: 120_000   # Receive timeout (default: 120s)
+
+# For long-running streaming operations
+config :claudio, Claudio.Client,
+  timeout: 60_000,
+  recv_timeout: 600_000   # 10 minutes
+
+# With retry logic for production
+config :claudio, Claudio.Client,
+  timeout: 30_000,
+  recv_timeout: 180_000,
+  retry: true
+```
 
 ## Usage Examples
 
