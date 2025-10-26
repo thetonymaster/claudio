@@ -22,12 +22,11 @@ defmodule Claudio.MixProject do
   defp deps do
     [
       {:tesla, "~> 1.11"},
-      # optional, required by JSON middleware
-      {:jason, "~> 1.4", only: :test},
       {:poison, "~> 6.0"},
       # optional, required by Mint adapter, recommended
       {:mint, "~> 1.0"},
-      {:mox, "~> 1.0", only: :test}
+      {:mox, "~> 1.0", only: :test},
+      {:jason, "~> 1.4", only: :test}
     ]
   end
 end
