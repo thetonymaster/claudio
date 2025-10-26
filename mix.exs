@@ -21,12 +21,11 @@ defmodule Claudio.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:tesla, "~> 1.11"},
+      {:req, "~> 0.5"},
       {:poison, "~> 6.0"},
-      # optional, required by Mint adapter, recommended
-      {:mint, "~> 1.0"},
-      {:mox, "~> 1.0", only: :test},
-      {:jason, "~> 1.4", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      {:plug_cowboy, "~> 2.0", only: :test},
+      {:jason, "~> 1.4"}
     ]
   end
 end

@@ -28,10 +28,6 @@ defmodule Claudio.IntegrationHelper do
   def create_client do
     api_key = System.get_env("ANTHROPIC_API_KEY")
 
-    # Temporarily override the adapter to use real HTTP client for integration tests
-    original_adapter = Application.get_env(:claudio, Claudio.Client, [])
-    Application.put_env(:claudio, Claudio.Client, Keyword.put(original_adapter, :adapter, Tesla.Adapter.Mint))
-
     Claudio.Client.new(%{
       token: api_key,
       version: "2023-06-01"
@@ -40,10 +36,6 @@ defmodule Claudio.IntegrationHelper do
 
   def create_client_with_beta(beta_features) when is_list(beta_features) do
     api_key = System.get_env("ANTHROPIC_API_KEY")
-
-    # Temporarily override the adapter to use real HTTP client for integration tests
-    original_adapter = Application.get_env(:claudio, Claudio.Client, [])
-    Application.put_env(:claudio, Claudio.Client, Keyword.put(original_adapter, :adapter, Tesla.Adapter.Mint))
 
     Claudio.Client.new(%{
       token: api_key,

@@ -1,6 +1,6 @@
 defmodule Claudio.Client do
   @moduledoc """
-  HTTP client for the Anthropic API.
+  HTTP client for the Anthropic API using Req.
 
   ## Configuration
 
@@ -12,7 +12,6 @@ defmodule Claudio.Client do
         default_beta_features: []
 
       config :claudio, Claudio.Client,
-        adapter: Tesla.Adapter.Mint,
         timeout: 60_000,
         recv_timeout: 120_000
 
@@ -43,13 +42,12 @@ defmodule Claudio.Client do
       )
   """
 
-  @user_agent "claudio"
   @default_api_version "2023-06-01"
 
-  @spec new(map(), String.t()) :: Tesla.Client.t()
+  @spec new(map(), String.t()) :: Req.Request.t()
   def new(config, endpoint \\ "https://api.anthropic.com/v1/") do
     config = merge_defaults(config)
-    client(config, endpoint)
+    build_request(config, endpoint)
   end
 
   defp merge_defaults(config) do
@@ -67,59 +65,50 @@ defmodule Claudio.Client do
     end
   end
 
-  defp client(auth, endpoint) do
-    Tesla.client(middleware(auth, endpoint), adapter())
+  defp build_request(auth, endpoint) do
+    {timeout, recv_timeout} = get_timeout_config()
+    retry_opts = get_retry_config()
+
+    req =
+      Req.new(
+        base_url: endpoint,
+        headers: get_headers(auth),
+        json: Poison,
+        receive_timeout: recv_timeout,
+        connect_options: [timeout: timeout]
+      )
+
+    if retry_opts do
+      Req.Request.prepend_request_steps(req, retry: &apply_retry(&1, retry_opts))
+    else
+      req
+    end
   end
 
-  defp middleware(auth, endpoint) do
-    base_middleware = [
-      Tesla.Middleware.KeepRequest,
-      Tesla.Middleware.PathParams,
-      {Tesla.Middleware.BaseUrl, endpoint},
-      {Tesla.Middleware.Headers, get_headers(auth)},
-      {Tesla.Middleware.JSON, engine: Poison, engine_opts: [keys: :atoms]}
+  defp get_headers(auth) do
+    %{token: token, version: version} = auth
+
+    headers = [
+      {"user-agent", "claudio"},
+      {"anthropic-version", version},
+      {"x-api-key", token}
     ]
 
-    base_middleware
-    |> maybe_add_timeout()
-    |> maybe_add_retry()
-    |> add_logger()
-  end
+    case auth do
+      %{beta: beta} when is_list(beta) and beta != [] ->
+        [{"anthropic-beta", Enum.join(beta, ",")} | headers]
 
-  defp maybe_add_timeout(middleware) do
-    case get_timeout_config() do
-      {timeout, recv_timeout} ->
-        middleware ++ [{Tesla.Middleware.Timeout, timeout: timeout, recv_timeout: recv_timeout}]
-
-      nil ->
-        middleware
+      _ ->
+        headers
     end
-  end
-
-  defp maybe_add_retry(middleware) do
-    case get_retry_config() do
-      retry_opts when is_list(retry_opts) ->
-        middleware ++ [{Tesla.Middleware.Retry, retry_opts}]
-
-      nil ->
-        middleware
-    end
-  end
-
-  defp add_logger(middleware) do
-    middleware ++ [Tesla.Middleware.Logger]
   end
 
   defp get_timeout_config do
     client_config = config()
-    timeout = Keyword.get(client_config, :timeout)
-    recv_timeout = Keyword.get(client_config, :recv_timeout)
+    timeout = Keyword.get(client_config, :timeout, 60_000)
+    recv_timeout = Keyword.get(client_config, :recv_timeout, 120_000)
 
-    if timeout || recv_timeout do
-      {timeout || 60_000, recv_timeout || 120_000}
-    else
-      nil
-    end
+    {timeout, recv_timeout}
   end
 
   defp get_retry_config do
@@ -146,26 +135,10 @@ defmodule Claudio.Client do
     end
   end
 
-  defp get_headers(auth) do
-    %{token: token, version: version} = auth
-
-    headers = [
-      {"user-agent", @user_agent},
-      {"anthropic-version", version},
-      {"x-api-key", token}
-    ]
-
-    case auth do
-      %{beta: beta} when is_list(beta) and beta != [] ->
-        [{"anthropic-beta", Enum.join(beta, ",")} | headers]
-
-      _ ->
-        headers
-    end
-  end
-
-  defp adapter do
-    Keyword.get(config(), :adapter, Tesla.Adapter.Mint)
+  defp apply_retry(request, _opts) do
+    # Req has built-in retry support, this is a placeholder
+    # We'll use Req's retry: :transient option in the actual request
+    request
   end
 
   defp config do

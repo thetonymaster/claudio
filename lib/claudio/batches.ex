@@ -82,7 +82,7 @@ defmodule Claudio.Batches do
 
   ## Parameters
 
-  - `client` - Tesla client configured with authentication
+  - `client` - Req request configured with authentication
   - `requests` - List of batch requests, each with a `custom_id` and `params`
 
   ## Example
@@ -100,16 +100,15 @@ defmodule Claudio.Batches do
 
       {:ok, batch} = Claudio.Batches.create(client, requests)
   """
-  @spec create(Tesla.Client.t(), list(batch_request())) :: {:ok, map()} | {:error, APIError.t()}
+  @spec create(Req.Request.t(), list(batch_request())) :: {:ok, map()} | {:error, APIError.t()}
   def create(client, requests) when is_list(requests) do
-    url = "messages/batches"
     payload = %{"requests" => requests}
 
-    case Tesla.post(client, url, payload) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.post(client, url: "messages/batches", json: payload) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -126,15 +125,13 @@ defmodule Claudio.Batches do
       IO.inspect(batch.processing_status)
       IO.inspect(batch.request_counts)
   """
-  @spec get(Tesla.Client.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
+  @spec get(Req.Request.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
   def get(client, batch_id) when is_binary(batch_id) do
-    url = "messages/batches/#{batch_id}"
-
-    case Tesla.get(client, url) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.get(client, url: "messages/batches/#{batch_id}") do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -164,12 +161,10 @@ defmodule Claudio.Batches do
         end
       end)
   """
-  @spec get_results(Tesla.Client.t(), String.t()) :: {:ok, list(map())} | {:error, APIError.t()}
+  @spec get_results(Req.Request.t(), String.t()) :: {:ok, list(map())} | {:error, APIError.t()}
   def get_results(client, batch_id) when is_binary(batch_id) do
-    url = "messages/batches/#{batch_id}/results"
-
-    case Tesla.get(client, url) do
-      {:ok, %Tesla.Env{status: 200, body: body}} when is_binary(body) ->
+    case Req.get(client, url: "messages/batches/#{batch_id}/results") do
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
         # Results are returned as JSONL (one JSON object per line)
         results =
           body
@@ -179,10 +174,10 @@ defmodule Claudio.Batches do
 
         {:ok, results}
 
-      {:ok, %Tesla.Env{status: 200, body: body}} when is_list(body) ->
+      {:ok, %Req.Response{status: 200, body: body}} when is_list(body) ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -207,16 +202,15 @@ defmodule Claudio.Batches do
       # Paginate through results
       {:ok, next_page} = Claudio.Batches.list(client, after_id: response.last_id)
   """
-  @spec list(Tesla.Client.t(), keyword()) :: {:ok, map()} | {:error, APIError.t()}
+  @spec list(Req.Request.t(), keyword()) :: {:ok, map()} | {:error, APIError.t()}
   def list(client, opts \\ []) do
-    url = "messages/batches"
     query_params = build_query_params(opts)
 
-    case Tesla.get(client, url, query: query_params) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.get(client, url: "messages/batches", params: query_params) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -235,15 +229,13 @@ defmodule Claudio.Batches do
       {:ok, batch} = Claudio.Batches.cancel(client, "batch_123")
       # batch.processing_status will be "canceling" or "ended"
   """
-  @spec cancel(Tesla.Client.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
+  @spec cancel(Req.Request.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
   def cancel(client, batch_id) when is_binary(batch_id) do
-    url = "messages/batches/#{batch_id}/cancel"
-
-    case Tesla.post(client, url, %{}) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.post(client, url: "messages/batches/#{batch_id}/cancel", json: %{}) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -261,15 +253,13 @@ defmodule Claudio.Batches do
 
       {:ok, _} = Claudio.Batches.delete(client, "batch_123")
   """
-  @spec delete(Tesla.Client.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
+  @spec delete(Req.Request.t(), String.t()) :: {:ok, map()} | {:error, APIError.t()}
   def delete(client, batch_id) when is_binary(batch_id) do
-    url = "messages/batches/#{batch_id}"
-
-    case Tesla.delete(client, url) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.delete(client, url: "messages/batches/#{batch_id}") do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -301,7 +291,7 @@ defmodule Claudio.Batches do
 
       {:ok, results} = Claudio.Batches.get_results(client, final_batch.id)
   """
-  @spec wait_for_completion(Tesla.Client.t(), String.t(), keyword()) ::
+  @spec wait_for_completion(Req.Request.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def wait_for_completion(client, batch_id, opts \\ []) do
     poll_interval = Keyword.get(opts, :poll_interval, 30) * 1000

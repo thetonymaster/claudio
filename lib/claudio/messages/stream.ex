@@ -49,6 +49,28 @@ defmodule Claudio.Messages.Stream do
     stream
     |> Stream.transform("", &parse_chunk/2)
     |> Stream.map(&parse_event/1)
+    |> halt_after_message_stop()
+  end
+
+  # Helper to stop consuming stream after message_stop event
+  defp halt_after_message_stop(event_stream) do
+    Stream.transform(event_stream, false, fn
+      _event, true ->
+        # Already saw message_stop, halt immediately
+        {:halt, true}
+
+      {:ok, %{event: "message_stop"}} = event, false ->
+        # Emit message_stop and signal to halt next iteration
+        {[event], true}
+
+      {:ok, %{event: "error"}} = event, false ->
+        # Emit error and signal to halt next iteration
+        {[event], true}
+
+      event, false ->
+        # Continue normally
+        {[event], false}
+    end)
   end
 
   @doc """

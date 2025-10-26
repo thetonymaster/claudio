@@ -71,8 +71,8 @@ defmodule Claudio.Messages do
         "messages" => [%{"role" => "user", "content" => "Hello"}]
       })
   """
-  @spec create(Tesla.Client.t(), Request.t() | map()) ::
-          {:ok, Response.t() | Tesla.Env.t()} | {:error, APIError.t() | term()}
+  @spec create(Req.Request.t(), Request.t() | map()) ::
+          {:ok, Response.t() | Req.Response.t()} | {:error, APIError.t() | term()}
   def create(client, %Request{} = request) do
     create(client, Request.to_map(request))
   end
@@ -93,16 +93,14 @@ defmodule Claudio.Messages do
   This function maintains backward compatibility with the original implementation.
   For new code, consider using `create/2` instead.
   """
-  @spec create_message(Tesla.Client.t(), map()) ::
-          {:ok, map() | Tesla.Env.t()} | {:error, term()}
+  @spec create_message(Req.Request.t(), map()) ::
+          {:ok, map() | Req.Response.t()} | {:error, term()}
   def create_message(client, payload = %{"stream" => true}) do
-    url = "messages"
-
-    case Tesla.post(client, url, payload, opts: [adapter: [body_as: :stream]]) do
-      {:ok, result} ->
+    case Req.post(client, url: "messages", json: payload, into: :self) do
+      {:ok, %Req.Response{status: 200} = result} ->
         {:ok, result}
 
-      {:error, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -111,15 +109,13 @@ defmodule Claudio.Messages do
   end
 
   def create_message(client, payload) do
-    url = "messages"
-
-    case Tesla.post(client, url, payload) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.post(client, url: "messages", json: payload) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         # Convert atom keys to string keys for backward compatibility
         body_with_string_keys = atomize_keys_to_strings(body)
         {:ok, body_with_string_keys}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -139,7 +135,7 @@ defmodule Claudio.Messages do
 
       IO.puts("Input tokens: \#{count.input_tokens}")
   """
-  @spec count_tokens(Tesla.Client.t(), map() | Request.t()) ::
+  @spec count_tokens(Req.Request.t(), map() | Request.t()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
   def count_tokens(client, %Request{} = request) do
     # Remove stream and max_tokens as they're not needed for counting
@@ -153,13 +149,11 @@ defmodule Claudio.Messages do
   end
 
   def count_tokens(client, payload) when is_map(payload) do
-    url = "messages/count_tokens"
-
-    case Tesla.post(client, url, payload) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.post(client, url: "messages/count_tokens", json: payload) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -170,13 +164,13 @@ defmodule Claudio.Messages do
   # Private functions
 
   defp create_streaming(client, payload) do
-    url = "messages"
-
-    case Tesla.post(client, url, payload, opts: [adapter: [body_as: :stream]]) do
-      {:ok, result} ->
+    # Req uses `into: :self` for streaming responses
+    # This sends messages to the caller's mailbox
+    case Req.post(client, url: "messages", json: payload, into: :self) do
+      {:ok, %Req.Response{status: 200} = result} ->
         {:ok, result}
 
-      {:error, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
@@ -185,13 +179,11 @@ defmodule Claudio.Messages do
   end
 
   defp create_non_streaming(client, payload) do
-    url = "messages"
-
-    case Tesla.post(client, url, payload) do
-      {:ok, %Tesla.Env{status: 200, body: body}} ->
+    case Req.post(client, url: "messages", json: payload) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, Response.from_map(body)}
 
-      {:ok, %Tesla.Env{status: status, body: body}} ->
+      {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
 
       {:error, reason} ->
