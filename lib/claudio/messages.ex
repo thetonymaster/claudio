@@ -1,40 +1,216 @@
 defmodule Claudio.Messages do
+  @moduledoc """
+  Client for the Messages API.
 
-  def create_message(client, payload =  %{"stream" => true}) do
+  This module provides functions for creating messages, counting tokens, and working
+  with streaming responses.
+
+  ## New API (Recommended)
+
+  The new API provides structured request building and response handling:
+
+      alias Claudio.Messages.{Request, Response}
+
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello!")
+      |> Request.set_max_tokens(1024)
+      |> Request.set_temperature(0.7)
+
+      {:ok, response} = Claudio.Messages.create(client, request)
+      text = Response.get_text(response)
+
+  ## Legacy API (Backward Compatible)
+
+  The original API using raw maps is still supported:
+
+      {:ok, response} = Claudio.Messages.create_message(client, %{
+        "model" => "claude-3-5-sonnet-20241022",
+        "max_tokens" => 1024,
+        "messages" => [%{"role" => "user", "content" => "Hello"}]
+      })
+
+  ## Streaming
+
+  For streaming responses:
+
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Tell me a story")
+      |> Request.set_max_tokens(1024)
+      |> Request.enable_streaming()
+
+      {:ok, stream} = Claudio.Messages.create(client, request)
+
+      stream
+      |> Claudio.Messages.Stream.parse_events()
+      |> Claudio.Messages.Stream.accumulate_text()
+      |> Enum.each(&IO.write/1)
+  """
+
+  alias Claudio.Messages.{Request, Response}
+  alias Claudio.APIError
+
+  @doc """
+  Creates a message using the new structured API.
+
+  Accepts either a `Request` struct or a raw map (for backward compatibility).
+  Returns either a `Response` struct or raw stream data for streaming requests.
+
+  ## Examples
+
+      # Using Request builder
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello!")
+      |> Request.set_max_tokens(1024)
+
+      {:ok, response} = Claudio.Messages.create(client, request)
+
+      # Using raw map (backward compatible)
+      {:ok, response} = Claudio.Messages.create(client, %{
+        "model" => "claude-3-5-sonnet-20241022",
+        "max_tokens" => 1024,
+        "messages" => [%{"role" => "user", "content" => "Hello"}]
+      })
+  """
+  @spec create(Tesla.Client.t(), Request.t() | map()) ::
+          {:ok, Response.t() | Tesla.Env.t()} | {:error, APIError.t() | term()}
+  def create(client, %Request{} = request) do
+    create(client, Request.to_map(request))
+  end
+
+  def create(client, payload) when is_map(payload) do
+    is_streaming = payload["stream"] == true || payload[:stream] == true
+
+    if is_streaming do
+      create_streaming(client, payload)
+    else
+      create_non_streaming(client, payload)
+    end
+  end
+
+  @doc """
+  Creates a message (legacy API, backward compatible).
+
+  This function maintains backward compatibility with the original implementation.
+  For new code, consider using `create/2` instead.
+  """
+  @spec create_message(Tesla.Client.t(), map()) ::
+          {:ok, map() | Tesla.Env.t()} | {:error, term()}
+  def create_message(client, payload = %{"stream" => true}) do
     url = "messages"
 
     case Tesla.post(client, url, payload, opts: [adapter: [body_as: :stream]]) do
-      {:ok,  result} ->
+      {:ok, result} ->
         {:ok, result}
 
-      {:error, %Tesla.Env{status: _, body: body}} ->
-        {:error, body}
+      {:error, %Tesla.Env{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  @spec create_message(binary() | Tesla.Client.t(), any()) :: {:error, any()} | {:ok, any()}
   def create_message(client, payload) do
     url = "messages"
 
-    case Tesla.post!(client, url, payload) do
-      %Tesla.Env{status: 200, body: body} ->
-        {:ok, body}
+    case Tesla.post(client, url, payload) do
+      {:ok, %Tesla.Env{status: 200, body: body}} ->
+        # Convert atom keys to string keys for backward compatibility
+        body_with_string_keys = atomize_keys_to_strings(body)
+        {:ok, body_with_string_keys}
 
-      %Tesla.Env{status: _, body: body} ->
-        {:error, body}
+      {:ok, %Tesla.Env{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  @spec count_tokens(binary() | Tesla.Client.t(), any()) :: {:error, any()} | {:ok, any()}
-  def count_tokens(client, payload) do
+  @doc """
+  Counts tokens for a message request.
+
+  ## Example
+
+      {:ok, count} = Claudio.Messages.count_tokens(client, %{
+        "model" => "claude-3-5-sonnet-20241022",
+        "messages" => [%{"role" => "user", "content" => "Hello"}]
+      })
+
+      IO.puts("Input tokens: \#{count.input_tokens}")
+  """
+  @spec count_tokens(Tesla.Client.t(), map() | Request.t()) ::
+          {:ok, map()} | {:error, APIError.t() | term()}
+  def count_tokens(client, %Request{} = request) do
+    # Remove stream and max_tokens as they're not needed for counting
+    payload =
+      request
+      |> Request.to_map()
+      |> Map.delete("stream")
+      |> Map.delete("max_tokens")
+
+    count_tokens(client, payload)
+  end
+
+  def count_tokens(client, payload) when is_map(payload) do
     url = "messages/count_tokens"
 
-    case Tesla.post!(client, url, payload) do
-      %Tesla.Env{status: 200, body: body} ->
+    case Tesla.post(client, url, payload) do
+      {:ok, %Tesla.Env{status: 200, body: body}} ->
         {:ok, body}
 
-      %Tesla.Env{status: _, body: body} ->
-        {:error, body}
+      {:ok, %Tesla.Env{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
+
+  # Private functions
+
+  defp create_streaming(client, payload) do
+    url = "messages"
+
+    case Tesla.post(client, url, payload, opts: [adapter: [body_as: :stream]]) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, %Tesla.Env{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_non_streaming(client, payload) do
+    url = "messages"
+
+    case Tesla.post(client, url, payload) do
+      {:ok, %Tesla.Env{status: 200, body: body}} ->
+        {:ok, Response.from_map(body)}
+
+      {:ok, %Tesla.Env{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Recursively convert atom keys to string keys for backward compatibility
+  defp atomize_keys_to_strings(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      string_key = if is_atom(key), do: Atom.to_string(key), else: key
+      string_value = atomize_keys_to_strings(value)
+      {string_key, string_value}
+    end)
+  end
+
+  defp atomize_keys_to_strings(list) when is_list(list) do
+    Enum.map(list, &atomize_keys_to_strings/1)
+  end
+
+  defp atomize_keys_to_strings(other), do: other
 end
