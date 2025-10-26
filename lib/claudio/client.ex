@@ -2,6 +2,9 @@ defmodule Claudio.Client do
   @moduledoc """
   HTTP client for the Anthropic API using Req.
 
+  This module provides HTTP client functionality for interacting with the Anthropic API.
+  It handles authentication, versioning, beta features, and configurable timeouts.
+
   ## Configuration
 
   You can configure default values and HTTP options in your config file:
@@ -12,8 +15,34 @@ defmodule Claudio.Client do
         default_beta_features: []
 
       config :claudio, Claudio.Client,
+        timeout: 60_000,        # Connection timeout in ms (default: 60s)
+        recv_timeout: 120_000   # Receive timeout in ms (default: 120s)
+
+  ### Timeout Configuration
+
+  The `timeout` option controls the connection establishment timeout, while
+  `recv_timeout` controls how long to wait for data once connected. For
+  streaming operations, you may want to increase `recv_timeout`:
+
+      # For long-running streaming operations
+      config :claudio, Claudio.Client,
         timeout: 60_000,
-        recv_timeout: 120_000
+        recv_timeout: 600_000   # 10 minutes
+
+  ### Retry Configuration
+
+  Enable automatic retries for transient failures:
+
+      config :claudio, Claudio.Client,
+        retry: true  # Uses default retry strategy
+
+      # Or customize:
+      config :claudio, Claudio.Client,
+        retry: [
+          delay: 1000,
+          max_retries: 3,
+          max_delay: 10_000
+        ]
 
   ## Usage
 
@@ -35,15 +64,50 @@ defmodule Claudio.Client do
         beta: ["prompt-caching-2024-07-31"]
       })
 
-      # Custom endpoint
+      # Custom endpoint (for testing or proxies)
       client = Claudio.Client.new(
         %{token: "key", version: "2023-06-01"},
         "https://custom.api.endpoint/v1/"
       )
+
+  ## Return Value
+
+  Returns a `Req.Request` struct that can be used with `Claudio.Messages`,
+  `Claudio.Batches`, and other API modules.
   """
 
   @default_api_version "2023-06-01"
 
+  @doc """
+  Creates a new HTTP client for the Anthropic API.
+
+  ## Parameters
+
+    * `config` - Configuration map with the following keys:
+      * `:token` (required) - Your Anthropic API key
+      * `:version` (optional) - API version string (default: "2023-06-01")
+      * `:beta` (optional) - List of beta feature flags
+    * `endpoint` (optional) - API endpoint URL (default: "https://api.anthropic.com/v1/")
+
+  ## Returns
+
+  Returns a `Req.Request` struct configured for Anthropic API calls.
+
+  ## Examples
+
+      # Basic client
+      iex> client = Claudio.Client.new(%{token: "sk-ant-..."})
+      %Req.Request{...}
+
+      # With beta features
+      iex> client = Claudio.Client.new(%{
+      ...>   token: "sk-ant-...",
+      ...>   version: "2023-06-01",
+      ...>   beta: ["prompt-caching-2024-07-31"]
+      ...> })
+      %Req.Request{...}
+
+  """
   @spec new(map(), String.t()) :: Req.Request.t()
   def new(config, endpoint \\ "https://api.anthropic.com/v1/") do
     config = merge_defaults(config)

@@ -1,23 +1,94 @@
 defmodule Claudio.Messages do
   @moduledoc """
-  Client for the Messages API.
+  Client for the Anthropic Messages API.
 
   This module provides functions for creating messages, counting tokens, and working
-  with streaming responses.
+  with streaming responses. It supports both a structured Request/Response API and
+  a legacy map-based API for backward compatibility.
 
   ## New API (Recommended)
 
-  The new API provides structured request building and response handling:
+  The new API provides type-safe request building and structured response handling:
 
       alias Claudio.Messages.{Request, Response}
 
+      # Build a request
       request = Request.new("claude-3-5-sonnet-20241022")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_max_tokens(1024)
       |> Request.set_temperature(0.7)
 
+      # Create message
       {:ok, response} = Claudio.Messages.create(client, request)
+
+      # Extract text
       text = Response.get_text(response)
+
+  ## Features
+
+  - **Streaming**: Real-time response streaming with SSE parsing
+  - **Tool calling**: Function calling with structured schemas
+  - **Prompt caching**: Cache large contexts to reduce costs
+  - **Vision**: Send images for analysis
+  - **Token counting**: Estimate costs before making requests
+  - **Type safety**: Structured Request/Response types
+
+  ## Streaming
+
+  For streaming responses, enable streaming and consume events:
+
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Tell me a story")
+      |> Request.set_max_tokens(1024)
+      |> Request.enable_streaming()
+
+      {:ok, stream_response} = Claudio.Messages.create(client, request)
+
+      # Parse and accumulate text
+      text = stream_response.body
+      |> Claudio.Messages.Stream.parse_events()
+      |> Claudio.Messages.Stream.accumulate_text()
+
+      IO.puts(text)
+
+  ## Tool Calling
+
+  Define and use tools for function calling:
+
+      alias Claudio.Tools
+
+      tool = Tools.define_tool("get_weather", "Get weather", %{
+        type: "object",
+        properties: %{location: %{type: "string"}},
+        required: ["location"]
+      })
+
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "What's the weather?")
+      |> Request.add_tool(tool)
+      |> Request.set_max_tokens(1024)
+
+      {:ok, response} = Claudio.Messages.create(client, request)
+
+      # Check for tool uses
+      if Tools.has_tool_uses?(response) do
+        tool_uses = Tools.extract_tool_uses(response)
+        # Execute tools and continue conversation...
+      end
+
+  ## Prompt Caching
+
+  Cache large contexts to reduce costs (up to 90% savings):
+
+      request = Request.new("claude-3-5-sonnet-20241022")
+      |> Request.set_system_with_cache("Large context here...", ttl: "5m")
+      |> Request.add_message(:user, "Question about context")
+      |> Request.set_max_tokens(1024)
+
+      {:ok, response} = Claudio.Messages.create(client, request)
+
+      # Check cache metrics
+      IO.inspect(response.usage.cache_read_input_tokens)
 
   ## Legacy API (Backward Compatible)
 
@@ -29,21 +100,20 @@ defmodule Claudio.Messages do
         "messages" => [%{"role" => "user", "content" => "Hello"}]
       })
 
-  ## Streaming
+  ## Error Handling
 
-  For streaming responses:
+  All functions return `{:ok, result}` or `{:error, reason}` tuples:
 
-      request = Request.new("claude-3-5-sonnet-20241022")
-      |> Request.add_message(:user, "Tell me a story")
-      |> Request.set_max_tokens(1024)
-      |> Request.enable_streaming()
+      case Claudio.Messages.create(client, request) do
+        {:ok, response} ->
+          IO.puts("Success!")
 
-      {:ok, stream} = Claudio.Messages.create(client, request)
+        {:error, %Claudio.APIError{} = error} ->
+          IO.puts("API Error: \#{error.message}")
 
-      stream
-      |> Claudio.Messages.Stream.parse_events()
-      |> Claudio.Messages.Stream.accumulate_text()
-      |> Enum.each(&IO.write/1)
+        {:error, reason} ->
+          IO.puts("Error: \#{inspect(reason)}")
+      end
   """
 
   alias Claudio.Messages.{Request, Response}

@@ -1,53 +1,106 @@
 defmodule Claudio.Batches do
   @moduledoc """
-  Client for the Message Batches API.
+  Client for the Anthropic Message Batches API.
 
   The Batches API allows you to process multiple Messages API requests asynchronously
-  in a single batch operation. This is ideal for large-scale, non-urgent processing.
+  in a single batch operation. This is ideal for large-scale, non-urgent processing
+  scenarios where you need to process thousands or millions of requests.
 
   ## Features
 
-  - Process up to 100,000 requests per batch
-  - Maximum batch size of 256 MB
-  - Asynchronous processing (up to 24 hours)
-  - All Messages API features supported (including beta features)
+  - Process up to **100,000 requests** per batch
+  - Maximum batch size of **256 MB**
+  - Asynchronous processing (up to **24 hours**)
+  - All Messages API features supported (streaming, tools, caching, etc.)
   - Results provided as downloadable `.jsonl` file
+  - Support for beta features via client configuration
 
-  ## Example
+  ## Limits and Quotas
+
+  - **Request limit**: 100,000 requests per batch
+  - **Size limit**: 256 MB per batch
+  - **Processing time**: Up to 24 hours
+  - **Rate limits**: Applied separately from Messages API
+
+  ## Batch Lifecycle
+
+  1. **Creating**: Batch is being created and validated
+  2. **In progress**: Batch is being processed
+  3. **Ended**: Processing complete (check `request_counts` for results)
+  4. Results available for download as JSONL
+
+  ## Complete Example
 
       alias Claudio.Batches
 
-      # Create a batch
+      # Create a batch of requests
       requests = [
         %{
-          "custom_id" => "req-1",
-          "params" => %{
-            "model" => "claude-3-5-sonnet-20241022",
-            "max_tokens" => 1024,
-            "messages" => [%{"role" => "user", "content" => "Hello"}]
+          custom_id: "req-1",
+          params: %{
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 1024,
+            messages: [%{role: "user", content: "Hello"}]
           }
         },
         %{
-          "custom_id" => "req-2",
-          "params" => %{
-            "model" => "claude-3-5-sonnet-20241022",
-            "max_tokens" => 1024,
-            "messages" => [%{"role" => "user", "content" => "Hi there"}]
+          custom_id: "req-2",
+          params: %{
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 1024,
+            messages: [%{role: "user", content: "Hi there"}]
           }
         }
       ]
 
+      # Submit batch
       {:ok, batch} = Batches.create(client, requests)
+      IO.puts("Batch ID: \#{batch["id"]}")
 
-      # Check batch status
-      {:ok, status} = Batches.get(client, batch.id)
+      # Wait for completion with progress updates
+      {:ok, completed} = Batches.wait_for_completion(client, batch["id"], fn status ->
+        counts = status["request_counts"]
+        IO.puts("Progress: \#{counts["succeeded"]}/\#{counts["processing"]}")
+      end)
 
-      # Get results when complete
-      if status.processing_status == "ended" do
-        {:ok, results} = Batches.get_results(client, batch.id)
+      # Download results
+      {:ok, results_jsonl} = Batches.get_results(client, batch["id"])
+
+      # Parse JSONL results
+      results = String.split(results_jsonl, "\n", trim: true)
+      |> Enum.map(&Jason.decode!/1)
+
+      # Process each result
+      Enum.each(results, fn result ->
+        case result do
+          %{"result" => %{"type" => "succeeded", "message" => message}} ->
+            IO.puts("Success: \#{result["custom_id"]}")
+
+          %{"result" => %{"type" => "errored", "error" => error}} ->
+            IO.puts("Error: \#{error["message"]}")
+        end
+      end)
+
+  ## Polling vs Wait
+
+  You can either manually poll for status or use `wait_for_completion/3`:
+
+      # Manual polling
+      {:ok, status} = Batches.get(client, batch_id)
+
+      case status["processing_status"] do
+        "ended" -> IO.puts("Complete!")
+        "in_progress" -> IO.puts("Still processing...")
+        "canceling" -> IO.puts("Canceling...")
       end
 
-      # List all batches
+      # Automatic waiting (recommended)
+      {:ok, completed} = Batches.wait_for_completion(
+        client,
+        batch_id,
+        &progress_callback/1,
+        poll_interval: 5_000  # Check every 5 seconds
+      )
       {:ok, batches} = Batches.list(client)
 
       # Cancel a batch
