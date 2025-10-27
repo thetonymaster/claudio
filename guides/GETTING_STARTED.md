@@ -9,7 +9,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.1.0"}
+    {:claudio, "~> 0.1.1"}
   ]
 end
 ```
@@ -32,9 +32,8 @@ config :claudio,
   default_beta_features: []
 
 config :claudio, Claudio.Client,
-  adapter: Tesla.Adapter.Mint,
-  timeout: 60_000,
-  recv_timeout: 120_000
+  timeout: 60_000,        # Connection timeout in ms (default: 60s)
+  recv_timeout: 120_000   # Receive timeout in ms (default: 120s)
 ```
 
 ### Optional: Enable Retry Logic
@@ -326,6 +325,6 @@ Your input is too large. Try:
 
 ## Support
 
-- **Documentation**: [https://docs.claude.com](https://docs.claude.com)
-- **GitHub Issues**: [Report bugs or request features](https://github.com/yourusername/claudio/issues)
-- **Anthropic API Reference**: [https://docs.claude.com/reference](https://docs.claude.com/reference)
+- **Documentation**: [https://hexdocs.pm/claudio](https://hexdocs.pm/claudio)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/thetonymaster/claudio/issues)
+- **Anthropic API Reference**: [https://docs.anthropic.com](https://docs.anthropic.com)
