@@ -54,7 +54,7 @@ defmodule Claudio.MixProject do
         "GitHub" => @source_url,
         "Anthropic API Docs" => "https://docs.anthropic.com/"
       },
-      maintainers: ["Antonio Costa"]
+      maintainers: ["Antonio Cabrera"]
     ]
   end
 
