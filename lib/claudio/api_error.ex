@@ -23,8 +23,22 @@ defmodule Claudio.APIError do
 
   @doc """
   Creates a new APIError from an HTTP error response.
+
+  Handles both plain maps (non-streaming responses) and structs like
+  `Req.Response.Async` (streaming error responses).
   """
-  @spec from_response(integer(), map()) :: t()
+  @spec from_response(integer(), map() | struct()) :: t()
+  def from_response(status_code, %_{}) do
+    # Handle streaming error responses (e.g., Req.Response.Async)
+    # These don't have a decoded error body, so we provide a generic error
+    %__MODULE__{
+      type: :api_error,
+      message: "Streaming request failed with status #{status_code}",
+      status_code: status_code,
+      raw_body: nil
+    }
+  end
+
   def from_response(status_code, body) when is_map(body) do
     error_info = body[:error] || body["error"] || %{}
 

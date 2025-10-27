@@ -85,6 +85,18 @@ defmodule Claudio.APIErrorTest do
       assert error.type == "unknown_error_type"
       assert error.message == "Unknown error"
     end
+
+    test "handles streaming error responses with struct body" do
+      # Simulate a streaming error response (e.g., Req.Response.Async)
+      body = %Req.Response.Async{ref: make_ref(), stream_fun: nil, cancel_fun: nil}
+
+      error = APIError.from_response(400, body)
+
+      assert error.type == :api_error
+      assert error.message == "Streaming request failed with status 400"
+      assert error.status_code == 400
+      assert error.raw_body == nil
+    end
   end
 
   describe "message/1" do
