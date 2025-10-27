@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2025-01-26
+
+### Fixed
+
+- **Critical**: Fixed `UndefinedFunctionError` when streaming requests fail with non-200 status codes
+- `APIError.from_response/2` now properly handles `Req.Response.Async` structs from failed streaming requests
+- Added pattern match for struct responses before map clause to prevent Access behaviour errors
+- Returns generic error message for streaming failures instead of attempting to parse struct body
+
+### Added
+
+- Test case for streaming error response handling
+
 ## [0.1.0] - 2025-01-26
 
 ### Added
