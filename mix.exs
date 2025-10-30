@@ -1,7 +1,7 @@
 defmodule Claudio.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @source_url "https://github.com/thetonymaster/claudio"
 
   def project do
@@ -63,7 +63,10 @@ defmodule Claudio.MixProject do
       main: "Claudio",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "LICENSE"],
+      extras: ["README.md", "LICENSE", "guides/GETTING_STARTED.md"],
+      groups_for_extras: %{
+        "Guides" => ["guides/GETTING_STARTED.md"]
+      },
       groups_for_modules: [
         "Messages API": [
           Claudio.Messages,

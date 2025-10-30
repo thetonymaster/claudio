@@ -41,7 +41,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.1.1"}
+    {:claudio, "~> 0.1.2"}
   ]
 end
 ```

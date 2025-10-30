@@ -9,7 +9,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.1.1"}
+    {:claudio, "~> 0.1.2"}
   ]
 end
 ```
@@ -275,10 +275,9 @@ children = [
 
 ## Next Steps
 
-- **[Streaming Guide](STREAMING.md)** - Learn how to use streaming responses
-- **[Tool Calling Guide](TOOLS.md)** - Integrate external tools and functions
-- **[Batch Processing Guide](BATCHES.md)** - Process thousands of requests efficiently
-- **[Error Handling Guide](ERROR_HANDLING.md)** - Handle errors gracefully
+- **[Full Documentation](https://hexdocs.pm/claudio)** - Complete API reference
+- **[README Examples](../README.md)** - More code examples including streaming, tools, and batching
+- **[Anthropic API Docs](https://docs.anthropic.com)** - Official API documentation
 
 ## Best Practices
 
