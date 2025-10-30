@@ -494,7 +494,8 @@ defmodule Claudio.Messages.Request do
       })
   """
   @spec set_container(t(), String.t() | map()) :: t()
-  def set_container(%__MODULE__{} = request, container) when is_binary(container) or is_map(container) do
+  def set_container(%__MODULE__{} = request, container)
+      when is_binary(container) or is_map(container) do
     %{request | container: container}
   end
 

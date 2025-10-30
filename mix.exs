@@ -77,11 +77,11 @@ defmodule Claudio.MixProject do
         "Batches API": [
           Claudio.Batches
         ],
-        "Core": [
+        Core: [
           Claudio.Client,
           Claudio.APIError
         ],
-        "Tools": [
+        Tools: [
           Claudio.Tools
         ]
       ]
