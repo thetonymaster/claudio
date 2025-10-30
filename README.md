@@ -76,7 +76,7 @@ client = Claudio.Client.new(%{
 alias Claudio.Messages.{Request, Response}
 
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message(:user, "Explain quantum computing in simple terms")
   |> Request.set_max_tokens(1024)
 
@@ -95,7 +95,7 @@ IO.puts(text)
 alias Claudio.Messages.{Request, Response}
 
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.set_system("You are a helpful Python tutor")
   |> Request.add_message(:user, "How do I read a file in Python?")
   |> Request.add_message(:assistant, "You can use the open() function...")
@@ -114,7 +114,7 @@ Perfect for chat interfaces or real-time applications:
 alias Claudio.Messages.{Request, Stream}
 
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message(:user, "Write a haiku about Elixir")
   |> Request.set_max_tokens(100)
   |> Request.enable_streaming()
@@ -153,7 +153,7 @@ weather_tool = Tools.define_tool(
 
 # Create request with tool
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message(:user, "What's the weather in Tokyo?")
   |> Request.add_tool(weather_tool)
   |> Request.set_max_tokens(500)
@@ -172,7 +172,7 @@ if Tools.has_tool_uses?(response) do
     tool_result = Tools.create_tool_result(tool_use.id, Jason.encode!(result))
 
     request =
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-sonnet-4-5-20250929")
       |> Request.add_messages(response.content)
       |> Request.add_message(:user, [tool_result])
       |> Request.set_max_tokens(500)
@@ -195,7 +195,7 @@ end
 image_data = File.read!("screenshot.png") |> Base.encode64()
 
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message_with_image(
     :user,
     "What's in this image?",
@@ -209,7 +209,7 @@ IO.puts(Response.get_text(response))
 
 # Or from a URL
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message_with_image_url(
     :user,
     "Describe this diagram",
@@ -226,7 +226,7 @@ Cache large contexts like documentation or code:
 large_codebase = File.read!("lib/my_app.ex")
 
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.set_system_with_cache("""
     You are a code reviewer. Here is the codebase:
 
@@ -257,7 +257,7 @@ requests =
     %{
       custom_id: "review-#{i}",
       params: %{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 500,
         messages: [
           %{role: "user", content: "Analyze pull request ##{i}"}
@@ -409,13 +409,13 @@ The fluent Request API is more maintainable than raw maps:
 ```elixir
 # Good ✓
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message(:user, "Hello")
   |> Request.set_max_tokens(100)
 
 # Works, but less maintainable
 request = %{
-  "model" => "claude-3-5-sonnet-20241022",
+  "model" => "claude-sonnet-4-5-20250929",
   "messages" => [%{"role" => "user", "content" => "Hello"}],
   "max_tokens" => 100
 }
@@ -443,7 +443,7 @@ Guide the model's behavior with system prompts:
 
 ```elixir
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.set_system("You are a helpful coding assistant. Always explain your code.")
   |> Request.add_message(:user, "Write a function to reverse a string")
 ```
@@ -474,7 +474,7 @@ Use prompt caching for repeated contexts:
 ```elixir
 # Cache documentation or code for multiple queries
 request =
-  Request.new("claude-3-5-sonnet-20241022")
+  Request.new("claude-sonnet-4-5-20250929")
   |> Request.set_system_with_cache(large_documentation, ttl: "5m")
 ```
 

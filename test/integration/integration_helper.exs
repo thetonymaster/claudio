@@ -44,7 +44,7 @@ defmodule Claudio.IntegrationHelper do
     })
   end
 
-  def test_model, do: "claude-3-5-sonnet-20241022"
+  def test_model, do: "claude-sonnet-4-5-20250929"
 
   def small_model, do: "claude-3-5-haiku-20241022"
 end
