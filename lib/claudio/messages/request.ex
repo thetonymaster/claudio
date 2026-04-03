@@ -445,13 +445,17 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-sonnet-4-5-20250929")
       |> Request.add_mcp_server(%{
         "name" => "my_server",
         "url" => "http://localhost:8080"
       })
   """
-  @spec add_mcp_server(t(), map()) :: t()
+  @spec add_mcp_server(t(), Claudio.MCP.ServerConfig.t() | map()) :: t()
+  def add_mcp_server(%__MODULE__{} = request, %Claudio.MCP.ServerConfig{} = server) do
+    add_mcp_server(request, Claudio.MCP.ServerConfig.to_map(server))
+  end
+
   def add_mcp_server(%__MODULE__{mcp_servers: servers} = request, server) when is_map(server) do
     current_servers = servers || []
     %{request | mcp_servers: current_servers ++ [server]}

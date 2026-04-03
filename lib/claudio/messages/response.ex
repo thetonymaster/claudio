@@ -17,6 +17,8 @@ defmodule Claudio.Messages.Response do
           | thinking_block()
           | tool_use_block()
           | tool_result_block()
+          | mcp_tool_use_block()
+          | mcp_tool_result_block()
 
   @type text_block :: %{
           type: :text,
@@ -39,6 +41,22 @@ defmodule Claudio.Messages.Response do
           type: :tool_result,
           tool_use_id: String.t(),
           content: String.t() | list()
+        }
+
+  @type mcp_tool_use_block :: %{
+          type: :mcp_tool_use,
+          id: String.t(),
+          name: String.t(),
+          server_name: String.t(),
+          input: map()
+        }
+
+  @type mcp_tool_result_block :: %{
+          type: :mcp_tool_result,
+          tool_use_id: String.t(),
+          server_name: String.t(),
+          content: term(),
+          is_error: boolean()
         }
 
   @type usage :: %{
@@ -106,12 +124,28 @@ defmodule Claudio.Messages.Response do
     Enum.filter(content, &(&1.type == :tool_use))
   end
 
+  @doc """
+  Extracts all MCP tool use requests from the response.
+  """
+  @spec get_mcp_tool_uses(t()) :: list(mcp_tool_use_block())
+  def get_mcp_tool_uses(%__MODULE__{content: content}) do
+    Enum.filter(content, &(&1.type == :mcp_tool_use))
+  end
+
+  @doc """
+  Extracts MCP tool use requests from the response for a specific server.
+  """
+  @spec get_mcp_tool_uses(t(), String.t()) :: list(mcp_tool_use_block())
+  def get_mcp_tool_uses(%__MODULE__{content: content}, server_name) when is_binary(server_name) do
+    Enum.filter(content, &(&1.type == :mcp_tool_use && &1.server_name == server_name))
+  end
+
   defp parse_content(content) when is_list(content) do
     Enum.map(content, &parse_content_block/1)
   end
 
   defp parse_content_block(%{type: "text"} = block) do
-    %{type: :text, text: block[:text] || block["text"]}
+    %{type: :text, text: block[:text]}
   end
 
   defp parse_content_block(%{"type" => "text"} = block) do
@@ -119,7 +153,7 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(%{type: "thinking"} = block) do
-    %{type: :thinking, thinking: block[:thinking] || block["thinking"]}
+    %{type: :thinking, thinking: block[:thinking]}
   end
 
   defp parse_content_block(%{"type" => "thinking"} = block) do
@@ -129,9 +163,9 @@ defmodule Claudio.Messages.Response do
   defp parse_content_block(%{type: "tool_use"} = block) do
     %{
       type: :tool_use,
-      id: block[:id] || block["id"],
-      name: block[:name] || block["name"],
-      input: block[:input] || block["input"]
+      id: block[:id],
+      name: block[:name],
+      input: block[:input]
     }
   end
 
@@ -147,8 +181,8 @@ defmodule Claudio.Messages.Response do
   defp parse_content_block(%{type: "tool_result"} = block) do
     %{
       type: :tool_result,
-      tool_use_id: block[:tool_use_id] || block["tool_use_id"],
-      content: block[:content] || block["content"]
+      tool_use_id: block[:tool_use_id],
+      content: block[:content]
     }
   end
 
@@ -157,6 +191,46 @@ defmodule Claudio.Messages.Response do
       type: :tool_result,
       tool_use_id: block["tool_use_id"],
       content: block["content"]
+    }
+  end
+
+  defp parse_content_block(%{type: "mcp_tool_use"} = block) do
+    %{
+      type: :mcp_tool_use,
+      id: block[:id],
+      name: block[:name],
+      server_name: block[:server_name],
+      input: block[:input]
+    }
+  end
+
+  defp parse_content_block(%{"type" => "mcp_tool_use"} = block) do
+    %{
+      type: :mcp_tool_use,
+      id: block["id"],
+      name: block["name"],
+      server_name: block["server_name"],
+      input: block["input"]
+    }
+  end
+
+  defp parse_content_block(%{type: "mcp_tool_result"} = block) do
+    %{
+      type: :mcp_tool_result,
+      tool_use_id: block[:tool_use_id],
+      server_name: block[:server_name],
+      content: block[:content],
+      is_error: Map.get(block, :is_error, false)
+    }
+  end
+
+  defp parse_content_block(%{"type" => "mcp_tool_result"} = block) do
+    %{
+      type: :mcp_tool_result,
+      tool_use_id: block["tool_use_id"],
+      server_name: block["server_name"],
+      content: block["content"],
+      is_error: Map.get(block, "is_error", false)
     }
   end
 
