@@ -83,6 +83,9 @@ defmodule Claudio.MixProject do
         ],
         Tools: [
           Claudio.Tools
+        ],
+        Agent: [
+          Claudio.Agent
         ]
       ]
     ]
