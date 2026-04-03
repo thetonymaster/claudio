@@ -540,7 +540,7 @@ mix compile           # Compile the project
 ## Architecture
 
 ### HTTP Client Layer (lib/claudio/client.ex)
-The `Claudio.Client` module wraps Tesla HTTP client with Anthropic-specific configuration:
+The `Claudio.Client` module wraps Req HTTP client with Anthropic-specific configuration:
 - Uses Mint adapter (configured in config/config.exs)
 - Handles authentication via x-api-key header
 - Supports API versioning via anthropic-version header
@@ -559,7 +559,7 @@ The `Claudio.Messages` module provides both legacy and new APIs:
 - `create/2`: Creates a message using Request structs or maps
   - Accepts `Claudio.Messages.Request` structs or raw maps
   - Returns `Claudio.Messages.Response` structs for non-streaming
-  - Returns raw `Tesla.Env` for streaming responses
+  - Returns raw `Req.Response` for streaming responses
 - `count_tokens/2`: Counts tokens, accepts Request or map
 
 **Legacy API (Backward Compatible):**
@@ -647,6 +647,23 @@ MCP integration is split into two layers:
 - `Claudio.MCP.ToolAdapter`: Converts MCP tools into Claudio request format
 - `Claudio.MCP.ResultMapper`: Maps response tool_use blocks back to MCP call format
 
+### A2A Support (lib/claudio/a2a/)
+Agent-to-Agent protocol support for discovering and interacting with remote agents.
+
+**Core types:**
+- `Claudio.A2A.Part`: Content unit (text, file, data) with camelCase serialization
+- `Claudio.A2A.Message`: Communication turn with role, parts, and fluent builder
+- `Claudio.A2A.Artifact`: Task output container
+- `Claudio.A2A.Task`: Task lifecycle with state machine (submitted → working → completed/failed)
+- `Claudio.A2A.AgentCard`: Agent capabilities descriptor with nested Skill, Provider, Capabilities, Interface structs
+
+**Client:**
+- `Claudio.A2A.Client`: HTTP client using Req + JSON-RPC 2.0
+  - `discover/2`: Fetch agent card from `.well-known/agent-card.json`
+  - `send_message/3`: Send message to agent, returns Task or Message
+  - `get_task/3`, `list_tasks/2`, `cancel_task/3`: Task management
+  - Bearer token auth support, timeout passthrough
+
 ### Message Batches API (lib/claudio/batches.ex)
 The `Claudio.Batches` module handles asynchronous batch processing:
 - `create/2`: Submit up to 100,000 requests in a single batch
@@ -679,7 +696,7 @@ The `Claudio.APIError` exception provides structured error handling:
   - `test/mcp/`: MCP module tests (server_config, response, request, client, tool_adapter, result_mapper)
 
 ### Configuration
-- Tesla adapter configured globally in config/config.exs (defaults to Mint)
+- Req client configured globally in config/config.exs
 - Environment-specific config loaded via `import_config "#{config_env()}.exs"`
 - Client adapter overridable via Application config under `:claudio, Claudio.Client`
 
@@ -693,7 +710,7 @@ The `Claudio.APIError` exception provides structured error handling:
 
 ### JSON Handling
 - Poison used for production JSON encoding/decoding
-- Jason used only in test environment for Tesla.Test helpers
+- Jason used in addition to Poison for JSON handling
 - All API responses parsed with atom keys for easier access
 
 ### Streaming Implementation
