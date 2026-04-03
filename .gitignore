@@ -24,3 +24,7 @@ claudio-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
