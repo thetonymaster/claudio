@@ -258,4 +258,40 @@ defmodule Claudio.A2A.ClientTest do
         Client.send_message("#{base_url}/a2a", message, auth_token: "my-secret-token")
     end
   end
+
+  describe "transport option" do
+    test "uses explicit HTTP transport", %{bypass: bypass, base_url: base_url} do
+      Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = Poison.decode!(body)
+
+        response =
+          Poison.encode!(%{
+            "jsonrpc" => "2.0",
+            "id" => request["id"],
+            "result" => %{"id" => "t-explicit", "status" => %{"state" => "working"}}
+          })
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, response)
+      end)
+
+      message = Message.new(:user, [Part.text("Hi")])
+
+      {:ok, task} =
+        Client.send_message("#{base_url}/a2a", message, transport: Claudio.A2A.Transport.HTTP)
+
+      assert task.id == "t-explicit"
+    end
+
+    test "gRPC transport returns not implemented" do
+      message = Message.new(:user, [Part.text("Hi")])
+
+      assert {:error, :grpc_not_implemented} =
+               Client.send_message("localhost:443", message,
+                 transport: Claudio.A2A.Transport.GRPC
+               )
+    end
+  end
 end
