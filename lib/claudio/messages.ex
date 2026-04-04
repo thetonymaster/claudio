@@ -234,31 +234,33 @@ defmodule Claudio.Messages do
   # Private functions
 
   defp create_streaming(client, payload) do
-    # Req uses `into: :self` for streaming responses
-    # This sends messages to the caller's mailbox
-    case Req.post(client, url: "messages", json: payload, into: :self) do
-      {:ok, %Req.Response{status: 200} = result} ->
-        {:ok, result}
+    metadata = %{model: payload["model"] || payload[:model], stream: true}
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, APIError.from_response(status, body)}
+    :telemetry.span([:claudio, :messages, :create], metadata, fn ->
+      result =
+        case Req.post(client, url: "messages", json: payload, into: :self) do
+          {:ok, %Req.Response{status: 200} = r} -> {:ok, r}
+          {:ok, %Req.Response{status: status, body: body}} -> {:error, APIError.from_response(status, body)}
+          {:error, reason} -> {:error, reason}
+        end
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+      {result, Map.put(metadata, :status, elem(result, 0))}
+    end)
   end
 
   defp create_non_streaming(client, payload) do
-    case Req.post(client, url: "messages", json: payload) do
-      {:ok, %Req.Response{status: 200, body: body}} ->
-        {:ok, Response.from_map(body)}
+    metadata = %{model: payload["model"] || payload[:model], stream: false}
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, APIError.from_response(status, body)}
+    :telemetry.span([:claudio, :messages, :create], metadata, fn ->
+      result =
+        case Req.post(client, url: "messages", json: payload) do
+          {:ok, %Req.Response{status: 200, body: body}} -> {:ok, Response.from_map(body)}
+          {:ok, %Req.Response{status: status, body: body}} -> {:error, APIError.from_response(status, body)}
+          {:error, reason} -> {:error, reason}
+        end
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+      {result, Map.put(metadata, :status, elem(result, 0))}
+    end)
   end
 
   # Recursively convert atom keys to string keys for backward compatibility

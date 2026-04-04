@@ -34,6 +34,7 @@ defmodule Claudio.MixProject do
       {:bypass, "~> 2.1", only: :test},
       {:plug_cowboy, "~> 2.0", only: :test},
       {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
