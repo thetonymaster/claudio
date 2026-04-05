@@ -133,14 +133,21 @@ defmodule Claudio.Client do
     {timeout, recv_timeout} = get_timeout_config()
     retry_opts = get_retry_config()
 
-    req =
-      Req.new(
-        base_url: endpoint,
-        headers: get_headers(auth),
-        json: Poison,
-        receive_timeout: recv_timeout,
-        connect_options: [timeout: timeout]
-      )
+    opts = [
+      base_url: endpoint,
+      headers: get_headers(auth),
+      json: Poison,
+      receive_timeout: recv_timeout,
+      connect_options: [timeout: timeout]
+    ]
+
+    opts =
+      case Map.get(auth, :finch) do
+        nil -> opts
+        finch -> [{:finch, finch} | Keyword.delete(opts, :connect_options)]
+      end
+
+    req = Req.new(opts)
 
     if retry_opts do
       Req.Request.prepend_request_steps(req, retry: &apply_retry(&1, retry_opts))

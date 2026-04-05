@@ -244,7 +244,7 @@ defmodule Claudio.Messages do
           {:error, reason} -> {:error, reason}
         end
 
-      {result, Map.put(metadata, :status, elem(result, 0))}
+      {result, enrich_stop_metadata(metadata, result)}
     end)
   end
 
@@ -259,8 +259,17 @@ defmodule Claudio.Messages do
           {:error, reason} -> {:error, reason}
         end
 
-      {result, Map.put(metadata, :status, elem(result, 0))}
+      {result, enrich_stop_metadata(metadata, result)}
     end)
+  end
+
+  defp enrich_stop_metadata(metadata, result) do
+    stop_meta = Map.put(metadata, :status, elem(result, 0))
+
+    case result do
+      {:error, reason} -> Map.put(stop_meta, :error, inspect(reason))
+      _ -> stop_meta
+    end
   end
 
   # Recursively convert atom keys to string keys for backward compatibility
