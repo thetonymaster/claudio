@@ -115,6 +115,43 @@ defmodule Claudio.MessagesTest do
              })
   end
 
-  # Streaming is tested in integration tests
-  # See test/integration/streaming_integration_test.exs
+  # Regression: `Req.post(... into: :self)` leaves the response body on the
+  # mailbox. For non-200 responses the body used to be discarded, which
+  # surfaced as `%APIError{raw_body: nil}` and hid the real Anthropic error
+  # message (e.g. "unexpected tool_use_id"). `drain_async_body/1` now pulls
+  # the body off the mailbox before constructing the APIError.
+  test "streaming 400 surfaces the Anthropic error body (not nil)", %{
+    client: client,
+    bypass: bypass
+  } do
+    error_body = %{
+      "type" => "error",
+      "error" => %{
+        "type" => "invalid_request_error",
+        "message" =>
+          "messages.2.content.0: unexpected tool_use_id found in tool_result blocks: toolu_regression"
+      }
+    }
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(400, Jason.encode!(error_body))
+    end)
+
+    request =
+      Claudio.Messages.Request.new("claude-3-5-sonnet-20241022")
+      |> Claudio.Messages.Request.add_message(:user, "Hello")
+      |> Claudio.Messages.Request.set_max_tokens(64)
+      |> Claudio.Messages.Request.enable_streaming()
+
+    assert {:error, %Claudio.APIError{} = err} = Claudio.Messages.create(client, request)
+    assert err.status_code == 400
+    assert is_map(err.raw_body), "raw_body must be a decoded map, not nil"
+    assert err.message =~ "unexpected tool_use_id"
+    assert err.type == :invalid_request_error
+
+    # Extra: the drained body must round-trip the original error payload.
+    assert get_in(err.raw_body, ["error", "type"]) == "invalid_request_error"
+  end
 end
