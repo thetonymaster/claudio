@@ -239,13 +239,81 @@ defmodule Claudio.Messages do
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
       result =
         case Req.post(client, url: "messages", json: payload, into: :self) do
-          {:ok, %Req.Response{status: 200} = r} -> {:ok, r}
-          {:ok, %Req.Response{status: status, body: body}} -> {:error, APIError.from_response(status, body)}
-          {:error, reason} -> {:error, reason}
+          {:ok, %Req.Response{status: 200} = r} ->
+            {:ok, r}
+
+          {:ok, %Req.Response{status: status} = resp} ->
+            # On non-200, Req with `into: :self` leaves the body as an async
+            # reference — drain the mailbox into a decoded body so the error
+            # message from Anthropic survives instead of being lost.
+            {:error, APIError.from_response(status, drain_async_body(resp))}
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {result, enrich_stop_metadata(metadata, result)}
     end)
+  end
+
+  # Drain the into: :self mailbox for a non-200 response so the JSON error
+  # body from Anthropic is visible instead of silently lost. Non-Req messages
+  # (e.g. GenServer casts, monitor DOWNs) that happen to arrive during the
+  # drain are buffered and replayed to self() so the caller does not lose them.
+  defp drain_async_body(%Req.Response{} = resp) do
+    drain_loop(resp, [], [], System.monotonic_time(:millisecond) + 2_000)
+  end
+
+  defp drain_loop(resp, acc, unknown, deadline) do
+    if System.monotonic_time(:millisecond) > deadline do
+      finish_drain(acc, unknown)
+    else
+      receive do
+        msg ->
+          case Req.parse_message(resp, msg) do
+            {:ok, [{:data, chunk} | _rest]} ->
+              drain_loop(resp, [acc, chunk], unknown, deadline)
+
+            {:ok, [:done]} ->
+              finish_drain(acc, unknown)
+
+            :unknown ->
+              drain_loop(resp, acc, [msg | unknown], deadline)
+
+            _ ->
+              drain_loop(resp, acc, unknown, deadline)
+          end
+      after
+        200 ->
+          if System.monotonic_time(:millisecond) > deadline do
+            finish_drain(acc, unknown)
+          else
+            drain_loop(resp, acc, unknown, deadline)
+          end
+      end
+    end
+  end
+
+  defp finish_drain(acc, unknown) do
+    replay_unknown(unknown)
+    acc |> IO.iodata_to_binary() |> try_decode()
+  end
+
+  defp replay_unknown([]), do: :ok
+
+  defp replay_unknown(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.each(&send(self(), &1))
+  end
+
+  defp try_decode(""), do: %{}
+
+  defp try_decode(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{"raw" => body}
+    end
   end
 
   defp create_non_streaming(client, payload) do
@@ -254,9 +322,14 @@ defmodule Claudio.Messages do
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
       result =
         case Req.post(client, url: "messages", json: payload) do
-          {:ok, %Req.Response{status: 200, body: body}} -> {:ok, Response.from_map(body)}
-          {:ok, %Req.Response{status: status, body: body}} -> {:error, APIError.from_response(status, body)}
-          {:error, reason} -> {:error, reason}
+          {:ok, %Req.Response{status: 200, body: body}} ->
+            {:ok, Response.from_map(body)}
+
+          {:ok, %Req.Response{status: status, body: body}} ->
+            {:error, APIError.from_response(status, body)}
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {result, enrich_stop_metadata(metadata, result)}
