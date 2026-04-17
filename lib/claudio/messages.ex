@@ -275,7 +275,12 @@ defmodule Claudio.Messages do
             _ -> drain_loop(resp, acc, deadline)
           end
       after
-        200 -> IO.iodata_to_binary(acc) |> try_decode()
+        200 ->
+          if System.monotonic_time(:millisecond) > deadline do
+            IO.iodata_to_binary(acc) |> try_decode()
+          else
+            drain_loop(resp, acc, deadline)
+          end
       end
     end
   end
