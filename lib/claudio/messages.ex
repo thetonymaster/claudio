@@ -257,32 +257,54 @@ defmodule Claudio.Messages do
   end
 
   # Drain the into: :self mailbox for a non-200 response so the JSON error
-  # body from Anthropic is visible instead of silently lost.
+  # body from Anthropic is visible instead of silently lost. Non-Req messages
+  # (e.g. GenServer casts, monitor DOWNs) that happen to arrive during the
+  # drain are buffered and replayed to self() so the caller does not lose them.
   defp drain_async_body(%Req.Response{} = resp) do
-    drain_loop(resp, [], System.monotonic_time(:millisecond) + 2_000)
+    drain_loop(resp, [], [], System.monotonic_time(:millisecond) + 2_000)
   end
 
-  defp drain_loop(resp, acc, deadline) do
+  defp drain_loop(resp, acc, unknown, deadline) do
     if System.monotonic_time(:millisecond) > deadline do
-      IO.iodata_to_binary(acc) |> try_decode()
+      finish_drain(acc, unknown)
     else
       receive do
         msg ->
           case Req.parse_message(resp, msg) do
-            {:ok, [{:data, chunk} | _rest]} -> drain_loop(resp, [acc, chunk], deadline)
-            {:ok, [:done]} -> IO.iodata_to_binary(acc) |> try_decode()
-            :unknown -> drain_loop(resp, acc, deadline)
-            _ -> drain_loop(resp, acc, deadline)
+            {:ok, [{:data, chunk} | _rest]} ->
+              drain_loop(resp, [acc, chunk], unknown, deadline)
+
+            {:ok, [:done]} ->
+              finish_drain(acc, unknown)
+
+            :unknown ->
+              drain_loop(resp, acc, [msg | unknown], deadline)
+
+            _ ->
+              drain_loop(resp, acc, unknown, deadline)
           end
       after
         200 ->
           if System.monotonic_time(:millisecond) > deadline do
-            IO.iodata_to_binary(acc) |> try_decode()
+            finish_drain(acc, unknown)
           else
-            drain_loop(resp, acc, deadline)
+            drain_loop(resp, acc, unknown, deadline)
           end
       end
     end
+  end
+
+  defp finish_drain(acc, unknown) do
+    replay_unknown(unknown)
+    acc |> IO.iodata_to_binary() |> try_decode()
+  end
+
+  defp replay_unknown([]), do: :ok
+
+  defp replay_unknown(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.each(&send(self(), &1))
   end
 
   defp try_decode(""), do: %{}

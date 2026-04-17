@@ -203,4 +203,48 @@ defmodule Claudio.MessagesTest do
     assert err.type == :invalid_request_error
     assert get_in(err.raw_body, ["error", "type"]) == "invalid_request_error"
   end
+
+  # Regression: `drain_loop/4` must not silently consume mailbox messages that
+  # don't belong to Req. If the caller is a GenServer, a cast/call/monitor
+  # message arriving during the drain has to survive — otherwise the drain
+  # trades one lost-data bug (raw_body: nil) for another (lost caller msgs).
+  # `replay_unknown/1` re-delivers buffered `:unknown` messages to self() in
+  # arrival order before returning.
+  test "streaming 400 drain preserves unrelated mailbox messages", %{
+    client: client,
+    bypass: bypass
+  } do
+    error_body = %{
+      "type" => "error",
+      "error" => %{
+        "type" => "invalid_request_error",
+        "message" => "bad"
+      }
+    }
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(400, Jason.encode!(error_body))
+    end)
+
+    # Seed the mailbox with a sentinel BEFORE calling create/2. During the
+    # drain, Req.parse_message/2 classifies this as :unknown. The old code
+    # dropped it; the fix buffers and replays it.
+    send(self(), {:sentinel, :from_test})
+    send(self(), {:sentinel, :second})
+
+    request =
+      Claudio.Messages.Request.new("claude-3-5-sonnet-20241022")
+      |> Claudio.Messages.Request.add_message(:user, "Hello")
+      |> Claudio.Messages.Request.set_max_tokens(64)
+      |> Claudio.Messages.Request.enable_streaming()
+
+    assert {:error, %Claudio.APIError{status_code: 400}} =
+             Claudio.Messages.create(client, request)
+
+    # Both sentinels must still be deliverable, and in arrival order.
+    assert_received {:sentinel, :from_test}
+    assert_received {:sentinel, :second}
+  end
 end
