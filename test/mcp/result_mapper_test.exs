@@ -145,4 +145,11 @@ defmodule Claudio.MCP.ResultMapperTest do
       assert ResultMapper.extract_mcp_calls(response, "nonexistent") == []
     end
   end
+
+  describe "claudio_to_mcp/1" do
+    test "is an alias for extract_mcp_calls/1" do
+      response = Response.from_map(%{"content" => []})
+      assert ResultMapper.claudio_to_mcp(response) == ResultMapper.extract_mcp_calls(response)
+    end
+  end
 end

@@ -352,20 +352,15 @@ alias Claudio.Messages.Request
 # 1. List tools from an MCP server (e.g. using ex_mcp)
 {:ok, mcp_tools} = ExMCP.list_tools(mcp_client)
 
-# 2. Convert MCP tools to Claudio tools
-claudio_tools = Enum.map(mcp_tools, &ToolAdapter.mcp_to_claudio/1)
-
-# 3. Use them in a request
+# 2. Add MCP tools to a Claudio request
 request =
   Request.new("claude-sonnet-4-5-20250929")
-  |> then(fn req ->
-    Enum.reduce(claudio_tools, req, &Request.add_tool(&2, &1))
-  end)
+  |> ToolAdapter.add_tools(mcp_tools, prefix: "my_server")
 
 {:ok, response} = Claudio.Messages.create(client, request)
 
-# 4. Map results back to MCP format if needed
-mcp_input = ResultMapper.claudio_to_mcp(response)
+# 3. Map results back to MCP calls
+mcp_calls = ResultMapper.claudio_to_mcp(response)
 ```
 
 ### Agent-to-Agent (A2A) Protocol

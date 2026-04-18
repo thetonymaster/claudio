@@ -43,6 +43,10 @@ defmodule Claudio.MCP.ResultMapper do
     |> Enum.flat_map(&extract_call/1)
   end
 
+  @doc "Alias for `extract_mcp_calls/1`."
+  @spec claudio_to_mcp(Response.t()) :: [mcp_call()]
+  def claudio_to_mcp(response), do: extract_mcp_calls(response)
+
   @doc """
   Extracts MCP tool calls for a specific server.
   """
