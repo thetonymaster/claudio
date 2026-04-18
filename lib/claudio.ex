@@ -40,6 +40,9 @@ defmodule Claudio do
   - `Claudio.Messages.Stream` - Streaming response handling
   - `Claudio.Batches` - Message Batches API
   - `Claudio.Tools` - Tool/function calling utilities
+  - `Claudio.Agent` - Stateless agent tool-calling loop
+  - `Claudio.MCP.Client` - Model Context Protocol adapter
+  - `Claudio.A2A.Client` - Agent-to-Agent protocol client
   - `Claudio.APIError` - API error handling
 
   ## Examples
