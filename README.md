@@ -332,7 +332,7 @@ handlers = %{
 
 request =
   Request.new("claude-sonnet-4-5-20250929")
-  |> Request.add_message(:user, "Should I invest $1000 at 5% interest?")
+  |> Request.add_message(:user, "What's the weather in SF?")
   |> Request.add_tool(weather_tool)
 
 # Agent.run handles the multi-turn loop automatically
