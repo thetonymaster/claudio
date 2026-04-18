@@ -355,6 +355,7 @@ alias Claudio.Messages.Request
 # 2. Add MCP tools to a Claudio request
 request =
   Request.new("claude-sonnet-4-5-20250929")
+  |> Request.add_message(:user, "Use your tools to search for Elixir libraries")
   |> ToolAdapter.add_tools(mcp_tools, prefix: "my_server")
 
 {:ok, response} = Claudio.Messages.create(client, request)
