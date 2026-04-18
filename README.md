@@ -297,7 +297,6 @@ results =
   |> Enum.map(&Jason.decode!/1)
 
 Enum.each(results, fn result ->
-Enum.each(results, fn result ->
   case result["result"]["type"] do
     "succeeded" ->
       message = result["result"]["message"]
@@ -315,19 +314,26 @@ end)
 Run complex tool-calling loops with `Claudio.Agent`:
 
 ```elixir
-alias Claudio.{Agent, Messages.Request, Tools}
+alias Claudio.{Agent, Tools}
+alias Claudio.Messages.{Request, Response}
 
 # Define your tools and their implementation logic
+weather_tool = Tools.define_tool("get_weather", "Get weather", %{
+  "type" => "object",
+  "properties" => %{"location" => %{"type" => "string"}},
+  "required" => ["location"]
+})
+
 handlers = %{
-  "calculate_investment" => fn %{"principal" => p, "rate" => r} ->
-    {:ok, "At #{r}%, your #{p} would grow to..."}
+  "get_weather" => fn %{"location" => loc} ->
+    {:ok, "72°F and sunny in #{loc}"}
   end
 }
 
 request =
   Request.new("claude-sonnet-4-5-20250929")
   |> Request.add_message(:user, "Should I invest $1000 at 5% interest?")
-  |> Request.add_tools(my_tools)
+  |> Request.add_tool(weather_tool)
 
 # Agent.run handles the multi-turn loop automatically
 {:ok, final_response, history} = Agent.run(client, request, handlers)
@@ -341,6 +347,7 @@ Connect Claude to any MCP server:
 
 ```elixir
 alias Claudio.MCP.{ToolAdapter, ResultMapper}
+alias Claudio.Messages.Request
 
 # 1. List tools from an MCP server (e.g. using ex_mcp)
 {:ok, mcp_tools} = ExMCP.list_tools(mcp_client)
@@ -351,7 +358,9 @@ claudio_tools = Enum.map(mcp_tools, &ToolAdapter.mcp_to_claudio/1)
 # 3. Use them in a request
 request =
   Request.new("claude-sonnet-4-5-20250929")
-  |> Request.add_tools(claudio_tools)
+  |> then(fn req ->
+    Enum.reduce(claudio_tools, req, &Request.add_tool(&2, &1))
+  end)
 
 {:ok, response} = Claudio.Messages.create(client, request)
 
@@ -382,6 +391,8 @@ message = Message.new(:user, [Part.text("Analyze this dataset")])
 Claudio emits `:telemetry` events for all API calls:
 
 ```elixir
+require Logger
+
 :telemetry.attach(
   "claudio-monitoring",
   [:claudio, :request, :stop],
