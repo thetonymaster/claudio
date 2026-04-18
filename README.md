@@ -23,6 +23,10 @@ Claudio provides a comprehensive, idiomatic Elixir interface for Claude AI model
 - ✅ **Messages API** - Send messages with streaming support
 - ✅ **Request Builder** - Type-safe, fluent API for building requests
 - ✅ **Tool/Function Calling** - Integrate external tools with structured schemas
+- ✅ **MCP Support** - Full Model Context Protocol integration with adapter system
+- ✅ **Claudio.Agent** - Stateless tool-calling loop for autonomous behavior
+- ✅ **Agent-to-Agent (A2A)** - Standardized communication between agents
+- ✅ **Telemetry** - Emit events for monitoring and performance tracking
 - ✅ **Message Batches** - Process up to 100,000 requests asynchronously
 - ✅ **Prompt Caching** - Cache large contexts for up to 90% cost reduction
 - ✅ **Vision Support** - Analyze images (base64, URL, Files API)
@@ -41,7 +45,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.1.2"}
+    {:claudio, "~> 0.2.0"}
   ]
 end
 ```
@@ -303,6 +307,97 @@ Enum.each(results, fn result ->
       IO.puts("#{result["custom_id"]}: Error - #{error["message"]}")
   end
 end)
+```
+
+### Autonomous Agents
+
+Run complex tool-calling loops with `Claudio.Agent`:
+
+```elixir
+alias Claudio.{Agent, Tools}
+alias Claudio.Messages.{Request, Response}
+
+# Define your tools and their implementation logic
+weather_tool = Tools.define_tool("get_weather", "Get weather", %{
+  "type" => "object",
+  "properties" => %{"location" => %{"type" => "string"}},
+  "required" => ["location"]
+})
+
+handlers = %{
+  "get_weather" => fn %{"location" => loc} ->
+    {:ok, "72°F and sunny in #{loc}"}
+  end
+}
+
+request =
+  Request.new("claude-sonnet-4-5-20250929")
+  |> Request.add_message(:user, "What's the weather in SF?")
+  |> Request.add_tool(weather_tool)
+
+# Agent.run handles the multi-turn loop automatically
+{:ok, final_response, history} = Agent.run(client, request, handlers)
+
+IO.puts(Response.get_text(final_response))
+```
+
+### MCP (Model Context Protocol)
+
+Connect Claude to any MCP server:
+
+```elixir
+alias Claudio.MCP.{ToolAdapter, ResultMapper}
+alias Claudio.Messages.Request
+
+# 1. List tools from an MCP server (e.g. using ex_mcp)
+{:ok, mcp_tools} = ExMCP.list_tools(mcp_client)
+
+# 2. Add MCP tools to a Claudio request
+request =
+  Request.new("claude-sonnet-4-5-20250929")
+  |> Request.add_message(:user, "Use your tools to search for Elixir libraries")
+  |> ToolAdapter.add_tools(mcp_tools, prefix: "my_server")
+
+{:ok, response} = Claudio.Messages.create(client, request)
+
+# 3. Map results back to MCP calls
+mcp_calls = ResultMapper.claudio_to_mcp(response)
+```
+
+### Agent-to-Agent (A2A) Protocol
+
+Communicate with other agents over a standardized protocol:
+
+```elixir
+alias Claudio.A2A.{Client, Message, Part}
+
+# Discover a remote agent's capabilities
+{:ok, card} = Client.discover("https://expert-agent.com")
+
+# Send a message over HTTP (default) or gRPC
+message = Message.new(:user, [Part.text("Analyze this dataset")])
+{:ok, task} = Client.send_message("https://expert-agent.com/a2a", message)
+
+# Poll for task completion
+{:ok, updated_task} = Client.get_task("https://expert-agent.com/a2a", task.id)
+```
+
+### Telemetry & Monitoring
+
+Claudio emits `:telemetry` events for all API calls:
+
+```elixir
+require Logger
+
+:telemetry.attach(
+  "claudio-monitoring",
+  [:claudio, :request, :stop],
+  fn _name, measurements, metadata, _config ->
+    Logger.info("API Call: #{metadata.model} took #{measurements.duration}ms")
+    Logger.info("Tokens: #{metadata.usage.total_tokens}")
+  end,
+  nil
+)
 ```
 
 ## Configuration

@@ -52,4 +52,8 @@ defmodule Claudio.MCP.ToolAdapter do
       "input_schema" => tool.input_schema
     }
   end
+
+  @doc "Alias for `to_claudio_tool/2`."
+  @spec mcp_to_claudio(Tool.t(), String.t() | nil) :: map()
+  def mcp_to_claudio(tool, prefix \\ nil), do: to_claudio_tool(tool, prefix)
 end

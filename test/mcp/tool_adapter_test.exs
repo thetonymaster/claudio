@@ -91,4 +91,13 @@ defmodule Claudio.MCP.ToolAdapterTest do
       assert result["name"] == "server_a__search"
     end
   end
+
+  describe "mcp_to_claudio/2" do
+    test "is an alias for to_claudio_tool/2" do
+      tool = hd(@tools)
+
+      assert ToolAdapter.mcp_to_claudio(tool, "prefix") ==
+               ToolAdapter.to_claudio_tool(tool, "prefix")
+    end
+  end
 end

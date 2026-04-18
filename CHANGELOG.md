@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-18
+
+### Added
+
+- **Full MCP (Model Context Protocol) Support**
+  - Modular adapter system for different MCP server implementations
+  - Integration with `ex_mcp`, `hermes_mcp`, and `mcp_ex`
+  - Tool adapter for seamless conversion between MCP tools and Claudio tools
+- **`Claudio.Agent` Stateless Tool-Calling Loop**
+  - Autonomous agent loop that handles multiple rounds of tool execution
+  - Support for custom callbacks and max iterations
+- **Agent-to-Agent (A2A) Protocol Support**
+  - Typed client for agent communication
+  - Support for multi-agent workflows with common transport interfaces (HTTP, gRPC)
+  - Extensible transport layer using the Strategy pattern
+- **Cloud Observability & Telemetry**
+  - Emits `:telemetry` events for all LLM API calls (`[:claudio, :request, :start | :stop | :exception]`)
+  - Track request duration, token usage, and error reasons
+  - Support for custom Finch connection pools to manage concurrency
+- **Issue Tracking with Beads**
+  - Initialized `bd` (beads) for issue and task tracking in the repository
+
+### Changed
+
+- Updated default model to `claude-sonnet-4-5-20250929` across documentation and examples
+- Removed unused dependencies from `mix.lock`
+
+### Fixed
+
+- **Critical**: Fixed `UndefinedFunctionError` when streaming requests fail by ensuring async body is drained on error
+- Improved error reason reporting in telemetry events
+
 ## [0.1.2] - 2025-01-26
 
 ### Added
