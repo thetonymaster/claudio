@@ -337,12 +337,33 @@ defmodule Claudio.Messages do
   end
 
   defp enrich_stop_metadata(metadata, result) do
-    stop_meta = Map.put(metadata, :status, elem(result, 0))
+    stop_meta =
+      metadata
+      |> Map.put(:status, elem(result, 0))
+      |> maybe_put_usage_metadata(result)
 
     case result do
       {:error, reason} -> Map.put(stop_meta, :error, inspect(reason))
       _ -> stop_meta
     end
+  end
+
+  defp maybe_put_usage_metadata(metadata, {:ok, %Response{usage: usage}}) when is_map(usage) do
+    Map.merge(metadata, usage_to_metadata(usage))
+  end
+
+  defp maybe_put_usage_metadata(metadata, _result), do: metadata
+
+  defp usage_to_metadata(usage) when is_map(usage) do
+    usage
+    |> Map.take([
+      :input_tokens,
+      :output_tokens,
+      :cache_creation_input_tokens,
+      :cache_read_input_tokens
+    ])
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   # Recursively convert atom keys to string keys for backward compatibility

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-19
+
+### Added
+
+- **Messages telemetry usage metadata**
+  - `[:claudio, :messages, :create, :stop]` now includes flat token usage metadata keys for non-streaming success:
+    - `:input_tokens`
+    - `:output_tokens`
+    - `:cache_creation_input_tokens`
+    - `:cache_read_input_tokens`
+  - Nil usage values are omitted from telemetry metadata to keep downstream integer matching clean
+- **Streaming usage telemetry event**
+  - New `[:claudio, :messages, :stream, :usage]` event emitted when stream consumption reaches `message_stop` and final usage is available
+
+### Changed
+
+- Documented streaming telemetry contract in `Claudio.Messages.Stream` to clarify that final streaming usage is emitted separately from request-span stop metadata
+
 ## [0.2.0] - 2026-04-18
 
 ### Added
