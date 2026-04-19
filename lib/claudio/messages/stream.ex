@@ -2,6 +2,10 @@ defmodule Claudio.Messages.Stream do
   @moduledoc """
   Utilities for parsing and consuming Server-Sent Events (SSE) from streaming Messages API responses.
 
+  Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
+  when `parse_events/1` reaches the terminal `message_stop` event and final usage
+  is available from `message_delta` frames.
+
   ## Event Types
 
   The Messages API streaming responses include the following event types:
@@ -49,6 +53,7 @@ defmodule Claudio.Messages.Stream do
     stream
     |> Stream.transform("", &parse_chunk/2)
     |> Stream.map(&parse_event/1)
+    |> emit_usage_telemetry()
     |> halt_after_message_stop()
   end
 
@@ -71,6 +76,46 @@ defmodule Claudio.Messages.Stream do
         # Continue normally
         {[event], false}
     end)
+  end
+
+  defp emit_usage_telemetry(event_stream) do
+    Stream.transform(event_stream, nil, fn
+      {:ok, %{event: "message_delta", data: data}} = event, _latest_usage ->
+        usage = data["usage"] || data[:usage]
+        {[event], usage || nil}
+
+      {:ok, %{event: "message_stop"}} = event, latest_usage ->
+        maybe_emit_stream_usage_telemetry(latest_usage)
+        {[event], latest_usage}
+
+      event, latest_usage ->
+        {[event], latest_usage}
+    end)
+  end
+
+  defp maybe_emit_stream_usage_telemetry(usage) when is_map(usage) do
+    metadata = usage_to_metadata(usage)
+
+    if map_size(metadata) > 0 do
+      :telemetry.execute([:claudio, :messages, :stream, :usage], %{}, metadata)
+    end
+  end
+
+  defp maybe_emit_stream_usage_telemetry(_), do: :ok
+
+  defp usage_to_metadata(usage) when is_map(usage) do
+    %{}
+    |> maybe_put_usage_key(:input_tokens, usage)
+    |> maybe_put_usage_key(:output_tokens, usage)
+    |> maybe_put_usage_key(:cache_creation_input_tokens, usage)
+    |> maybe_put_usage_key(:cache_read_input_tokens, usage)
+  end
+
+  defp maybe_put_usage_key(metadata, key, usage) do
+    case Map.get(usage, key) || Map.get(usage, Atom.to_string(key)) do
+      nil -> metadata
+      value -> Map.put(metadata, key, value)
+    end
   end
 
   @doc """

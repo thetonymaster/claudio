@@ -1,6 +1,8 @@
 defmodule Claudio.MessagesTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Request
+
   setup do
     # Create a client with Req.Test adapter for testing
     bypass = Bypass.open()
@@ -246,5 +248,173 @@ defmodule Claudio.MessagesTest do
     # Both sentinels must still be deliverable, and in arrival order.
     assert_received {:sentinel, :from_test}
     assert_received {:sentinel, :second}
+  end
+
+  test "telemetry stop metadata includes token usage for non-streaming success", %{
+    client: client,
+    bypass: bypass
+  } do
+    model = unique_model("non-streaming-success")
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(
+        200,
+        Jason.encode!(%{
+          "content" => [%{"type" => "text", "text" => "ok"}],
+          "id" => "msg_telemetry_success",
+          "model" => model,
+          "role" => "assistant",
+          "stop_reason" => "end_turn",
+          "stop_sequence" => nil,
+          "type" => "message",
+          "usage" => %{
+            "input_tokens" => 123,
+            "output_tokens" => 45,
+            "cache_creation_input_tokens" => 10,
+            "cache_read_input_tokens" => 5
+          }
+        })
+      )
+    end)
+
+    attach_telemetry_handler(
+      [:claudio, :messages, :create, :stop],
+      fn metadata -> metadata.model == model end
+    )
+
+    request =
+      Request.new(model)
+      |> Request.add_message(:user, "hello")
+      |> Request.set_max_tokens(64)
+
+    assert {:ok, _response} = Claudio.Messages.create(client, request)
+
+    assert_receive {:telemetry_event, [:claudio, :messages, :create, :stop], metadata}
+
+    assert metadata.status == :ok
+    assert metadata.input_tokens == 123
+    assert metadata.output_tokens == 45
+    assert metadata.cache_creation_input_tokens == 10
+    assert metadata.cache_read_input_tokens == 5
+  end
+
+  test "telemetry stop metadata omits token usage for non-streaming error", %{
+    client: client,
+    bypass: bypass
+  } do
+    model = unique_model("non-streaming-error")
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(
+        401,
+        Jason.encode!(%{
+          "error" => %{
+            "message" => "Unauthorized",
+            "type" => "authentication_error"
+          },
+          "type" => "error"
+        })
+      )
+    end)
+
+    attach_telemetry_handler(
+      [:claudio, :messages, :create, :stop],
+      fn metadata -> metadata.model == model end
+    )
+
+    request =
+      Request.new(model)
+      |> Request.add_message(:user, "hello")
+      |> Request.set_max_tokens(64)
+
+    assert {:error, _reason} = Claudio.Messages.create(client, request)
+
+    assert_receive {:telemetry_event, [:claudio, :messages, :create, :stop], metadata}
+
+    assert metadata.status == :error
+    assert is_binary(metadata.error)
+    refute Map.has_key?(metadata, :input_tokens)
+    refute Map.has_key?(metadata, :output_tokens)
+    refute Map.has_key?(metadata, :cache_creation_input_tokens)
+    refute Map.has_key?(metadata, :cache_read_input_tokens)
+  end
+
+  test "streaming emits final usage telemetry event when stream is consumed", %{
+    client: client,
+    bypass: bypass
+  } do
+    model = unique_model("streaming-usage")
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn =
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_chunked(200)
+
+      sse =
+        [
+          "event: message_start\n",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"#{model}\",\"content\":[]}}\n\n",
+          "event: message_delta\n",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null,\"stop_sequence\":null},\"usage\":{\"input_tokens\":123,\"output_tokens\":45,\"cache_creation_input_tokens\":10,\"cache_read_input_tokens\":5}}\n\n",
+          "event: message_stop\n",
+          "data: {\"type\":\"message_stop\"}\n\n"
+        ]
+        |> IO.iodata_to_binary()
+
+      {:ok, conn} = Plug.Conn.chunk(conn, sse)
+      conn
+    end)
+
+    attach_telemetry_handler([:claudio, :messages, :stream, :usage])
+
+    request =
+      Request.new(model)
+      |> Request.add_message(:user, "hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
+
+    assert {:ok, stream_response} = Claudio.Messages.create(client, request)
+
+    _events =
+      stream_response.body
+      |> Claudio.Messages.Stream.parse_events()
+      |> Enum.to_list()
+
+    assert_receive {:telemetry_event, [:claudio, :messages, :stream, :usage], metadata}
+
+    assert metadata.input_tokens == 123
+    assert metadata.output_tokens == 45
+    assert metadata.cache_creation_input_tokens == 10
+    assert metadata.cache_read_input_tokens == 5
+  end
+
+  defp attach_telemetry_handler(event_name, filter_fn \\ fn _metadata -> true end) do
+    handler_id = "messages-test-#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event_name,
+        fn name, _measurements, metadata, {pid, filter} ->
+          if filter.(metadata) do
+            send(pid, {:telemetry_event, name, metadata})
+          end
+        end,
+        {test_pid, filter_fn}
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+    end)
+  end
+
+  defp unique_model(suffix) do
+    "claude-3-5-sonnet-20241022-#{suffix}-#{System.unique_integer([:positive])}"
   end
 end
