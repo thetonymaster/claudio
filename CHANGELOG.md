@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-24
+
+### Changed
+
+- **BREAKING: Streaming event data now decoded with string keys**
+  - `Claudio.Messages.Stream.parse_events/1` previously decoded SSE event payloads
+    with `Poison.decode(keys: :atoms)`, producing atom-keyed data maps. It now
+    decodes with Poison's default (string keys), matching the raw Anthropic JSON
+    convention.
+  - This is a **breaking change for external consumers that pattern-match on
+    atom keys** inside `event.data` (e.g. `%{delta: %{type: "text_delta"}}`).
+    Downstream code should switch to string keys
+    (`%{"delta" => %{"type" => "text_delta"}}`).
+  - Claudio's internal helpers (`accumulate_text/1`, `apply_delta/2`,
+    `build_final_message/1`, `update_current_block/2`) already read
+    `data["x"] || data[:x]` defensively, so this is a no-op inside Claudio.
+
+### Fixed
+
+- **Fail loudly on malformed SSE JSON payloads**
+  - `parse_event/1` previously swallowed `Poison.decode/1` errors as
+    `{:ok, %{event: ..., data: nil}}`, hiding corruption and leaving downstream
+    consumers to operate on silently-missing data.
+  - Decode failures now return `{:error, {:invalid_event_data_json, event_type, reason}}`,
+    consistent with the existing `{:invalid_event, _}` error tag emitted by the
+    same function.
+
 ## [0.3.0] - 2026-04-19
 
 ### Added
