@@ -311,7 +311,13 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp parse_event(%{event: event_type, data: data_str}) when is_binary(data_str) do
-    case Poison.decode(data_str, keys: :atoms) do
+    # Decode with string keys (Poison's default). Earlier versions used
+    # `keys: :atoms`, which produced atom-keyed data maps — inconsistent with
+    # the raw Anthropic JSON convention and a footgun for downstream consumers
+    # that pattern-match on string keys (e.g. Normandy's adapter). The
+    # accumulator helpers in this module already read `data["x"] || data[:x]`
+    # defensively, so switching to strings is a no-op internally.
+    case Poison.decode(data_str) do
       {:ok, data} -> {:ok, %{event: event_type, data: data}}
       {:error, _} -> {:ok, %{event: event_type, data: nil}}
     end
