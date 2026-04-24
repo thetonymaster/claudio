@@ -51,7 +51,7 @@ defmodule Claudio.Messages.StreamTest do
       refute Map.has_key?(event.data, :message)
     end
 
-    test "message_stop events carry nil data unchanged" do
+    test "emits string-keyed data maps for message_stop events" do
       sse_lines = [
         ~s(event: message_stop),
         ~s(data: {"type":"message_stop"}),
@@ -66,6 +66,22 @@ defmodule Claudio.Messages.StreamTest do
       assert [{:ok, event}] = events
       assert event.event == "message_stop"
       assert %{"type" => "message_stop"} = event.data
+      refute Map.has_key?(event.data, :type)
+    end
+
+    test "returns {:error, {:invalid_event_data_json, ...}} on decode failure" do
+      sse_lines = [
+        ~s(event: content_block_delta),
+        ~s(data: {not-valid-json),
+        ""
+      ]
+
+      events =
+        [Enum.join(sse_lines, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert [{:error, {:invalid_event_data_json, "content_block_delta", _reason}}] = events
     end
   end
 end

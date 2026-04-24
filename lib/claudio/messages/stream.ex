@@ -319,7 +319,7 @@ defmodule Claudio.Messages.Stream do
     # defensively, so switching to strings is a no-op internally.
     case Poison.decode(data_str) do
       {:ok, data} -> {:ok, %{event: event_type, data: data}}
-      {:error, _} -> {:ok, %{event: event_type, data: nil}}
+      {:error, reason} -> {:error, {:invalid_event_data_json, event_type, reason}}
     end
   end
 
