@@ -14,7 +14,7 @@ Claudio provides a comprehensive, idiomatic Elixir interface for Claude AI model
 - **🚀 Production Ready**: Configurable timeouts, automatic retries, and comprehensive error handling
 - **⚡ High Performance**: Built on Req for fast HTTP operations with excellent streaming support
 - **💎 Idiomatic Elixir**: Fluent API, pattern matching on errors, and proper supervision tree integration
-- **📦 Feature Complete**: Messages, Batches, Tools, Caching, Vision - everything you need
+- **📦 Feature Complete**: Messages, Batches, Files, Tools, Caching, Vision - everything you need
 - **🧪 Well Tested**: 76 tests covering unit and integration scenarios
 - **📚 Fully Documented**: Complete API documentation with examples on HexDocs
 
@@ -28,6 +28,7 @@ Claudio provides a comprehensive, idiomatic Elixir interface for Claude AI model
 - ✅ **Agent-to-Agent (A2A)** - Standardized communication between agents
 - ✅ **Telemetry** - Emit events for monitoring and performance tracking
 - ✅ **Message Batches** - Process up to 100,000 requests asynchronously
+- ✅ **Files API** - Upload, list, fetch, download, and delete files referenced by messages
 - ✅ **Prompt Caching** - Cache large contexts for up to 90% cost reduction
 - ✅ **Vision Support** - Analyze images (base64, URL, Files API)
 - ✅ **PDF/Document Support** - Process documents directly
@@ -307,6 +308,44 @@ Enum.each(results, fn result ->
       IO.puts("#{result["custom_id"]}: Error - #{error["message"]}")
   end
 end)
+```
+
+### Files API
+
+Upload files to Anthropic's storage and reference them from message content
+blocks. The Files API is currently behind the `files-api-2025-04-14` Anthropic
+beta — opt in by passing it on the client.
+
+```elixir
+alias Claudio.Files
+alias Claudio.Messages.Request
+
+client = Claudio.Client.new(%{
+  token: System.get_env("ANTHROPIC_API_KEY"),
+  beta: ["files-api-2025-04-14"]
+})
+
+# Upload a PDF
+{:ok, %{"id" => file_id}} =
+  Files.upload(client, File.read!("contract.pdf"),
+    content_type: "application/pdf",
+    filename: "contract.pdf"
+  )
+
+# Reference it from a message (no extra builder needed — the document helper
+# already accepts a file_id)
+request =
+  Request.new("claude-sonnet-4-5-20250929")
+  |> Request.add_message_with_document(:user, "Summarise this contract.", file_id)
+  |> Request.set_max_tokens(1024)
+
+{:ok, response} = Claudio.Messages.create(client, request)
+
+# Manage uploaded files
+{:ok, %{"data" => files}} = Files.list(client, limit: 50)
+{:ok, _meta}              = Files.get(client, file_id)
+{:ok, bytes}              = Files.download(client, file_id)
+{:ok, _}                  = Files.delete(client, file_id)
 ```
 
 ### Autonomous Agents
