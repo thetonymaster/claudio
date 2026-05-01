@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - YYYY-MM-DD
+
+### Added
+
+- **Anthropic Files API support** (beta `files-api-2025-04-14`)
+  - `Claudio.Files.upload/3` — multipart upload to `/v1/files`
+  - `Claudio.Files.list/2` — paginated listing with `:limit`, `:before_id`, `:after_id`
+  - `Claudio.Files.get/2` — fetch file metadata
+  - `Claudio.Files.download/2` — fetch raw file bytes (binary, not JSON-decoded)
+  - `Claudio.Files.delete/2` — delete a file
+  - Uploaded files are referenced from messages via the existing
+    `Claudio.Messages.Request.add_message_with_document/4` helper (no API change required there)
+  - Module grouped under "Files API" in ex_doc
+  - Callers must opt in to the beta by passing `beta: ["files-api-2025-04-14"]`
+    to `Claudio.Client.new/2`, or via `config :claudio, :claudio,
+    default_beta_features: ["files-api-2025-04-14"]`
+
 ## [0.4.0] - 2026-04-24
 
 ### Changed

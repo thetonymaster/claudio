@@ -32,9 +32,54 @@ defmodule Claudio.Files do
         |> Claudio.Messages.Request.add_message_with_document(:user, "Summarise.", file_id)
 
       Claudio.Messages.create(client, request)
+
+      # List, inspect, and clean up later:
+      {:ok, %{"data" => files}} = Claudio.Files.list(client, limit: 50)
+      {:ok, _meta} = Claudio.Files.get(client, file_id)
+      {:ok, bytes} = Claudio.Files.download(client, file_id)
+      {:ok, %{"type" => "file_deleted"}} = Claudio.Files.delete(client, file_id)
   """
 
   alias Claudio.APIError
+
+  @doc """
+  Lists files uploaded to the Anthropic Files API.
+
+  ## Beta gating
+
+  Requires the `files-api-2025-04-14` Anthropic beta flag on the client (see
+  moduledoc).
+
+  ## Parameters
+
+    * `client` — A `Req.Request` from `Claudio.Client.new/2`.
+    * `opts` — Optional keyword list:
+        * `:limit` — Number of files to return (default server-side: 20).
+        * `:before_id` — Cursor for the previous page (file id).
+        * `:after_id` — Cursor for the next page (file id).
+
+  ## Returns
+
+    * `{:ok, %{"data" => [...], "first_id" => _, "last_id" => _, "has_more" => _}}`
+      on success.
+    * `{:error, %Claudio.APIError{}}` on a non-200 response.
+    * `{:error, term()}` on a transport/Req error.
+  """
+  @spec list(Req.Request.t(), keyword()) :: {:ok, map()} | {:error, APIError.t() | term()}
+  def list(client, opts \\ []) do
+    query_params = build_query_params(opts)
+
+    case Req.get(client, url: "files", params: query_params) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   @doc """
   Upload bytes to the Anthropic Files API.
@@ -80,4 +125,104 @@ defmodule Claudio.Files do
         {:error, reason}
     end
   end
+
+  @doc """
+  Retrieves metadata for a single file.
+
+  ## Parameters
+
+    * `client` — A `Req.Request` from `Claudio.Client.new/2`.
+    * `file_id` — The file id returned from `upload/3` (e.g. `"file_abc123"`).
+
+  ## Returns
+
+    * `{:ok, %{"id" => _, "type" => "file", "filename" => _, "mime_type" => _,
+       "size_bytes" => _, "created_at" => _, "downloadable" => _}}` on success.
+    * `{:error, %Claudio.APIError{}}` on a non-200 response.
+    * `{:error, term()}` on a transport/Req error.
+  """
+  @spec get(Req.Request.t(), String.t()) :: {:ok, map()} | {:error, APIError.t() | term()}
+  def get(client, file_id) when is_binary(file_id) do
+    case Req.get(client, url: "files/#{file_id}") do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Downloads the raw bytes of a file.
+
+  Req auto-decodes JSON only when `content-type: application/json`; for any
+  other content type (PDF, image, plain text, etc.), the response body is
+  returned as a raw binary unchanged.
+
+  ## Parameters
+
+    * `client` — A `Req.Request` from `Claudio.Client.new/2`.
+    * `file_id` — The file id returned from `upload/3`.
+
+  ## Returns
+
+    * `{:ok, binary()}` on success — the raw file contents.
+    * `{:error, %Claudio.APIError{}}` on a non-200 response (error bodies are JSON).
+    * `{:error, term()}` on a transport/Req error.
+  """
+  @spec download(Req.Request.t(), String.t()) ::
+          {:ok, binary()} | {:error, APIError.t() | term()}
+  def download(client, file_id) when is_binary(file_id) do
+    case Req.get(client, url: "files/#{file_id}/content") do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Deletes a file from the Anthropic Files API.
+
+  ## Parameters
+
+    * `client` — A `Req.Request` from `Claudio.Client.new/2`.
+    * `file_id` — The file id to delete.
+
+  ## Returns
+
+    * `{:ok, %{"id" => _, "type" => "file_deleted"}}` on success.
+    * `{:error, %Claudio.APIError{}}` on a non-200 response.
+    * `{:error, term()}` on a transport/Req error.
+  """
+  @spec delete(Req.Request.t(), String.t()) :: {:ok, map()} | {:error, APIError.t() | term()}
+  def delete(client, file_id) when is_binary(file_id) do
+    case Req.delete(client, url: "files/#{file_id}") do
+      {:ok, %Req.Response{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, APIError.from_response(status, body)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp build_query_params(opts) do
+    []
+    |> maybe_add_param(:limit, Keyword.get(opts, :limit))
+    |> maybe_add_param(:before_id, Keyword.get(opts, :before_id))
+    |> maybe_add_param(:after_id, Keyword.get(opts, :after_id))
+  end
+
+  defp maybe_add_param(params, _key, nil), do: params
+  defp maybe_add_param(params, key, value), do: [{key, value} | params]
 end
