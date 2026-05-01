@@ -103,8 +103,27 @@ defmodule Claudio.Files do
   @spec upload(Req.Request.t(), binary(), keyword()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
   def upload(client, bytes, opts) when is_binary(bytes) and is_list(opts) do
-    content_type = Keyword.fetch!(opts, :content_type)
-    filename = Keyword.fetch!(opts, :filename)
+    content_type =
+      case Keyword.fetch(opts, :content_type) do
+        {:ok, value} ->
+          value
+
+        :error ->
+          raise ArgumentError,
+                "Claudio.Files.upload/3 requires a :content_type option, " <>
+                  "e.g. content_type: \"application/pdf\""
+      end
+
+    filename =
+      case Keyword.fetch(opts, :filename) do
+        {:ok, value} ->
+          value
+
+        :error ->
+          raise ArgumentError,
+                "Claudio.Files.upload/3 requires a :filename option, " <>
+                  "e.g. filename: \"contract.pdf\""
+      end
 
     # `form_multipart` overrides the client's default `json:` body codec for
     # this single request, which is what we want — the Files API endpoint

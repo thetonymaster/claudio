@@ -49,6 +49,41 @@ defmodule Claudio.FilesTest do
                  filename: "contract.pdf"
                )
     end
+
+    test "raises ArgumentError when :content_type is missing", %{client: client} do
+      assert_raise ArgumentError, ~r/:content_type/, fn ->
+        Claudio.Files.upload(client, "bytes", filename: "f.pdf")
+      end
+    end
+
+    test "raises ArgumentError when :filename is missing", %{client: client} do
+      assert_raise ArgumentError, ~r/:filename/, fn ->
+        Claudio.Files.upload(client, "bytes", content_type: "application/pdf")
+      end
+    end
+
+    test "maps non-200 responses to Claudio.APIError", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/files", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          400,
+          Jason.encode!(%{
+            "type" => "error",
+            "error" => %{
+              "type" => "invalid_request_error",
+              "message" => "Unsupported file type"
+            }
+          })
+        )
+      end)
+
+      assert {:error, %Claudio.APIError{type: :invalid_request_error, status_code: 400}} =
+               Claudio.Files.upload(client, "bytes",
+                 content_type: "application/pdf",
+                 filename: "f.pdf"
+               )
+    end
   end
 
   describe "list/2" do
