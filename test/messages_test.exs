@@ -414,6 +414,61 @@ defmodule Claudio.MessagesTest do
     end)
   end
 
+  describe "beta-header merge for %Request{}" do
+    test "create/2 merges a request's declared betas into anthropic-beta",
+         %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        [beta_header] = Plug.Conn.get_req_header(conn, "anthropic-beta")
+        assert beta_header =~ "token-counting-2024-11-01"
+        assert beta_header =~ "context-management-2025-06-27"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "id" => "msg_1",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-opus-4-8",
+            "stop_reason" => "end_turn",
+            "stop_sequence" => nil,
+            "content" => [%{"type" => "text", "text" => "ok"}],
+            "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+          })
+        )
+      end)
+
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(16)
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert {:ok, _response} = Claudio.Messages.create(client, request)
+    end
+
+    test "count_tokens/2 merges a request's declared betas",
+         %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
+        [beta_header] = Plug.Conn.get_req_header(conn, "anthropic-beta")
+        assert beta_header =~ "context-management-2025-06-27"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"input_tokens" => 5}))
+      end)
+
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(16)
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert {:ok, %{"input_tokens" => 5}} = Claudio.Messages.count_tokens(client, request)
+    end
+  end
+
   defp unique_model(suffix) do
     "claude-3-5-sonnet-20241022-#{suffix}-#{System.unique_integer([:positive])}"
   end
