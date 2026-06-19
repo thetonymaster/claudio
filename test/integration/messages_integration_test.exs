@@ -152,4 +152,48 @@ defmodule Claudio.Messages.IntegrationTest do
       assert error.type == :invalid_request_error
     end
   end
+
+  describe "extended thinking round-trip" do
+    test "replays a thinking + tool_use assistant turn without a 400", %{client: client} do
+      tool = %{
+        "name" => "get_weather",
+        "description" => "Get the current weather for a location",
+        "input_schema" => %{
+          "type" => "object",
+          "properties" => %{"location" => %{"type" => "string"}},
+          "required" => ["location"]
+        }
+      }
+
+      first =
+        Request.new(test_model())
+        |> Request.add_message(:user, "What's the weather in NYC? Use the tool.")
+        |> Request.set_max_tokens(2048)
+        |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 1024})
+        |> Request.add_tool(tool)
+
+      assert {:ok, response} = Messages.create(client, first)
+
+      # Build the follow-up: replay the assistant turn (incl. thinking signature),
+      # then answer any tool_use with a tool_result.
+      tool_results =
+        response
+        |> Response.get_tool_uses()
+        |> Enum.map(fn tu ->
+          %{"type" => "tool_result", "tool_use_id" => tu.id, "content" => "Sunny, 72F"}
+        end)
+
+      second =
+        Request.new(test_model())
+        |> Request.add_message(:user, "What's the weather in NYC? Use the tool.")
+        |> Request.add_message(:assistant, Response.to_assistant_content(response))
+        |> Request.add_message(:user, tool_results)
+        |> Request.set_max_tokens(2048)
+        |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 1024})
+        |> Request.add_tool(tool)
+
+      # The point of the test: this must NOT return {:error, %APIError{status: 400}}.
+      assert {:ok, %Response{}} = Messages.create(client, second)
+    end
+  end
 end
