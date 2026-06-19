@@ -174,12 +174,20 @@ defmodule Claudio.Messages.IntegrationTest do
 
       assert {:ok, response} = Messages.create(client, first)
 
-      # Build the follow-up: replay the assistant turn (incl. thinking signature),
-      # then answer any tool_use with a tool_result.
+      # The replay path is the whole point of this test, so assert the first turn
+      # actually produced what we need to replay: a signed thinking block plus a
+      # tool_use. If the model doesn't, fail loudly rather than passing vacuously.
+      tool_uses = Response.get_tool_uses(response)
+      assert response.stop_reason == :tool_use
+      assert tool_uses != []
+
+      assert Enum.any?(response.content, fn
+               %{type: :thinking, signature: sig} when is_binary(sig) and sig != "" -> true
+               _ -> false
+             end)
+
       tool_results =
-        response
-        |> Response.get_tool_uses()
-        |> Enum.map(fn tu ->
+        Enum.map(tool_uses, fn tu ->
           %{"type" => "tool_result", "tool_use_id" => tu.id, "content" => "Sunny, 72F"}
         end)
 
@@ -187,9 +195,7 @@ defmodule Claudio.Messages.IntegrationTest do
         Request.new(test_model())
         |> Request.add_message(:user, "What's the weather in NYC? Use the tool.")
         |> Request.add_message(:assistant, Response.to_assistant_content(response))
-        |> then(fn req ->
-          if tool_results == [], do: req, else: Request.add_message(req, :user, tool_results)
-        end)
+        |> Request.add_message(:user, tool_results)
         |> Request.set_max_tokens(2048)
         |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 1024})
         |> Request.add_tool(tool)
