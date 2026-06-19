@@ -378,7 +378,7 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp apply_delta(block, %{type: "signature_delta", signature: signature}) do
-    Map.put(block, "signature", signature)
+    Map.put(block, :signature, signature)
   end
 
   defp apply_delta(block, %{"type" => "citations_delta", "citation" => citation}) do
@@ -387,8 +387,8 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp apply_delta(block, %{type: "citations_delta", citation: citation}) do
-    current = block["citations"] || block[:citations] || []
-    Map.put(block, "citations", current ++ [citation])
+    current = block[:citations] || block["citations"] || []
+    Map.put(block, :citations, current ++ [citation])
   end
 
   defp apply_delta(block, _delta), do: block
