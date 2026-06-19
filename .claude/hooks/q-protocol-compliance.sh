@@ -14,11 +14,6 @@ if ! command -v jq &> /dev/null; then
   exit 0
 fi
 
-if ! command -v tac &> /dev/null; then
-  echo "<system-reminder>Q Protocol hook: tac not found, skipping compliance check</system-reminder>"
-  exit 0
-fi
-
 # Parse input JSON
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
@@ -32,85 +27,124 @@ COUNT=$(cat "$COMPLIANCE_COUNT_FILE" 2>/dev/null || echo 0)
 AGENT_COUNT_FILE="/tmp/claude_agents_count_${SESSION_ID}"
 AGENT_COUNT=$(cat "$AGENT_COUNT_FILE" 2>/dev/null || echo 0)
 
-# If spawning an agent (Task tool), increment counter and exit
-if [ "$TOOL_NAME" = "Task" ]; then
+# If spawning an agent (Task/Agent tool), increment counter and exit.
+# q-protocol-agent-complete.sh (SubagentStop) decrements when the agent finishes.
+if [ "$TOOL_NAME" = "Task" ] || [ "$TOOL_NAME" = "Agent" ]; then
   echo $((AGENT_COUNT + 1)) > "$AGENT_COUNT_FILE"
-  [ "$DEBUG_ENABLED" = "true" ] && echo "=== $(date '+%H:%M:%S.%3N') - AGENT_SPAWN: count now $((AGENT_COUNT + 1)) ===" >> "$DEBUG_LOG"
+  [ "$DEBUG_ENABLED" = "true" ] && echo "=== $(date '+%H:%M:%S') - AGENT_SPAWN: count now $((AGENT_COUNT + 1)) ===" >> "$DEBUG_LOG"
   exit 0
 fi
 
 # If agents are active, exempt from Q Protocol check
 if [ "$AGENT_COUNT" -gt 0 ]; then
-  [ "$DEBUG_ENABLED" = "true" ] && echo "=== $(date '+%H:%M:%S.%3N') - AGENT_EXEMPT: $TOOL_NAME (${AGENT_COUNT} agents active) ===" >> "$DEBUG_LOG"
+  [ "$DEBUG_ENABLED" = "true" ] && echo "=== $(date '+%H:%M:%S') - AGENT_EXEMPT: $TOOL_NAME (${AGENT_COUNT} agents active) ===" >> "$DEBUG_LOG"
   exit 0
 fi
 
-# === DEBUG: Log all input and environment ===
+# === DEBUG: Log input ===
 if [ "$DEBUG_ENABLED" = "true" ]; then
   {
-    echo "=== $(date '+%H:%M:%S.%3N') - TOOL: $TOOL_NAME ==="
+    echo "=== $(date '+%H:%M:%S') - TOOL: $TOOL_NAME ==="
     echo "SESSION: $SESSION_ID"
     echo "TRANSCRIPT: $TRANSCRIPT_PATH"
     echo "COUNT_BEFORE: $COUNT"
-    echo "INPUT_KEYS: $(echo "$INPUT" | jq -r 'keys | join(",")')"
-    echo "--- ENVIRONMENT ---"
-    env | sort
-    echo "--- END ENV ---"
   } >> "$DEBUG_LOG"
 fi
+
+# Grace exit: compliance is UNVERIFIABLE (not the same as non-compliant).
+# Penalizing unverifiable calls permanently bricks the session: no message
+# Claude writes can reset the counter, and every tool call — including the
+# ones needed to repair the hook — gets blocked.
+grace_exit() {
+  echo "0" > "$COMPLIANCE_COUNT_FILE"
+  [ "$DEBUG_ENABLED" = "true" ] && echo "GRACE: $1 — skipping check, counter reset" >> "$DEBUG_LOG"
+  exit 0
+}
+
+# Transcript resolution: the path the harness hands us may not exist
+# (worktrees, alternate session dirs). Try the standard location before giving up.
+if [ -n "$TRANSCRIPT_PATH" ] && [ ! -f "$TRANSCRIPT_PATH" ]; then
+  for _candidate in "$HOME/.claude/projects"/*/"${SESSION_ID}.jsonl"; do
+    if [ -f "$_candidate" ]; then
+      TRANSCRIPT_PATH="$_candidate"
+      [ "$DEBUG_ENABLED" = "true" ] && echo "TRANSCRIPT_RESOLVE: found at $TRANSCRIPT_PATH" >> "$DEBUG_LOG"
+      break
+    fi
+  done
+  unset _candidate
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+  grace_exit "transcript missing or empty path"
+fi
+
+# Freshness check: some harnesses stop persisting assistant TEXT blocks to the
+# transcript (only redacted thinking + tool_use entries appear). If the last
+# recorded text entry is many assistant entries old, the "last message" we
+# would check is not actually Claude's last message — unverifiable.
+FRESHNESS=$(jq -rs '
+  [.[] | select(.type == "assistant")] as $a
+  | [$a[] | any(.message.content[]?; .type == "text" and ((.text // "") | length > 0))]
+  | [to_entries[] | select(.value) | .key]
+  | (last // -1) as $last_text_idx
+  | if $last_text_idx < 0 then "no-text"
+    elif (($a | length) - 1 - $last_text_idx) > 10 then "stale"
+    else "fresh"
+    end' "$TRANSCRIPT_PATH" 2>/dev/null) || FRESHNESS="error"
+
+[ "$DEBUG_ENABLED" = "true" ] && echo "FRESHNESS: $FRESHNESS" >> "$DEBUG_LOG"
+
+case "$FRESHNESS" in
+  fresh) ;;
+  no-text) grace_exit "transcript has no assistant text blocks" ;;
+  stale)   grace_exit "last recorded text is >10 assistant entries old" ;;
+  *)       grace_exit "freshness query failed ($FRESHNESS)" ;;
+esac
 
 COMPLIANT=false
 LAST_ASSISTANT_CONTENT=""
 EXTRACTION_METHOD="none"
 
-if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-  TRANSCRIPT_SIZE=$(wc -c < "$TRANSCRIPT_PATH")
-  TRANSCRIPT_LINES=$(wc -l < "$TRANSCRIPT_PATH")
-  [ "$DEBUG_ENABLED" = "true" ] && echo "TRANSCRIPT_SIZE: $TRANSCRIPT_SIZE bytes, $TRANSCRIPT_LINES lines" >> "$DEBUG_LOG"
+# Method 1: Parse JSONL - slurp all, get last assistant WITH TEXT content, join all text
+LAST_ASSISTANT_CONTENT=$(
+  jq -rs '[.[] | select(.type == "assistant") | select(any(.message.content[]?; .type == "text"))] | last | [.message.content[]? | select(.type == "text") | .text] | join(" ")' "$TRANSCRIPT_PATH" 2>/dev/null
+) || true
 
-  # Method 1: Parse JSONL - slurp all, get last assistant WITH TEXT content, join all text
+if [ -n "$LAST_ASSISTANT_CONTENT" ]; then
+  EXTRACTION_METHOD="method1-type-assistant"
+fi
+
+# Fallback Method 2: role=assistant format
+if [ -z "$LAST_ASSISTANT_CONTENT" ]; then
   LAST_ASSISTANT_CONTENT=$(
-    jq -rs '[.[] | select(.type == "assistant") | select(any(.message.content[]?; .type == "text"))] | last | [.message.content[]? | select(.type == "text") | .text] | join(" ")' "$TRANSCRIPT_PATH" 2>/dev/null
+    jq -s '[.[] | select(.role == "assistant")] | last | .content // ""' "$TRANSCRIPT_PATH" 2>/dev/null | \
+    jq -r '.'
   ) || true
-
   if [ -n "$LAST_ASSISTANT_CONTENT" ]; then
-    EXTRACTION_METHOD="method1-type-assistant"
+    EXTRACTION_METHOD="method2-role-assistant"
   fi
+fi
 
-  # Fallback Method 2: role=assistant format
-  if [ -z "$LAST_ASSISTANT_CONTENT" ]; then
-    LAST_ASSISTANT_CONTENT=$(
-      jq -s '[.[] | select(.role == "assistant")] | last | .content // ""' "$TRANSCRIPT_PATH" 2>/dev/null | \
-      jq -r '.'
-    ) || true
-    if [ -n "$LAST_ASSISTANT_CONTENT" ]; then
-      EXTRACTION_METHOD="method2-role-assistant"
-    fi
-  fi
+# Fallback Method 3: raw tail
+if [ -z "$LAST_ASSISTANT_CONTENT" ]; then
+  LAST_ASSISTANT_CONTENT=$(tail -30 "$TRANSCRIPT_PATH" 2>/dev/null | tr '\n' ' ' || echo "")
+  EXTRACTION_METHOD="method3-tail-fallback"
+fi
 
-  # Fallback Method 3: raw tail
-  if [ -z "$LAST_ASSISTANT_CONTENT" ]; then
-    LAST_ASSISTANT_CONTENT=$(tail -30 "$TRANSCRIPT_PATH" 2>/dev/null | tr '\n' ' ' || echo "")
-    EXTRACTION_METHOD="method3-tail-fallback"
-  fi
+CONTENT_LEN=${#LAST_ASSISTANT_CONTENT}
+if [ "$DEBUG_ENABLED" = "true" ]; then
+  echo "EXTRACTION_METHOD: $EXTRACTION_METHOD" >> "$DEBUG_LOG"
+  echo "CONTENT_LENGTH: $CONTENT_LEN" >> "$DEBUG_LOG"
+  echo "CONTENT_PREVIEW: ${LAST_ASSISTANT_CONTENT:0:500}" >> "$DEBUG_LOG"
+fi
 
-  CONTENT_LEN=${#LAST_ASSISTANT_CONTENT}
-  if [ "$DEBUG_ENABLED" = "true" ]; then
-    echo "EXTRACTION_METHOD: $EXTRACTION_METHOD" >> "$DEBUG_LOG"
-    echo "CONTENT_LENGTH: $CONTENT_LEN" >> "$DEBUG_LOG"
-    echo "CONTENT_PREVIEW: ${LAST_ASSISTANT_CONTENT:0:500}" >> "$DEBUG_LOG"
-  fi
-
-  # Check for Q Protocol patterns
-  if echo "$LAST_ASSISTANT_CONTENT" | grep -qE '(DOING|EXPECT|RESULT|MATCHES|THEREFORE|IF YES|IF NO)'; then
-    COMPLIANT=true
-    MATCHED_PATTERN=$(echo "$LAST_ASSISTANT_CONTENT" | grep -oE '(DOING|EXPECT|RESULT|MATCHES|THEREFORE|IF YES|IF NO)' | head -1)
-    [ "$DEBUG_ENABLED" = "true" ] && echo "PATTERN_FOUND: YES - $MATCHED_PATTERN" >> "$DEBUG_LOG"
-  else
-    [ "$DEBUG_ENABLED" = "true" ] && echo "PATTERN_FOUND: NO" >> "$DEBUG_LOG"
-  fi
+# Check for Q Protocol patterns
+if echo "$LAST_ASSISTANT_CONTENT" | grep -qE '(DOING|EXPECT|RESULT|MATCHES|THEREFORE|IF YES|IF NO)'; then
+  COMPLIANT=true
+  MATCHED_PATTERN=$(echo "$LAST_ASSISTANT_CONTENT" | grep -oE '(DOING|EXPECT|RESULT|MATCHES|THEREFORE|IF YES|IF NO)' | head -1)
+  [ "$DEBUG_ENABLED" = "true" ] && echo "PATTERN_FOUND: YES - $MATCHED_PATTERN" >> "$DEBUG_LOG"
 else
-  [ "$DEBUG_ENABLED" = "true" ] && echo "TRANSCRIPT_STATUS: missing or empty path" >> "$DEBUG_LOG"
+  [ "$DEBUG_ENABLED" = "true" ] && echo "PATTERN_FOUND: NO" >> "$DEBUG_LOG"
 fi
 
 if [ "$COMPLIANT" = true ]; then
