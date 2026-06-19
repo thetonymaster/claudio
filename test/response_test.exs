@@ -2,6 +2,7 @@ defmodule Claudio.Messages.ResponseTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Response
+  alias Claudio.Messages.Request
 
   describe "from_map/1" do
     test "parses basic response with string keys" do
@@ -272,6 +273,33 @@ defmodule Claudio.Messages.ResponseTest do
 
       assert Response.to_assistant_content(response) ==
                [%{type: :mcp_tool_use, id: "x", name: "n", server_name: "s", input: %{}}]
+    end
+  end
+
+  describe "to_assistant_content/1 round-trip into a request payload" do
+    test "serialized assistant turn carries signature and redacted data in API shape" do
+      response = %Response{
+        content: [
+          %{type: :thinking, thinking: "reasoning", signature: "sig_abc"},
+          %{type: :redacted_thinking, data: "enc_xyz"},
+          %{type: :tool_use, id: "toolu_1", name: "get_weather", input: %{"location" => "NYC"}}
+        ]
+      }
+
+      payload =
+        Request.new("claude-x")
+        |> Request.add_message(:assistant, Response.to_assistant_content(response))
+        |> Request.to_map()
+
+      assert %{"messages" => [%{"role" => "assistant", "content" => content}]} = payload
+
+      assert %{"type" => "thinking", "thinking" => "reasoning", "signature" => "sig_abc"} =
+               Enum.at(content, 0)
+
+      assert %{"type" => "redacted_thinking", "data" => "enc_xyz"} = Enum.at(content, 1)
+
+      assert %{"type" => "tool_use", "id" => "toolu_1", "name" => "get_weather"} =
+               Enum.at(content, 2)
     end
   end
 end
