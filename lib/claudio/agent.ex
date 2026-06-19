@@ -87,7 +87,7 @@ defmodule Claudio.Agent do
       {:ok, %Response{stop_reason: :tool_use} = response} when turn + 1 >= max_turns ->
         messages =
           extract_messages(request) ++
-            [%{"role" => "assistant", "content" => serialize_content(response.content)}]
+            [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
 
         {:error, :max_turns_exceeded, response, messages}
 
@@ -97,7 +97,7 @@ defmodule Claudio.Agent do
 
         updated_request =
           request
-          |> Request.add_message(:assistant, serialize_content(response.content))
+          |> Request.add_message(:assistant, Response.to_assistant_content(response))
           # tool_results is a list of tool_result maps — add_message accepts lists as content
           |> Request.add_message(:user, tool_results)
 
@@ -106,7 +106,7 @@ defmodule Claudio.Agent do
       {:ok, %Response{} = response} ->
         messages =
           extract_messages(request) ++
-            [%{"role" => "assistant", "content" => serialize_content(response.content)}]
+            [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
 
         {:ok, response, messages}
 
@@ -143,46 +143,6 @@ defmodule Claudio.Agent do
       Tools.create_tool_result(tool_use.id, content, is_error)
     end)
   end
-
-  # Serialize Response content blocks (atom keys) back to API format (string keys)
-  defp serialize_content(content) when is_list(content) do
-    Enum.map(content, &serialize_block/1)
-  end
-
-  defp serialize_block(%{type: :text, text: text}) do
-    %{"type" => "text", "text" => text}
-  end
-
-  defp serialize_block(%{type: :tool_use, id: id, name: name, input: input}) do
-    %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
-  end
-
-  defp serialize_block(%{type: :thinking, thinking: thinking}) do
-    %{"type" => "thinking", "thinking" => thinking}
-  end
-
-  defp serialize_block(%{type: :mcp_tool_use} = block) do
-    %{
-      "type" => "mcp_tool_use",
-      "id" => block.id,
-      "name" => block.name,
-      "server_name" => block.server_name,
-      "input" => block.input
-    }
-  end
-
-  defp serialize_block(%{type: :mcp_tool_result} = block) do
-    %{
-      "type" => "mcp_tool_result",
-      "tool_use_id" => block.tool_use_id,
-      "server_name" => block.server_name,
-      "content" => block.content,
-      "is_error" => block.is_error
-    }
-  end
-
-  # Passthrough for already-serialized or unknown blocks
-  defp serialize_block(block), do: block
 
   defp extract_messages(%Request{messages: messages}), do: messages
 end
