@@ -479,6 +479,7 @@ defmodule Claudio.Messages.Request do
   @spec set_context_management(t(), map()) :: t()
   def set_context_management(%__MODULE__{} = request, config) when is_map(config) do
     %{request | context_management: config}
+    |> add_beta("context-management-2025-06-27")
   end
 
   @doc """
