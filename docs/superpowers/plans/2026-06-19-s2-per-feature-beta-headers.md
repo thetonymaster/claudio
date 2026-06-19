@@ -192,7 +192,7 @@ Replace `set_context_management/2`:
   end
 ```
 
-(`to_map/1` is unchanged — it has no `betas` line, which is exactly what the second test asserts.)
+(`to_map/1` is unchanged — it has no `betas` line, which is precisely what the second test asserts.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
