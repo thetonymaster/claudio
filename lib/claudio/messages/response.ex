@@ -15,6 +15,7 @@ defmodule Claudio.Messages.Response do
   @type content_block ::
           text_block()
           | thinking_block()
+          | redacted_thinking_block()
           | tool_use_block()
           | tool_result_block()
           | mcp_tool_use_block()
@@ -29,6 +30,11 @@ defmodule Claudio.Messages.Response do
           type: :thinking,
           thinking: String.t(),
           signature: String.t() | nil
+        }
+
+  @type redacted_thinking_block :: %{
+          type: :redacted_thinking,
+          data: String.t()
         }
 
   @type tool_use_block :: %{
@@ -159,6 +165,14 @@ defmodule Claudio.Messages.Response do
 
   defp parse_content_block(%{"type" => "thinking"} = block) do
     %{type: :thinking, thinking: block["thinking"], signature: block["signature"]}
+  end
+
+  defp parse_content_block(%{type: "redacted_thinking"} = block) do
+    %{type: :redacted_thinking, data: block[:data]}
+  end
+
+  defp parse_content_block(%{"type" => "redacted_thinking"} = block) do
+    %{type: :redacted_thinking, data: block["data"]}
   end
 
   defp parse_content_block(%{type: "tool_use"} = block) do

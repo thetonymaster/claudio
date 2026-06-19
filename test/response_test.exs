@@ -208,4 +208,28 @@ defmodule Claudio.Messages.ResponseTest do
       assert [%{type: :thinking, thinking: "hmm", signature: nil}] = response.content
     end
   end
+
+  describe "from_map/1 redacted_thinking blocks" do
+    test "parses redacted_thinking as a typed block (string keys)" do
+      data = %{
+        "content" => [%{"type" => "redacted_thinking", "data" => "enc_xyz"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :redacted_thinking, data: "enc_xyz"}] = response.content
+    end
+
+    test "parses redacted_thinking as a typed block (atom keys)" do
+      data = %{
+        content: [%{type: "redacted_thinking", data: "enc_xyz"}],
+        usage: %{input_tokens: 1, output_tokens: 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :redacted_thinking, data: "enc_xyz"}] = response.content
+    end
+  end
 end
