@@ -135,4 +135,36 @@ defmodule Claudio.Messages.StreamTest do
       assert [%{"type" => "redacted_thinking", "data" => "enc_xyz"}] = message["content"]
     end
   end
+
+  describe "build_final_message/1 citations" do
+    test "accumulates citations_delta onto the streamed block" do
+      sse = [
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Paris"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"char_location","cited_text":"Paris is the capital","document_index":0}}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert [%{"type" => "text", "text" => "Paris", "citations" => [citation]}] =
+               message["content"]
+
+      assert %{"type" => "char_location", "cited_text" => "Paris is the capital"} = citation
+    end
+  end
 end

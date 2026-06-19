@@ -381,6 +381,16 @@ defmodule Claudio.Messages.Stream do
     Map.put(block, "signature", signature)
   end
 
+  defp apply_delta(block, %{"type" => "citations_delta", "citation" => citation}) do
+    current = block["citations"] || block[:citations] || []
+    Map.put(block, "citations", current ++ [citation])
+  end
+
+  defp apply_delta(block, %{type: "citations_delta", citation: citation}) do
+    current = block["citations"] || block[:citations] || []
+    Map.put(block, "citations", current ++ [citation])
+  end
+
   defp apply_delta(block, _delta), do: block
 
   defp maybe_update(map, delta, key) do
