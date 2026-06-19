@@ -148,6 +148,9 @@ defmodule Claudio.Messages.StreamTest do
         ~s(event: content_block_delta),
         ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"char_location","cited_text":"Paris is the capital","document_index":0}}}),
         "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"char_location","cited_text":"second source","document_index":1}}}),
+        "",
         ~s(event: content_block_stop),
         ~s(data: {"type":"content_block_stop","index":0}),
         "",
@@ -161,10 +164,17 @@ defmodule Claudio.Messages.StreamTest do
         |> ClaudioStream.parse_events()
         |> ClaudioStream.build_final_message()
 
-      assert [%{"type" => "text", "text" => "Paris", "citations" => [citation]}] =
+      assert [
+               %{
+                 "type" => "text",
+                 "text" => "Paris",
+                 "citations" => [first_citation, second_citation]
+               }
+             ] =
                message["content"]
 
-      assert %{"type" => "char_location", "cited_text" => "Paris is the capital"} = citation
+      assert %{"type" => "char_location", "cited_text" => "Paris is the capital"} = first_citation
+      assert %{"type" => "char_location", "cited_text" => "second source"} = second_citation
     end
   end
 end
