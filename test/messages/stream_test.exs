@@ -84,4 +84,55 @@ defmodule Claudio.Messages.StreamTest do
       assert [{:error, {:invalid_event_data_json, "content_block_delta", _reason}}] = events
     end
   end
+
+  describe "build_final_message/1 thinking" do
+    test "preserves signature from signature_delta on the final thinking block" do
+      sse = [
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reasoning"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc"}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert [%{"type" => "thinking", "thinking" => "reasoning", "signature" => "sig_abc"}] =
+               message["content"]
+    end
+
+    test "redacted_thinking blocks survive streaming unchanged" do
+      sse = [
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"enc_xyz"}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert [%{"type" => "redacted_thinking", "data" => "enc_xyz"}] = message["content"]
+    end
+  end
 end
