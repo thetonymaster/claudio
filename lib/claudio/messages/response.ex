@@ -27,7 +27,8 @@ defmodule Claudio.Messages.Response do
 
   @type thinking_block :: %{
           type: :thinking,
-          thinking: String.t()
+          thinking: String.t(),
+          signature: String.t() | nil
         }
 
   @type tool_use_block :: %{
@@ -153,11 +154,11 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(%{type: "thinking"} = block) do
-    %{type: :thinking, thinking: block[:thinking]}
+    %{type: :thinking, thinking: block[:thinking], signature: block[:signature]}
   end
 
   defp parse_content_block(%{"type" => "thinking"} = block) do
-    %{type: :thinking, thinking: block["thinking"]}
+    %{type: :thinking, thinking: block["thinking"], signature: block["signature"]}
   end
 
   defp parse_content_block(%{type: "tool_use"} = block) do

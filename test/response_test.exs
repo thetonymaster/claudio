@@ -184,4 +184,28 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.get_tool_uses(response) == []
     end
   end
+
+  describe "from_map/1 thinking blocks" do
+    test "preserves signature on thinking blocks (string keys)" do
+      data = %{
+        "content" => [%{"type" => "thinking", "thinking" => "hmm", "signature" => "sig_abc"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :thinking, thinking: "hmm", signature: "sig_abc"}] = response.content
+    end
+
+    test "thinking signature is nil when absent" do
+      data = %{
+        "content" => [%{"type" => "thinking", "thinking" => "hmm"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :thinking, thinking: "hmm", signature: nil}] = response.content
+    end
+  end
 end
