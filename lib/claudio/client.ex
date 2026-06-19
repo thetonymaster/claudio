@@ -114,6 +114,29 @@ defmodule Claudio.Client do
     build_request(config, endpoint)
   end
 
+  @doc """
+  Merges additional beta feature flags into a client's `anthropic-beta` header.
+
+  Unions `betas` with whatever the client was built with at `new/2` (deduped,
+  insertion order preserved). An empty list returns the client unchanged. Used
+  by the send path to attach per-request betas declared via
+  `Claudio.Messages.Request.add_beta/2`.
+  """
+  @spec with_betas(Req.Request.t(), [String.t()]) :: Req.Request.t()
+  def with_betas(client, []), do: client
+
+  def with_betas(client, betas) when is_list(betas) do
+    existing =
+      client
+      |> Req.Request.get_header("anthropic-beta")
+      |> Enum.flat_map(&String.split(&1, ","))
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    merged = Enum.uniq(existing ++ betas)
+    Req.Request.put_header(client, "anthropic-beta", Enum.join(merged, ","))
+  end
+
   defp merge_defaults(config) do
     app_config = Application.get_env(:claudio, :claudio, [])
 
