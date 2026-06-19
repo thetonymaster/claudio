@@ -268,11 +268,59 @@ defmodule Claudio.Messages.ResponseTest do
 
     test "passes unknown block types through unchanged" do
       response = %Response{
-        content: [%{type: :mcp_tool_use, id: "x", name: "n", server_name: "s", input: %{}}]
+        content: [%{type: :unknown_future_type, some_field: "value"}]
       }
 
       assert Response.to_assistant_content(response) ==
-               [%{type: :mcp_tool_use, id: "x", name: "n", server_name: "s", input: %{}}]
+               [%{type: :unknown_future_type, some_field: "value"}]
+    end
+
+    test "serializes mcp_tool_use blocks to API shape" do
+      response = %Response{
+        content: [
+          %{
+            type: :mcp_tool_use,
+            id: "mcp_1",
+            name: "search",
+            server_name: "srv",
+            input: %{"q" => "x"}
+          }
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "mcp_tool_use",
+                 "id" => "mcp_1",
+                 "name" => "search",
+                 "server_name" => "srv",
+                 "input" => %{"q" => "x"}
+               }
+             ]
+    end
+
+    test "serializes mcp_tool_result blocks to API shape" do
+      response = %Response{
+        content: [
+          %{
+            type: :mcp_tool_result,
+            tool_use_id: "mcp_1",
+            server_name: "srv",
+            content: "ok",
+            is_error: false
+          }
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "mcp_tool_result",
+                 "tool_use_id" => "mcp_1",
+                 "server_name" => "srv",
+                 "content" => "ok",
+                 "is_error" => false
+               }
+             ]
     end
   end
 

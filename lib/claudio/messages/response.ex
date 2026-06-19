@@ -289,6 +289,26 @@ defmodule Claudio.Messages.Response do
     %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
   end
 
+  defp block_to_api(%{type: :mcp_tool_use} = block) do
+    %{
+      "type" => "mcp_tool_use",
+      "id" => block.id,
+      "name" => block.name,
+      "server_name" => block.server_name,
+      "input" => block.input
+    }
+  end
+
+  defp block_to_api(%{type: :mcp_tool_result} = block) do
+    %{
+      "type" => "mcp_tool_result",
+      "tool_use_id" => block.tool_use_id,
+      "server_name" => block.server_name,
+      "content" => block.content,
+      "is_error" => block.is_error
+    }
+  end
+
   defp block_to_api(block), do: block
 
   defp parse_stop_reason("end_turn"), do: :end_turn
