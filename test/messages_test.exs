@@ -453,6 +453,7 @@ defmodule Claudio.MessagesTest do
       Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
         [beta_header] = Plug.Conn.get_req_header(conn, "anthropic-beta")
         assert beta_header =~ "context-management-2025-06-27"
+        assert beta_header =~ "token-counting-2024-11-01"
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
