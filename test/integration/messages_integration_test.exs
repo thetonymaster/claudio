@@ -187,7 +187,9 @@ defmodule Claudio.Messages.IntegrationTest do
         Request.new(test_model())
         |> Request.add_message(:user, "What's the weather in NYC? Use the tool.")
         |> Request.add_message(:assistant, Response.to_assistant_content(response))
-        |> Request.add_message(:user, tool_results)
+        |> then(fn req ->
+          if tool_results == [], do: req, else: Request.add_message(req, :user, tool_results)
+        end)
         |> Request.set_max_tokens(2048)
         |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 1024})
         |> Request.add_tool(tool)
