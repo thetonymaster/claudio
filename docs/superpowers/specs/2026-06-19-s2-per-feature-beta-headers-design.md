@@ -158,8 +158,14 @@ Batches and `count_tokens` are covered by Bypass only: both reuse the same
 asynchronous (up to 24h), so a live batch test would not finish in a test run.
 
 Integration tests follow the repo convention in `test/integration/`
-(`Claudio.IntegrationHelper`); fail-loud, not silent-skip, when a key is absent,
-matching the S1 convention.
+(`Claudio.IntegrationHelper`): the module's `setup_all` skips when no
+`ANTHROPIC_API_KEY` is present — the standard gate across the suite, including
+S1's own tests in this module. "Fail-loud" here means the tests are
+**non-vacuous** (the sense of S1's convention, commit `5168a62`): the positive
+asserts a `200`/`%Response{}` and the negative control asserts the `400`, so the
+test cannot pass without exercising the beta path. It does **not** mean failing
+when the key is absent — that would contradict the established skip-if-no-key
+convention.
 
 ## Files touched
 

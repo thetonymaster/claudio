@@ -661,5 +661,5 @@ git commit -m "test(integration): pin context-management beta with positive + ne
 
 ## Notes
 
-- **Spec deviation (integration skip vs fail-loud):** the spec mentioned "fail-loud, not silent-skip." This plan instead follows the existing `test/integration/messages_integration_test.exs` convention (`setup_all` skips when no key). If fail-loud is required, that's a one-line change to `IntegrationHelper.skip_if_no_api_key/0`'s caller — flag at review.
+- **Integration test convention (resolved):** "fail-loud" — per S1's convention (commit `5168a62`, "assert … instead of silently skipping") — means the test asserts its preconditions and cannot pass **vacuously**, NOT that it fails when no API key is present. S2's integration test satisfies this: the positive asserts `{:ok, %Response{}}` and the negative control asserts `{:error, %APIError{status_code: 400}}`, so a pass requires the beta to have been attached and required. It also follows the repo-standard `setup_all` skip-if-no-key gate (identical to S1's own tests in this module). No `IntegrationHelper` change is needed; the spec's earlier "fail when key absent" wording was inaccurate and has been corrected.
 - **`Req.Request.get_header/2` / `put_header/3`** are the Req public API for reading/writing request headers; `with_betas/2` relies on them.

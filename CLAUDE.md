@@ -86,6 +86,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Vision/image support** (`add_message_with_image/4`, `add_message_with_image_url/3`)
 - **Document support** (`add_message_with_document/3`)
 - **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps)
+- **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - Converts to map via `to_map/1` for API submission
 
 Example:
