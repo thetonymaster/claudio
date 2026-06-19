@@ -150,5 +150,11 @@ defmodule Claudio.ClientTest do
       merged = Claudio.Client.with_betas(client, ["a-2025-01-01", "b-2025-01-01"])
       assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
     end
+
+    test "trims and drops blank/whitespace-only betas before merging" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
+      merged = Claudio.Client.with_betas(client, [" b-2025-01-01 ", "", "   "])
+      assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
+    end
   end
 end

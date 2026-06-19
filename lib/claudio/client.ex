@@ -118,14 +118,20 @@ defmodule Claudio.Client do
   Merges additional beta feature flags into a client's `anthropic-beta` header.
 
   Unions `betas` with whatever the client was built with at `new/2` (deduped,
-  insertion order preserved). An empty list returns the client unchanged. Used
-  by the send path to attach per-request betas declared via
-  `Claudio.Messages.Request.add_beta/2`.
+  insertion order preserved). Blank and whitespace-only entries are trimmed and
+  dropped before merging; an empty list (or one that normalizes to empty)
+  returns the client unchanged. Used by the send path to attach per-request
+  betas declared via `Claudio.Messages.Request.add_beta/2`.
   """
   @spec with_betas(Req.Request.t(), [String.t()]) :: Req.Request.t()
   def with_betas(client, []), do: client
 
   def with_betas(client, betas) when is_list(betas) do
+    normalized =
+      betas
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
     existing =
       client
       |> Req.Request.get_header("anthropic-beta")
@@ -133,8 +139,10 @@ defmodule Claudio.Client do
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    merged = Enum.uniq(existing ++ betas)
-    Req.Request.put_header(client, "anthropic-beta", Enum.join(merged, ","))
+    case Enum.uniq(existing ++ normalized) do
+      [] -> client
+      merged -> Req.Request.put_header(client, "anthropic-beta", Enum.join(merged, ","))
+    end
   end
 
   defp merge_defaults(config) do
