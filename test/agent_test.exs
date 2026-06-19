@@ -56,6 +56,22 @@ defmodule Claudio.AgentTest do
     }
   end
 
+  defp thinking_tool_use_response(tool_use_id, tool_name, input, signature) do
+    %{
+      "id" => "msg_#{System.unique_integer([:positive])}",
+      "type" => "message",
+      "role" => "assistant",
+      "model" => "claude-sonnet-4-5-20250929",
+      "content" => [
+        %{"type" => "thinking", "thinking" => "Let me think", "signature" => signature},
+        %{"type" => "tool_use", "id" => tool_use_id, "name" => tool_name, "input" => input}
+      ],
+      "stop_reason" => "tool_use",
+      "stop_sequence" => nil,
+      "usage" => %{"input_tokens" => 15, "output_tokens" => 30}
+    }
+  end
+
   defp base_request do
     Request.new("claude-sonnet-4-5-20250929")
     |> Request.add_message(:user, "Hello")
@@ -413,6 +429,56 @@ defmodule Claudio.AgentTest do
         Agent.run(client, request, handlers, on_tool_call: on_tool_call)
 
       assert_receive {:tool_called, "get_weather", {:ok, "72°F"}}
+    end
+
+    test "preserves thinking signature when replaying the assistant turn", %{
+      client: client,
+      bypass: bypass
+    } do
+      call_count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 ->
+            json_response(
+              conn,
+              thinking_tool_use_response(
+                "toolu_1",
+                "get_weather",
+                %{"location" => "SF"},
+                "sig_xyz"
+              )
+            )
+
+          2 ->
+            json_response(conn, end_turn_response("Done"))
+        end
+      end)
+
+      handlers = %{"get_weather" => fn %{"location" => loc} -> {:ok, "72F in #{loc}"} end}
+
+      request =
+        base_request()
+        |> Request.add_tool(
+          Tools.define_tool("get_weather", "Get weather", %{
+            "type" => "object",
+            "properties" => %{"location" => %{"type" => "string"}},
+            "required" => ["location"]
+          })
+        )
+
+      {:ok, _response, messages} = Agent.run(client, request, handlers)
+
+      thinking_block =
+        messages
+        |> Enum.filter(&(&1["role"] == "assistant"))
+        |> Enum.flat_map(fn m -> List.wrap(m["content"]) end)
+        |> Enum.find(fn b -> is_map(b) and b["type"] == "thinking" end)
+
+      assert thinking_block != nil
+      assert thinking_block["signature"] == "sig_xyz"
     end
 
     test "propagates API errors", %{client: client, bypass: bypass} do

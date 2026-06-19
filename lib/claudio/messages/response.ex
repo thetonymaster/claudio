@@ -15,6 +15,7 @@ defmodule Claudio.Messages.Response do
   @type content_block ::
           text_block()
           | thinking_block()
+          | redacted_thinking_block()
           | tool_use_block()
           | tool_result_block()
           | mcp_tool_use_block()
@@ -27,7 +28,13 @@ defmodule Claudio.Messages.Response do
 
   @type thinking_block :: %{
           type: :thinking,
-          thinking: String.t()
+          thinking: String.t(),
+          signature: String.t() | nil
+        }
+
+  @type redacted_thinking_block :: %{
+          type: :redacted_thinking,
+          data: String.t()
         }
 
   @type tool_use_block :: %{
@@ -140,6 +147,23 @@ defmodule Claudio.Messages.Response do
     Enum.filter(content, &(&1.type == :mcp_tool_use && &1.server_name == server_name))
   end
 
+  @doc """
+  Converts the response content into API-shaped assistant content blocks for
+  replaying as the assistant turn in a follow-up request:
+
+      request
+      |> Request.add_message(:assistant, Response.to_assistant_content(response))
+
+  Emits string-keyed blocks that preserve `signature` (thinking) and `data`
+  (redacted_thinking) — both required by the API when continuing an
+  extended-thinking + tool-use conversation. Unknown block types are passed
+  through unchanged (coverage grows in later specs).
+  """
+  @spec to_assistant_content(t()) :: [map()]
+  def to_assistant_content(%__MODULE__{content: content}) do
+    Enum.map(content, &block_to_api/1)
+  end
+
   defp parse_content(content) when is_list(content) do
     Enum.map(content, &parse_content_block/1)
   end
@@ -153,11 +177,19 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(%{type: "thinking"} = block) do
-    %{type: :thinking, thinking: block[:thinking]}
+    %{type: :thinking, thinking: block[:thinking], signature: block[:signature]}
   end
 
   defp parse_content_block(%{"type" => "thinking"} = block) do
-    %{type: :thinking, thinking: block["thinking"]}
+    %{type: :thinking, thinking: block["thinking"], signature: block["signature"]}
+  end
+
+  defp parse_content_block(%{type: "redacted_thinking"} = block) do
+    %{type: :redacted_thinking, data: block[:data]}
+  end
+
+  defp parse_content_block(%{"type" => "redacted_thinking"} = block) do
+    %{type: :redacted_thinking, data: block["data"]}
   end
 
   defp parse_content_block(%{type: "tool_use"} = block) do
@@ -235,6 +267,49 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(block), do: block
+
+  defp block_to_api(%{type: :text, text: text}) do
+    %{"type" => "text", "text" => text}
+  end
+
+  defp block_to_api(%{type: :thinking, thinking: thinking} = block) do
+    base = %{"type" => "thinking", "thinking" => thinking}
+
+    case block[:signature] do
+      nil -> base
+      signature -> Map.put(base, "signature", signature)
+    end
+  end
+
+  defp block_to_api(%{type: :redacted_thinking, data: data}) do
+    %{"type" => "redacted_thinking", "data" => data}
+  end
+
+  defp block_to_api(%{type: :tool_use, id: id, name: name, input: input}) do
+    %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+  end
+
+  defp block_to_api(%{type: :mcp_tool_use} = block) do
+    %{
+      "type" => "mcp_tool_use",
+      "id" => block.id,
+      "name" => block.name,
+      "server_name" => block.server_name,
+      "input" => block.input
+    }
+  end
+
+  defp block_to_api(%{type: :mcp_tool_result} = block) do
+    %{
+      "type" => "mcp_tool_result",
+      "tool_use_id" => block.tool_use_id,
+      "server_name" => block.server_name,
+      "content" => block.content,
+      "is_error" => block.is_error
+    }
+  end
+
+  defp block_to_api(block), do: block
 
   defp parse_stop_reason("end_turn"), do: :end_turn
   defp parse_stop_reason("max_tokens"), do: :max_tokens

@@ -2,6 +2,7 @@ defmodule Claudio.Messages.ResponseTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Response
+  alias Claudio.Messages.Request
 
   describe "from_map/1" do
     test "parses basic response with string keys" do
@@ -182,6 +183,182 @@ defmodule Claudio.Messages.ResponseTest do
       }
 
       assert Response.get_tool_uses(response) == []
+    end
+  end
+
+  describe "from_map/1 thinking blocks" do
+    test "preserves signature on thinking blocks (string keys)" do
+      data = %{
+        "content" => [%{"type" => "thinking", "thinking" => "hmm", "signature" => "sig_abc"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :thinking, thinking: "hmm", signature: "sig_abc"}] = response.content
+    end
+
+    test "preserves signature on thinking blocks (atom keys)" do
+      data = %{
+        content: [%{type: "thinking", thinking: "hmm", signature: "sig_abc"}],
+        usage: %{input_tokens: 1, output_tokens: 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :thinking, thinking: "hmm", signature: "sig_abc"}] = response.content
+    end
+
+    test "thinking signature is nil when absent" do
+      data = %{
+        "content" => [%{"type" => "thinking", "thinking" => "hmm"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :thinking, thinking: "hmm", signature: nil}] = response.content
+    end
+  end
+
+  describe "from_map/1 redacted_thinking blocks" do
+    test "parses redacted_thinking as a typed block (string keys)" do
+      data = %{
+        "content" => [%{"type" => "redacted_thinking", "data" => "enc_xyz"}],
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :redacted_thinking, data: "enc_xyz"}] = response.content
+    end
+
+    test "parses redacted_thinking as a typed block (atom keys)" do
+      data = %{
+        content: [%{type: "redacted_thinking", data: "enc_xyz"}],
+        usage: %{input_tokens: 1, output_tokens: 1}
+      }
+
+      response = Response.from_map(data)
+
+      assert [%{type: :redacted_thinking, data: "enc_xyz"}] = response.content
+    end
+  end
+
+  describe "to_assistant_content/1" do
+    test "emits API-shaped string-keyed blocks preserving signature, data, tool_use" do
+      response = %Response{
+        content: [
+          %{type: :text, text: "answer"},
+          %{type: :thinking, thinking: "reasoning", signature: "sig_abc"},
+          %{type: :redacted_thinking, data: "enc_xyz"},
+          %{type: :tool_use, id: "toolu_1", name: "get_weather", input: %{"location" => "NYC"}}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "text", "text" => "answer"},
+               %{"type" => "thinking", "thinking" => "reasoning", "signature" => "sig_abc"},
+               %{"type" => "redacted_thinking", "data" => "enc_xyz"},
+               %{
+                 "type" => "tool_use",
+                 "id" => "toolu_1",
+                 "name" => "get_weather",
+                 "input" => %{"location" => "NYC"}
+               }
+             ]
+    end
+
+    test "omits signature when nil" do
+      response = %Response{content: [%{type: :thinking, thinking: "x", signature: nil}]}
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "thinking", "thinking" => "x"}
+             ]
+    end
+
+    test "passes unknown block types through unchanged" do
+      response = %Response{
+        content: [%{type: :unknown_future_type, some_field: "value"}]
+      }
+
+      assert Response.to_assistant_content(response) ==
+               [%{type: :unknown_future_type, some_field: "value"}]
+    end
+
+    test "serializes mcp_tool_use blocks to API shape" do
+      response = %Response{
+        content: [
+          %{
+            type: :mcp_tool_use,
+            id: "mcp_1",
+            name: "search",
+            server_name: "srv",
+            input: %{"q" => "x"}
+          }
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "mcp_tool_use",
+                 "id" => "mcp_1",
+                 "name" => "search",
+                 "server_name" => "srv",
+                 "input" => %{"q" => "x"}
+               }
+             ]
+    end
+
+    test "serializes mcp_tool_result blocks to API shape" do
+      response = %Response{
+        content: [
+          %{
+            type: :mcp_tool_result,
+            tool_use_id: "mcp_1",
+            server_name: "srv",
+            content: "ok",
+            is_error: false
+          }
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "mcp_tool_result",
+                 "tool_use_id" => "mcp_1",
+                 "server_name" => "srv",
+                 "content" => "ok",
+                 "is_error" => false
+               }
+             ]
+    end
+  end
+
+  describe "to_assistant_content/1 round-trip into a request payload" do
+    test "serialized assistant turn carries signature and redacted data in API shape" do
+      response = %Response{
+        content: [
+          %{type: :thinking, thinking: "reasoning", signature: "sig_abc"},
+          %{type: :redacted_thinking, data: "enc_xyz"},
+          %{type: :tool_use, id: "toolu_1", name: "get_weather", input: %{"location" => "NYC"}}
+        ]
+      }
+
+      payload =
+        Request.new("claude-x")
+        |> Request.add_message(:assistant, Response.to_assistant_content(response))
+        |> Request.to_map()
+
+      assert %{"messages" => [%{"role" => "assistant", "content" => content}]} = payload
+
+      assert %{"type" => "thinking", "thinking" => "reasoning", "signature" => "sig_abc"} =
+               Enum.at(content, 0)
+
+      assert %{"type" => "redacted_thinking", "data" => "enc_xyz"} = Enum.at(content, 1)
+
+      assert %{"type" => "tool_use", "id" => "toolu_1", "name" => "get_weather"} =
+               Enum.at(content, 2)
     end
   end
 end
