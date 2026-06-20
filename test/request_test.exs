@@ -509,4 +509,61 @@ defmodule Claudio.Messages.RequestTest do
       refute Map.has_key?(document, "citations")
     end
   end
+
+  describe "search_result_block/4" do
+    test "wraps string contents into text blocks with required fields" do
+      block =
+        Request.search_result_block("https://example.com/a", "Article Title", [
+          "chunk one",
+          "chunk two"
+        ])
+
+      assert block == %{
+               "type" => "search_result",
+               "source" => "https://example.com/a",
+               "title" => "Article Title",
+               "content" => [
+                 %{"type" => "text", "text" => "chunk one"},
+                 %{"type" => "text", "text" => "chunk two"}
+               ]
+             }
+    end
+
+    test "passes pre-built text-block maps through unchanged" do
+      content = [%{"type" => "text", "text" => "already a block"}]
+      block = Request.search_result_block("src", "Title", content)
+      assert block["content"] == content
+    end
+
+    test "citations: true enables citations" do
+      block = Request.search_result_block("src", "Title", ["x"], citations: true)
+      assert block["citations"] == %{"enabled" => true}
+    end
+
+    test "citations: false omits the citations key" do
+      block = Request.search_result_block("src", "Title", ["x"], citations: false)
+      refute Map.has_key?(block, "citations")
+    end
+
+    test "cache_control: true adds default ephemeral cache_control" do
+      block = Request.search_result_block("src", "Title", ["x"], cache_control: true)
+      assert block["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "cache_control with a ttl string sets the ttl" do
+      block = Request.search_result_block("src", "Title", ["x"], cache_control: "1h")
+      assert block["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
+    end
+
+    test "composes into a message via add_message/3" do
+      result = Request.search_result_block("src", "Title", ["x"], citations: true)
+
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_message(:user, [result, %{"type" => "text", "text" => "Question?"}])
+
+      [message] = Request.to_map(request)["messages"]
+      assert [%{"type" => "search_result"}, %{"type" => "text"}] = message["content"]
+    end
+  end
 end

@@ -216,6 +216,43 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Builds a `search_result` content block for RAG / grounded citations.
+
+  `contents` may be a list of strings (each wrapped as a `text` block) or a list
+  of pre-built text-block maps. Compose into a turn with `add_message/3`:
+
+      result =
+        Request.search_result_block("https://docs/api", "API Reference", ["…"],
+          citations: true
+        )
+
+      request
+      |> Request.add_message(:user, [
+        result,
+        %{"type" => "text", "text" => "How do I authenticate?"}
+      ])
+
+  ## Options
+
+  - `:citations` - When `true`, enables citations on this result
+    (surfaces as `search_result_location` citations on response text blocks).
+  - `:cache_control` - `true` for default ephemeral caching, or a ttl string
+    (`"5m"` / `"1h"`).
+  """
+  @spec search_result_block(String.t(), String.t(), [String.t() | map()], keyword()) :: map()
+  def search_result_block(source, title, contents, opts \\ [])
+      when is_binary(source) and is_binary(title) and is_list(contents) do
+    %{
+      "type" => "search_result",
+      "source" => source,
+      "title" => title,
+      "content" => Enum.map(contents, &normalize_search_result_content/1)
+    }
+    |> maybe_put_citations(Keyword.get(opts, :citations))
+    |> maybe_put("cache_control", search_result_cache(Keyword.get(opts, :cache_control)))
+  end
+
+  @doc """
   Sets the system prompt.
 
   Can be a string or a list of content blocks with optional cache_control.
@@ -716,4 +753,14 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map
+
+  defp normalize_search_result_content(text) when is_binary(text),
+    do: %{"type" => "text", "text" => text}
+
+  defp normalize_search_result_content(%{} = block), do: block
+
+  defp search_result_cache(nil), do: nil
+  defp search_result_cache(false), do: nil
+  defp search_result_cache(true), do: cache_control_map(nil)
+  defp search_result_cache(ttl) when is_binary(ttl), do: cache_control_map(ttl)
 end
