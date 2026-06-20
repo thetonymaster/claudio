@@ -88,6 +88,9 @@ defmodule Claudio.MixProject do
         "Models API": [
           Claudio.Models
         ],
+        "Admin API": [
+          Claudio.Admin
+        ],
         Tools: [
           Claudio.Tools
         ],
