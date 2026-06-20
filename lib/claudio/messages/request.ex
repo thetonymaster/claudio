@@ -663,6 +663,33 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds the server-side `web_search` tool. GA — no beta header.
+
+  ## Options
+
+  - `:version` — `:basic` for `web_search_20250305`, otherwise the default
+    `web_search_20260209` (dynamic filtering on 4.6+). A full type string is
+    also accepted.
+  - `:max_uses` — cap the number of searches per request.
+  - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
+  - `:user_location` — approximate-location map for localized results.
+
+  Server-tool output is typed as `server_tool_use` / `web_search_tool_result`
+  blocks (see `Claudio.Messages.Response.get_server_tool_uses/1`).
+  """
+  @spec add_web_search_tool(t(), keyword()) :: t()
+  def add_web_search_tool(%__MODULE__{} = request, opts \\ []) do
+    tool =
+      %{"type" => web_search_type(Keyword.get(opts, :version)), "name" => "web_search"}
+      |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
+      |> maybe_put("allowed_domains", Keyword.get(opts, :allowed_domains))
+      |> maybe_put("blocked_domains", Keyword.get(opts, :blocked_domains))
+      |> maybe_put("user_location", Keyword.get(opts, :user_location))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
   Adds a text message whose content block carries a `cache_control` breakpoint.
 
   Use for the "growing conversation prefix" caching pattern — mark the last
@@ -753,6 +780,10 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map
+
+  defp web_search_type(:basic), do: "web_search_20250305"
+  defp web_search_type(nil), do: "web_search_20260209"
+  defp web_search_type(version) when is_binary(version), do: version
 
   defp normalize_search_result_content(text) when is_binary(text),
     do: %{"type" => "text", "text" => text}

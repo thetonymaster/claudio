@@ -562,4 +562,48 @@ defmodule Claudio.Messages.RequestTest do
       assert [%{"type" => "search_result"}, %{"type" => "text"}] = message["content"]
     end
   end
+
+  describe "add_web_search_tool/2 (S6)" do
+    test "default emits web_search_20260209 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_search_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "web_search_20260209", "name" => "web_search"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "version: :basic selects web_search_20250305" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_search_tool(version: :basic)
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["type"] == "web_search_20250305"
+    end
+
+    test "threads max_uses / allowed_domains / blocked_domains / user_location" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_web_search_tool(
+          max_uses: 3,
+          allowed_domains: ["example.com"],
+          blocked_domains: ["spam.com"],
+          user_location: %{"type" => "approximate", "country" => "US"}
+        )
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["max_uses"] == 3
+      assert tool["allowed_domains"] == ["example.com"]
+      assert tool["blocked_domains"] == ["spam.com"]
+      assert tool["user_location"] == %{"type" => "approximate", "country" => "US"}
+    end
+
+    test "appends after an existing tool" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_tool(%{"name" => "x", "input_schema" => %{"type" => "object"}})
+        |> Request.add_web_search_tool()
+
+      assert length(Request.to_map(request)["tools"]) == 2
+    end
+  end
 end
