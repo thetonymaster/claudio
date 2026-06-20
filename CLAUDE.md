@@ -221,6 +221,13 @@ One flat module with grouped functions over a shared private request helper:
 
 Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token (S8) and are not covered.
 
+### Skills API (lib/claudio/skills.ex) — beta
+The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). Every request carries `anthropic-beta: skills-2025-10-02`, attached automatically via `Claudio.Client.with_betas/2` (callers don't pre-configure the beta).
+- **Read/manage:** `list/2` (`:limit`/`:page`/`:source`), `get/2`, `delete/2`, `list_versions/3`, `get_version/3`, `delete_version/3`
+- **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + beta + multipart transport.
+
+Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. **Prompt-tools** (`/v1/experimental/*`) are intentionally **not** implemented — experimental, access-gated, beta header unverified.
+
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
@@ -281,6 +288,7 @@ lib/claudio/
 │   ├── response.ex        # Response parser
 │   └── stream.ex          # SSE streaming
 ├── admin.ex              # Admin API (organizations/*)
+├── skills.ex             # Agent Skills API (beta)
 ├── models.ex             # Models API
 ├── mcp/
 │   ├── server_config.ex   # API-level MCP server config

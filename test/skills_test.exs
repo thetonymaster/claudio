@@ -29,7 +29,10 @@ defmodule Claudio.SkillsTest do
   end
 
   describe "reads and management" do
-    test "list passes limit/source and attaches the skills beta", %{client: client, bypass: bypass} do
+    test "list passes limit/source and attaches the skills beta", %{
+      client: client,
+      bypass: bypass
+    } do
       Bypass.expect_once(bypass, "GET", "/skills", fn conn ->
         conn = assert_beta(conn)
         params = URI.decode_query(conn.query_string)
@@ -67,20 +70,30 @@ defmodule Claudio.SkillsTest do
         conn = assert_beta(conn)
 
         case {conn.method, conn.request_path} do
-          {"GET", "/skills/skill_1/versions"} -> json(conn, 200, %{"data" => []})
-          {"GET", "/skills/skill_1/versions/1759178010641129"} -> json(conn, 200, %{"version" => "1759178010641129"})
-          {"DELETE", "/skills/skill_1/versions/1759178010641129"} -> json(conn, 200, %{"deleted" => true})
+          {"GET", "/skills/skill_1/versions"} ->
+            json(conn, 200, %{"data" => []})
+
+          {"GET", "/skills/skill_1/versions/1759178010641129"} ->
+            json(conn, 200, %{"version" => "1759178010641129"})
+
+          {"DELETE", "/skills/skill_1/versions/1759178010641129"} ->
+            json(conn, 200, %{"deleted" => true})
         end
       end)
 
       assert {:ok, %{"data" => []}} = Skills.list_versions(client, "skill_1")
       assert {:ok, %{"version" => _}} = Skills.get_version(client, "skill_1", "1759178010641129")
-      assert {:ok, %{"deleted" => true}} = Skills.delete_version(client, "skill_1", "1759178010641129")
+
+      assert {:ok, %{"deleted" => true}} =
+               Skills.delete_version(client, "skill_1", "1759178010641129")
     end
   end
 
   describe "multipart create" do
-    test "create POSTs multipart/form-data with the beta header", %{client: client, bypass: bypass} do
+    test "create POSTs multipart/form-data with the beta header", %{
+      client: client,
+      bypass: bypass
+    } do
       Bypass.expect_once(bypass, "POST", "/skills", fn conn ->
         conn = assert_beta(conn)
         [content_type] = Plug.Conn.get_req_header(conn, "content-type")
