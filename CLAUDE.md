@@ -50,15 +50,18 @@ mix compile           # Compile the project
 ### HTTP Client Layer (lib/claudio/client.ex)
 The `Claudio.Client` module wraps Req HTTP client with Anthropic-specific configuration:
 - Uses Mint adapter (configured in config/config.exs)
-- Handles authentication via x-api-key header
+- Handles authentication via `x-api-key` header (default) **or** `Authorization: Bearer` (set `auth_type: :bearer`) — for OAuth / Workload Identity Federation tokens. The `:token` field carries the credential in both modes.
 - Supports API versioning via anthropic-version header
 - Supports beta features via anthropic-beta header
 - Uses Poison for JSON encoding/decoding
 
 Client initialization requires:
-- `token`: API key
+- `token`: API key (or, with `auth_type: :bearer`, an OAuth/WIF bearer token)
 - `version`: API version (e.g., "2023-06-01")
+- `auth_type`: (optional) `:api_key` (default) or `:bearer`. Claude-Code-style OAuth tokens also need `beta: ["oauth-2025-04-20"]`.
 - `beta`: (optional) list of beta feature flags
+
+> **Alt deployments (Bedrock / Vertex):** not implemented — they need SigV4 / GCP ADC signing, model-id prefixing, and per-feature masking (large effort, deferred until demand). The OAuth token-exchange flow (`POST /v1/oauth/token`) is likewise out of scope; supply an already-obtained bearer token.
 
 ### Messages API (lib/claudio/messages.ex)
 The `Claudio.Messages` module provides both legacy and new APIs:
@@ -90,6 +93,13 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
 - **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
+- **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
+  - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
+  - `add_web_fetch_tool/2` — `web_fetch_20260209` (default) / `web_fetch_20250910` (`version: :basic`); `:citations`; GA
+  - `add_code_execution_tool/1` — `code_execution_20260120`; GA (pairs with `set_container/2`)
+  - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
+  - `add_memory_tool/1` — `memory_20250818`; GA, client-side
+  - `add_computer_tool/4` — `computer_20250124`; **auto-declares the `computer-use-2025-01-24` beta** via `add_beta/2`
 - Converts to map via `to_map/1` for API submission
 
 Example:
@@ -198,6 +208,26 @@ The `Claudio.Models` module wraps the GA Models API (no beta header):
 
 Returns the raw decoded body (`{:ok, map()}`), consistent with `Claudio.Files` / `Claudio.Batches`; non-200 responses map to `Claudio.APIError`.
 
+### Admin API (lib/claudio/admin.ex)
+The `Claudio.Admin` module wraps the GA Admin API (`/v1/organizations/*`). It needs an **Admin API key** (`sk-ant-admin…`) — built the normal way (`Claudio.Client.new(%{token: admin_key, ...})`), since the admin key rides the same `x-api-key` header. No beta header.
+
+One flat module with grouped functions over a shared private request helper:
+- **Org:** `get_organization/1`
+- **Members:** `list_users/2`, `get_user/2`, `update_user/3`, `remove_user/2`
+- **Invites:** `list_invites/2`, `get_invite/2`, `create_invite/2`, `delete_invite/2`
+- **Workspaces:** `list_workspaces/2`, `get_workspace/2`, `create_workspace/2`, `update_workspace/3`, `archive_workspace/2`
+- **API keys:** `list_api_keys/2`, `get_api_key/2`, `update_api_key/3` (create/delete are Console-only)
+- **Usage/cost:** `usage_report/2`, `cost_report/2` (opts pass through as query params)
+
+Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token (S8) and are not covered.
+
+### Skills API (lib/claudio/skills.ex) — beta
+The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). Every request carries `anthropic-beta: skills-2025-10-02`, attached automatically via `Claudio.Client.with_betas/2` (callers don't pre-configure the beta).
+- **Read/manage:** `list/2` (`:limit`/`:page`/`:source`), `get/2`, `delete/2`, `list_versions/3`, `get_version/3`, `delete_version/3`
+- **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + beta + multipart transport.
+
+Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. **Prompt-tools** (`/v1/experimental/*`) are intentionally **not** implemented — experimental, access-gated, beta header unverified.
+
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
@@ -257,6 +287,8 @@ lib/claudio/
 │   ├── request.ex         # Request builder
 │   ├── response.ex        # Response parser
 │   └── stream.ex          # SSE streaming
+├── admin.ex              # Admin API (organizations/*)
+├── skills.ex             # Agent Skills API (beta)
 ├── models.ex             # Models API
 ├── mcp/
 │   ├── server_config.ex   # API-level MCP server config

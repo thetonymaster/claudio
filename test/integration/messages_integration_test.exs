@@ -362,4 +362,28 @@ defmodule Claudio.Messages.IntegrationTest do
       assert Enum.any?(citations, &(&1["type"] == "search_result_location"))
     end
   end
+
+  describe "server-side tools (S6)" do
+    # The default web_search_20260209 (dynamic filtering) needs a 4.6+ model.
+    @search_model "claude-sonnet-4-6"
+
+    test "web_search runs server-side and yields typed server_tool_use + result",
+         %{client: client} do
+      request =
+        Request.new(@search_model)
+        |> Request.add_web_search_tool(max_uses: 2)
+        |> Request.add_message(
+          :user,
+          "Use the web_search tool to find the current population of Tokyo, then state it."
+        )
+        |> Request.set_max_tokens(1024)
+
+      assert {:ok, %Response{} = response} = Messages.create(client, request)
+
+      # S6 built the tool; S5 types the response blocks it produces.
+      server_uses = Response.get_server_tool_uses(response)
+      assert Enum.any?(server_uses, &(&1.name == "web_search"))
+      assert Enum.any?(response.content, &(&1.type == :web_search_tool_result))
+    end
+  end
 end

@@ -562,4 +562,164 @@ defmodule Claudio.Messages.RequestTest do
       assert [%{"type" => "search_result"}, %{"type" => "text"}] = message["content"]
     end
   end
+
+  describe "add_web_search_tool/2 (S6)" do
+    test "default emits web_search_20260209 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_search_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "web_search_20260209", "name" => "web_search"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "version: :basic selects web_search_20250305" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_search_tool(version: :basic)
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["type"] == "web_search_20250305"
+    end
+
+    test "threads max_uses / allowed_domains / blocked_domains / user_location" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_web_search_tool(
+          max_uses: 3,
+          allowed_domains: ["example.com"],
+          blocked_domains: ["spam.com"],
+          user_location: %{"type" => "approximate", "country" => "US"}
+        )
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["max_uses"] == 3
+      assert tool["allowed_domains"] == ["example.com"]
+      assert tool["blocked_domains"] == ["spam.com"]
+      assert tool["user_location"] == %{"type" => "approximate", "country" => "US"}
+    end
+
+    test "appends after an existing tool" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_tool(%{"name" => "x", "input_schema" => %{"type" => "object"}})
+        |> Request.add_web_search_tool()
+
+      assert length(Request.to_map(request)["tools"]) == 2
+    end
+  end
+
+  describe "add_web_fetch_tool/2 (S6)" do
+    test "default emits web_fetch_20260209 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "web_fetch_20260209", "name" => "web_fetch"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "version: :basic selects web_fetch_20250910" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool(version: :basic)
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["type"] == "web_fetch_20250910"
+    end
+
+    test "citations: true and content/domain opts are threaded" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_web_fetch_tool(
+          citations: true,
+          max_uses: 5,
+          allowed_domains: ["example.com"],
+          blocked_domains: ["spam.com"],
+          max_content_tokens: 50_000
+        )
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["citations"] == %{"enabled" => true}
+      assert tool["max_uses"] == 5
+      assert tool["allowed_domains"] == ["example.com"]
+      assert tool["blocked_domains"] == ["spam.com"]
+      assert tool["max_content_tokens"] == 50_000
+    end
+
+    test "citations: false omits the citations key" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool(citations: false)
+      [tool] = Request.to_map(request)["tools"]
+      refute Map.has_key?(tool, "citations")
+    end
+  end
+
+  describe "code execution / bash / text editor (S6)" do
+    test "add_code_execution_tool emits code_execution_20260120 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_code_execution_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "code_execution_20260120", "name" => "code_execution"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "add_bash_tool emits the schema-less bash tool" do
+      request = Request.new("claude-opus-4-8") |> Request.add_bash_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "bash_20250124", "name" => "bash"}
+             ]
+    end
+
+    test "add_text_editor_tool emits str_replace_based_edit_tool" do
+      request = Request.new("claude-opus-4-8") |> Request.add_text_editor_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
+             ]
+    end
+
+    test "add_text_editor_tool threads :max_characters" do
+      request =
+        Request.new("claude-opus-4-8") |> Request.add_text_editor_tool(max_characters: 10_000)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["max_characters"] == 10_000
+    end
+  end
+
+  describe "add_memory_tool/1 (S6)" do
+    test "emits memory_20250818 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_memory_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "memory_20250818", "name" => "memory"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+  end
+
+  describe "add_computer_tool/4 (S6)" do
+    test "emits computer_20250124 with display dims and declares the beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_computer_tool(1280, 800)
+
+      assert Request.to_map(request)["tools"] == [
+               %{
+                 "type" => "computer_20250124",
+                 "name" => "computer",
+                 "display_width_px" => 1280,
+                 "display_height_px" => 800
+               }
+             ]
+
+      assert "computer-use-2025-01-24" in Request.required_betas(request)
+    end
+
+    test "threads :display_number" do
+      request =
+        Request.new("claude-opus-4-8") |> Request.add_computer_tool(1280, 800, display_number: 1)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["display_number"] == 1
+    end
+  end
 end

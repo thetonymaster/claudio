@@ -663,6 +663,142 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds the server-side `web_search` tool. GA — no beta header.
+
+  ## Options
+
+  - `:version` — `:basic` for `web_search_20250305`, otherwise the default
+    `web_search_20260209` (dynamic filtering on 4.6+). A full type string is
+    also accepted.
+  - `:max_uses` — cap the number of searches per request.
+  - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
+  - `:user_location` — approximate-location map for localized results.
+
+  Server-tool output is typed as `server_tool_use` / `web_search_tool_result`
+  blocks (see `Claudio.Messages.Response.get_server_tool_uses/1`).
+  """
+  @spec add_web_search_tool(t(), keyword()) :: t()
+  def add_web_search_tool(%__MODULE__{} = request, opts \\ []) do
+    tool =
+      %{"type" => web_search_type(Keyword.get(opts, :version)), "name" => "web_search"}
+      |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
+      |> maybe_put("allowed_domains", Keyword.get(opts, :allowed_domains))
+      |> maybe_put("blocked_domains", Keyword.get(opts, :blocked_domains))
+      |> maybe_put("user_location", Keyword.get(opts, :user_location))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
+  Adds the server-side `web_fetch` tool. GA — no beta header.
+
+  ## Options
+
+  - `:version` — `:basic` for `web_fetch_20250910`, otherwise the default
+    `web_fetch_20260209` (dynamic filtering). A full type string is also accepted.
+  - `:max_uses` — cap the number of fetches per request.
+  - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
+  - `:citations` — `true` enables citations on fetched content.
+  - `:max_content_tokens` — approximate cap on fetched content size.
+
+  Unlike web search (URLs Claude finds), web fetch can only retrieve URLs that
+  already appeared in the conversation.
+  """
+  @spec add_web_fetch_tool(t(), keyword()) :: t()
+  def add_web_fetch_tool(%__MODULE__{} = request, opts \\ []) do
+    tool =
+      %{"type" => web_fetch_type(Keyword.get(opts, :version)), "name" => "web_fetch"}
+      |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
+      |> maybe_put("allowed_domains", Keyword.get(opts, :allowed_domains))
+      |> maybe_put("blocked_domains", Keyword.get(opts, :blocked_domains))
+      |> maybe_put("max_content_tokens", Keyword.get(opts, :max_content_tokens))
+      |> maybe_put_citations(Keyword.get(opts, :citations))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
+  Adds the server-side `code_execution` tool (`code_execution_20260120`). GA —
+  no beta header. Pairs with `set_container/2` for container reuse and the Files
+  API (`container_upload` blocks). Results are typed as
+  `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`.
+  """
+  @spec add_code_execution_tool(t()) :: t()
+  def add_code_execution_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "code_execution_20260120", "name" => "code_execution"})
+  end
+
+  @doc """
+  Adds the client-side, schema-less `bash` tool (`bash_20250124`). You execute
+  the returned `tool_use` locally and send back a `tool_result`. Do **not** add
+  an `input_schema` — the schema is built into the model.
+  """
+  @spec add_bash_tool(t()) :: t()
+  def add_bash_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "bash_20250124", "name" => "bash"})
+  end
+
+  @doc """
+  Adds the client-side, schema-less text editor tool (`text_editor_20250728`,
+  name `str_replace_based_edit_tool`). Client-executed like `bash`.
+
+  ## Options
+
+  - `:max_characters` — cap `view`-command output length.
+  """
+  @spec add_text_editor_tool(t(), keyword()) :: t()
+  def add_text_editor_tool(%__MODULE__{} = request, opts \\ []) do
+    tool =
+      %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
+      |> maybe_put("max_characters", Keyword.get(opts, :max_characters))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
+  Adds the client-side `memory` tool (`memory_20250818`). GA — no beta header.
+
+  Claude issues `view` / `create` / `str_replace` / `insert` / `delete` /
+  `rename` commands scoped to a `/memories` directory; you execute them locally.
+  **Confine every operation to `/memories`** and reject path traversal. Pairs
+  with `set_context_management/2` for long-running agents.
+  """
+  @spec add_memory_tool(t()) :: t()
+  def add_memory_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "memory_20250818", "name" => "memory"})
+  end
+
+  @doc """
+  Adds the `computer` tool (`computer_20250124`) for desktop control, and
+  declares the required `computer-use-2025-01-24` beta header (via `add_beta/2`,
+  so the send path attaches it automatically).
+
+  Client-side: Claude requests screenshots / mouse / keyboard actions that your
+  application executes. Typically paired with `add_bash_tool/1` and
+  `add_text_editor_tool/2`.
+
+  ## Options
+
+  - `:display_number` — X11 display number for the environment.
+  """
+  @spec add_computer_tool(t(), pos_integer(), pos_integer(), keyword()) :: t()
+  def add_computer_tool(%__MODULE__{} = request, display_width_px, display_height_px, opts \\ [])
+      when is_integer(display_width_px) and is_integer(display_height_px) do
+    tool =
+      %{
+        "type" => "computer_20250124",
+        "name" => "computer",
+        "display_width_px" => display_width_px,
+        "display_height_px" => display_height_px
+      }
+      |> maybe_put("display_number", Keyword.get(opts, :display_number))
+
+    request
+    |> add_beta("computer-use-2025-01-24")
+    |> add_tool(tool)
+  end
+
+  @doc """
   Adds a text message whose content block carries a `cache_control` breakpoint.
 
   Use for the "growing conversation prefix" caching pattern — mark the last
@@ -753,6 +889,14 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map
+
+  defp web_search_type(:basic), do: "web_search_20250305"
+  defp web_search_type(nil), do: "web_search_20260209"
+  defp web_search_type(version) when is_binary(version), do: version
+
+  defp web_fetch_type(:basic), do: "web_fetch_20250910"
+  defp web_fetch_type(nil), do: "web_fetch_20260209"
+  defp web_fetch_type(version) when is_binary(version), do: version
 
   defp normalize_search_result_content(text) when is_binary(text),
     do: %{"type" => "text", "text" => text}
