@@ -284,4 +284,45 @@ defmodule Claudio.Messages.IntegrationTest do
       assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
     end
   end
+
+  describe "prompt caching helpers (live)" do
+    # Live controls for set_system_with_cache/2 and add_tool_with_cache/3 (the
+    # refactored helpers). Each prefix is padded well past the model's minimum
+    # cacheable size (~1024 tokens on Sonnet 4.5) so the cache actually triggers.
+
+    test "set_system_with_cache caches a large system prefix (default ttl)",
+         %{client: client} do
+      long_system = String.duplicate("You are a meticulous assistant. ", 400)
+
+      request =
+        Request.new(test_model())
+        |> Request.set_system_with_cache(long_system)
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+
+    test "add_tool_with_cache caches a large tool prefix (ttl: 1h)", %{client: client} do
+      tool = %{
+        "name" => "lookup",
+        "description" => String.duplicate("Looks up a record by id. ", 400),
+        "input_schema" => %{
+          "type" => "object",
+          "properties" => %{"id" => %{"type" => "string"}},
+          "required" => ["id"]
+        }
+      }
+
+      request =
+        Request.new(test_model())
+        |> Request.add_tool_with_cache(tool, ttl: "1h")
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+  end
 end
