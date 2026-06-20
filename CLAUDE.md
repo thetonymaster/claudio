@@ -205,6 +205,19 @@ The `Claudio.Models` module wraps the GA Models API (no beta header):
 
 Returns the raw decoded body (`{:ok, map()}`), consistent with `Claudio.Files` / `Claudio.Batches`; non-200 responses map to `Claudio.APIError`.
 
+### Admin API (lib/claudio/admin.ex)
+The `Claudio.Admin` module wraps the GA Admin API (`/v1/organizations/*`). It needs an **Admin API key** (`sk-ant-admin…`) — built the normal way (`Claudio.Client.new(%{token: admin_key, ...})`), since the admin key rides the same `x-api-key` header. No beta header.
+
+One flat module with grouped functions over a shared private request helper:
+- **Org:** `get_organization/1`
+- **Members:** `list_users/2`, `get_user/2`, `update_user/3`, `remove_user/2`
+- **Invites:** `list_invites/2`, `get_invite/2`, `create_invite/2`, `delete_invite/2`
+- **Workspaces:** `list_workspaces/2`, `get_workspace/2`, `create_workspace/2`, `update_workspace/3`, `archive_workspace/2`
+- **API keys:** `list_api_keys/2`, `get_api_key/2`, `update_api_key/3` (create/delete are Console-only)
+- **Usage/cost:** `usage_report/2`, `cost_report/2` (opts pass through as query params)
+
+Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token (S8) and are not covered.
+
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
@@ -264,6 +277,7 @@ lib/claudio/
 │   ├── request.ex         # Request builder
 │   ├── response.ex        # Response parser
 │   └── stream.ex          # SSE streaming
+├── admin.ex              # Admin API (organizations/*)
 ├── models.ex             # Models API
 ├── mcp/
 │   ├── server_config.ex   # API-level MCP server config

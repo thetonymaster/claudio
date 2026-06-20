@@ -117,7 +117,8 @@ defmodule Claudio.Admin do
   `:group_by`, `:bucket_width`) pass through as query params.
   """
   @spec usage_report(Req.Request.t(), keyword()) :: result()
-  def usage_report(client, opts \\ []), do: get(client, "organizations/usage_report/messages", opts)
+  def usage_report(client, opts \\ []),
+    do: get(client, "organizations/usage_report/messages", opts)
 
   @doc "Organization cost report. Opts pass through as query params."
   @spec cost_report(Req.Request.t(), keyword()) :: result()

@@ -151,7 +151,10 @@ defmodule Claudio.AdminTest do
                Admin.update_workspace(client, "w1", %{"name" => "Renamed"})
     end
 
-    test "archive_workspace POSTs to /archive with an empty body", %{client: client, bypass: bypass} do
+    test "archive_workspace POSTs to /archive with an empty body", %{
+      client: client,
+      bypass: bypass
+    } do
       Bypass.expect_once(bypass, "POST", "/organizations/workspaces/w1/archive", fn conn ->
         {body, conn} = read_json_body(conn)
         assert body == %{}
