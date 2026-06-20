@@ -233,4 +233,96 @@ defmodule Claudio.Messages.IntegrationTest do
       assert {:ok, %Response{}} = Messages.create(client, second)
     end
   end
+
+  describe "request-builder additions (S3)" do
+    # Structured outputs are GA on Sonnet 4.6 / Opus 4.8 / Haiku 4.5 — NOT on the
+    # default test_model (Sonnet 4.5). Pin to a supporting model.
+    @structured_model "claude-sonnet-4-6"
+
+    test "structured outputs returns schema-valid JSON", %{client: client} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "city" => %{"type" => "string"},
+          "country" => %{"type" => "string"}
+        },
+        "required" => ["city", "country"],
+        "additionalProperties" => false
+      }
+
+      request =
+        Request.new(@structured_model)
+        |> Request.add_message(:user, "The capital of France, as JSON.")
+        |> Request.set_max_tokens(256)
+        |> Request.set_output_format(schema)
+
+      assert {:ok, %Response{} = response} = Messages.create(client, request)
+
+      # output_config.format guarantees the first text block is valid JSON.
+      decoded = Jason.decode!(Response.get_text(response))
+      assert Map.has_key?(decoded, "city")
+      assert Map.has_key?(decoded, "country")
+    end
+
+    test "message-level cache_control is accepted and caches the prefix",
+         %{client: client} do
+      # A prefix long enough to exceed the model's min cacheable size (~1024
+      # tokens on Sonnet 4.5) so cache_creation_input_tokens is populated.
+      long_context = String.duplicate("The quick brown fox jumps over the lazy dog. ", 400)
+
+      request =
+        Request.new(test_model())
+        |> Request.add_message_with_cache(:user, long_context, ttl: "5m")
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+
+      # A 200 proves cache_control was accepted; a non-nil creation OR read count
+      # proves the prefix was actually cached (read can occur if a prior run
+      # already warmed the same prefix).
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+  end
+
+  describe "prompt caching helpers (live)" do
+    # Live controls for set_system_with_cache/2 and add_tool_with_cache/3 (the
+    # refactored helpers). Each prefix is padded well past the model's minimum
+    # cacheable size (~1024 tokens on Sonnet 4.5) so the cache actually triggers.
+
+    test "set_system_with_cache caches a large system prefix (default ttl)",
+         %{client: client} do
+      long_system = String.duplicate("You are a meticulous assistant. ", 400)
+
+      request =
+        Request.new(test_model())
+        |> Request.set_system_with_cache(long_system)
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+
+    test "add_tool_with_cache caches a large tool prefix (ttl: 1h)", %{client: client} do
+      tool = %{
+        "name" => "lookup",
+        "description" => String.duplicate("Looks up a record by id. ", 400),
+        "input_schema" => %{
+          "type" => "object",
+          "properties" => %{"id" => %{"type" => "string"}},
+          "required" => ["id"]
+        }
+      }
+
+      request =
+        Request.new(test_model())
+        |> Request.add_tool_with_cache(tool, ttl: "1h")
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+  end
 end

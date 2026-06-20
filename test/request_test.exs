@@ -52,6 +52,36 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "set_system_with_cache/2" do
+    test "wraps text in a system text block with default ephemeral cache_control" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.set_system_with_cache("Long context")
+
+      assert request.system == [
+               %{
+                 "type" => "text",
+                 "text" => "Long context",
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.set_system_with_cache("Long context", ttl: "1h")
+
+      assert request.system == [
+               %{
+                 "type" => "text",
+                 "text" => "Long context",
+                 "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ]
+    end
+  end
+
   describe "set_max_tokens/2" do
     test "sets max tokens" do
       request =
@@ -140,6 +170,29 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_tool_with_cache/3" do
+    test "appends a tool with default ephemeral cache_control" do
+      tool = %{"name" => "get_weather", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_tool_with_cache(tool)
+
+      assert request.tools == [Map.put(tool, "cache_control", %{"type" => "ephemeral"})]
+    end
+
+    test "honours an explicit ttl" do
+      tool = %{"name" => "get_weather", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_tool_with_cache(tool, ttl: "1h")
+
+      assert request.tools ==
+               [Map.put(tool, "cache_control", %{"type" => "ephemeral", "ttl" => "1h"})]
+    end
+  end
+
   describe "set_tool_choice/2" do
     test "sets tool choice to auto" do
       request =
@@ -210,6 +263,164 @@ defmodule Claudio.Messages.RequestTest do
       assert map["context_management"] == %{"edits" => [%{"type" => "clear_tool_uses_20250919"}]}
       refute Map.has_key?(map, "betas")
       refute Map.has_key?(map, "anthropic-beta")
+    end
+  end
+
+  describe "set_output_config/2 and set_output_format/2" do
+    test "set_output_format wraps a JSON schema as a json_schema format" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"],
+        "additionalProperties" => false
+      }
+
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_format(schema)
+
+      map = Request.to_map(request)
+
+      assert map["output_config"] == %{
+               "format" => %{"type" => "json_schema", "schema" => schema}
+             }
+    end
+
+    test "set_output_format preserves other output_config keys (merge, not replace)" do
+      schema = %{"type" => "object", "properties" => %{}, "additionalProperties" => false}
+
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_config(%{"effort" => "high"})
+        |> Request.set_output_format(schema)
+
+      map = Request.to_map(request)
+
+      assert map["output_config"]["effort"] == "high"
+      assert map["output_config"]["format"]["type"] == "json_schema"
+      assert map["output_config"]["format"]["schema"] == schema
+    end
+
+    test "set_output_config sets the raw map" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_config(%{"format" => %{"type" => "json_schema", "schema" => %{}}})
+
+      assert Request.to_map(request)["output_config"] ==
+               %{"format" => %{"type" => "json_schema", "schema" => %{}}}
+    end
+
+    test "to_map omits output_config when unset" do
+      refute Map.has_key?(Request.to_map(Request.new("claude-sonnet-4-6")), "output_config")
+    end
+  end
+
+  describe "add_strict_tool/2 and add_tool_with_eager_streaming/2" do
+    @tool %{
+      "name" => "get_weather",
+      "description" => "Get weather",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{"location" => %{"type" => "string"}},
+        "required" => ["location"],
+        "additionalProperties" => false
+      }
+    }
+
+    test "add_strict_tool sets strict: true on the tool" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_strict_tool(@tool)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["strict"] == true
+      assert tool["name"] == "get_weather"
+    end
+
+    test "add_tool_with_eager_streaming sets eager_input_streaming: true" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_tool_with_eager_streaming(@tool)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["eager_input_streaming"] == true
+      assert tool["name"] == "get_weather"
+    end
+
+    test "both helpers append to existing tools" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_tool(@tool)
+        |> Request.add_strict_tool(@tool)
+        |> Request.add_tool_with_eager_streaming(@tool)
+
+      assert length(Request.to_map(request)["tools"]) == 3
+    end
+  end
+
+  describe "add_message_with_cache/4" do
+    test "adds a text block with default ephemeral cache_control" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_cache(:user, "long context...")
+
+      [message] = Request.to_map(request)["messages"]
+      assert message["role"] == "user"
+
+      assert message["content"] == [
+               %{
+                 "type" => "text",
+                 "text" => "long context...",
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_cache(:assistant, "cached", ttl: "1h")
+
+      [message] = Request.to_map(request)["messages"]
+
+      assert message["content"] == [
+               %{
+                 "type" => "text",
+                 "text" => "cached",
+                 "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ]
+    end
+
+    test "appends after other messages" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message(:user, "first")
+        |> Request.add_message_with_cache(:user, "second")
+
+      assert length(Request.to_map(request)["messages"]) == 2
+    end
+  end
+
+  describe "set_cache_control/2" do
+    test "sets top-level cache_control with default ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_cache_control()
+
+      assert Request.to_map(request)["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_cache_control(ttl: "1h")
+
+      assert Request.to_map(request)["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
+    end
+
+    test "to_map omits cache_control when unset" do
+      refute Map.has_key?(Request.to_map(Request.new("claude-sonnet-4-6")), "cache_control")
     end
   end
 

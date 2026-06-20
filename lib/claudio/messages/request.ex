@@ -37,7 +37,9 @@ defmodule Claudio.Messages.Request do
           context_management: map() | nil,
           container: String.t() | map() | nil,
           service_tier: String.t() | nil,
-          betas: [String.t()]
+          betas: [String.t()],
+          output_config: map() | nil,
+          cache_control: map() | nil
         }
 
   defstruct [
@@ -58,7 +60,9 @@ defmodule Claudio.Messages.Request do
     :context_management,
     :container,
     :service_tier,
-    betas: []
+    betas: [],
+    output_config: nil,
+    cache_control: nil
   ]
 
   @doc """
@@ -233,19 +237,11 @@ defmodule Claudio.Messages.Request do
   """
   @spec set_system_with_cache(t(), String.t(), keyword()) :: t()
   def set_system_with_cache(%__MODULE__{} = request, text, opts \\ []) do
-    ttl = Keyword.get(opts, :ttl)
-
-    cache_control =
-      case ttl do
-        nil -> %{"type" => "ephemeral"}
-        ttl -> %{"type" => "ephemeral", "ttl" => ttl}
-      end
-
     system = [
       %{
         "type" => "text",
         "text" => text,
-        "cache_control" => cache_control
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
       }
     ]
 
@@ -376,15 +372,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
   def add_tool_with_cache(%__MODULE__{} = request, tool, opts \\ []) when is_map(tool) do
-    ttl = Keyword.get(opts, :ttl)
-
-    cache_control =
-      case ttl do
-        nil -> %{"type" => "ephemeral"}
-        ttl -> %{"type" => "ephemeral", "ttl" => ttl}
-      end
-
-    tool_with_cache = Map.put(tool, "cache_control", cache_control)
+    tool_with_cache = Map.put(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
     add_tool(request, tool_with_cache)
   end
 
@@ -553,6 +541,124 @@ defmodule Claudio.Messages.Request do
   def required_betas(%__MODULE__{betas: betas}), do: betas
 
   @doc """
+  Sets the raw `output_config` map.
+
+  `output_config` is the API container for output controls (`format`, and on
+  supported models `effort` / `task_budget`). This replaces the whole map; for
+  structured JSON output prefer `set_output_format/2`, which merges.
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_output_config(%{"effort" => "high"})
+  """
+  @spec set_output_config(t(), map()) :: t()
+  def set_output_config(%__MODULE__{} = request, config) when is_map(config) do
+    %{request | output_config: config}
+  end
+
+  @doc """
+  Requests structured JSON output matching `schema` (a JSON Schema map).
+
+  Sets `output_config.format` to `{type: "json_schema", schema: schema}`, merging
+  into any existing `output_config` (so a prior `set_output_config/2` survives).
+  GA — no beta header. The schema must use `"additionalProperties" => false` and
+  list its `"required"` keys. Not compatible with document citations.
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_output_format(%{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"],
+        "additionalProperties" => false
+      })
+  """
+  @spec set_output_format(t(), map()) :: t()
+  def set_output_format(%__MODULE__{output_config: existing} = request, schema)
+      when is_map(schema) do
+    format = %{"type" => "json_schema", "schema" => schema}
+    %{request | output_config: Map.put(existing || %{}, "format", format)}
+  end
+
+  @doc """
+  Adds a tool with strict schema validation enabled (`strict: true`).
+
+  Guarantees the model's `tool_use.input` validates exactly against the schema.
+  The schema must use `"additionalProperties" => false` and list `"required"`.
+  GA — no beta header. (`strict` is a plain tool field; `add_tool/2` also passes
+  it through if you set it yourself.)
+  """
+  @spec add_strict_tool(t(), map()) :: t()
+  def add_strict_tool(%__MODULE__{} = request, tool) when is_map(tool) do
+    add_tool(request, Map.put(tool, "strict", true))
+  end
+
+  @doc """
+  Adds a tool with fine-grained ("eager") input streaming enabled.
+
+  Sets `eager_input_streaming: true` so the tool's `input_json_delta` chunks
+  stream as they are generated. GA — not a beta feature; use the regular
+  streaming path (`enable_streaming/1`).
+  """
+  @spec add_tool_with_eager_streaming(t(), map()) :: t()
+  def add_tool_with_eager_streaming(%__MODULE__{} = request, tool) when is_map(tool) do
+    add_tool(request, Map.put(tool, "eager_input_streaming", true))
+  end
+
+  @doc """
+  Adds a text message whose content block carries a `cache_control` breakpoint.
+
+  Use for the "growing conversation prefix" caching pattern — mark the last
+  stable turn so the prefix up to it is cached. GA — no beta header. Up to 4
+  `cache_control` breakpoints are allowed per request (not enforced here).
+
+  ## Options
+
+  - `:ttl` — cache duration, `"5m"` (default) or `"1h"`
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.add_message_with_cache(:user, "Large shared context...", ttl: "1h")
+      |> Request.add_message(:user, "The actual question")
+  """
+  @spec add_message_with_cache(t(), role(), String.t(), keyword()) :: t()
+  def add_message_with_cache(%__MODULE__{} = request, role, text, opts \\ [])
+      when role in [:user, :assistant] and is_binary(text) do
+    content = [
+      %{
+        "type" => "text",
+        "text" => text,
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
+      }
+    ]
+
+    add_message(request, role, content)
+  end
+
+  @doc """
+  Sets a top-level `cache_control` breakpoint, auto-placed on the last cacheable
+  block of the request (server-side). The simplest way to cache the request
+  prefix when you don't need per-block placement. GA — no beta header.
+
+  ## Options
+
+  - `:ttl` — cache duration, `"5m"` (default) or `"1h"`
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_system("Large shared context...")
+      |> Request.set_cache_control(ttl: "1h")
+  """
+  @spec set_cache_control(t(), keyword()) :: t()
+  def set_cache_control(%__MODULE__{} = request, opts \\ []) do
+    %{request | cache_control: cache_control_map(Keyword.get(opts, :ttl))}
+  end
+
+  @doc """
   Converts the request to a map suitable for the API.
   """
   @spec to_map(t()) :: map()
@@ -576,7 +682,12 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("context_management", request.context_management)
     |> maybe_put("container", request.container)
     |> maybe_put("service_tier", request.service_tier)
+    |> maybe_put("output_config", request.output_config)
+    |> maybe_put("cache_control", request.cache_control)
   end
+
+  defp cache_control_map(nil), do: %{"type" => "ephemeral"}
+  defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
 
   defp normalize_content(content) when is_binary(content), do: content
   defp normalize_content(content) when is_list(content), do: content
