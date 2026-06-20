@@ -22,8 +22,9 @@ defmodule Claudio.Messages.Response do
           | mcp_tool_result_block()
 
   @type text_block :: %{
-          type: :text,
-          text: String.t()
+          :type => :text,
+          :text => String.t(),
+          optional(:citations) => list()
         }
 
   @type thinking_block :: %{
@@ -132,6 +133,21 @@ defmodule Claudio.Messages.Response do
   end
 
   @doc """
+  Aggregates every citation across all `text` blocks, in document order.
+
+  Each entry is the raw citation map as returned by the API (e.g.
+  `char_location`, `page_location`, `content_block_location`,
+  `search_result_location`, `web_search_result_location`). Returns `[]` when no
+  citations are present.
+  """
+  @spec get_citations(t()) :: list()
+  def get_citations(%__MODULE__{content: content}) do
+    content
+    |> Enum.filter(&(&1.type == :text))
+    |> Enum.flat_map(&Map.get(&1, :citations, []))
+  end
+
+  @doc """
   Extracts all MCP tool use requests from the response.
   """
   @spec get_mcp_tool_uses(t()) :: list(mcp_tool_use_block())
@@ -169,11 +185,11 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(%{type: "text"} = block) do
-    %{type: :text, text: block[:text]}
+    text_block(block[:text], block[:citations])
   end
 
   defp parse_content_block(%{"type" => "text"} = block) do
-    %{type: :text, text: block["text"]}
+    text_block(block["text"], block["citations"])
   end
 
   defp parse_content_block(%{type: "thinking"} = block) do
@@ -267,6 +283,9 @@ defmodule Claudio.Messages.Response do
   end
 
   defp parse_content_block(block), do: block
+
+  defp text_block(text, nil), do: %{type: :text, text: text}
+  defp text_block(text, citations), do: %{type: :text, text: text, citations: citations}
 
   defp block_to_api(%{type: :text, text: text}) do
     %{"type" => "text", "text" => text}

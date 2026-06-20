@@ -361,4 +361,71 @@ defmodule Claudio.Messages.ResponseTest do
                Enum.at(content, 2)
     end
   end
+
+  describe "from_map/1 citations on text blocks" do
+    @citation %{
+      "type" => "char_location",
+      "cited_text" => "The grass is green.",
+      "document_index" => 0,
+      "document_title" => "Example",
+      "start_char_index" => 0,
+      "end_char_index" => 20
+    }
+
+    test "preserves the citations array (string keys)" do
+      data = %{
+        "content" => [%{"type" => "text", "text" => "the grass is green", "citations" => [@citation]}]
+      }
+
+      [block] = Response.from_map(data).content
+      assert block.type == :text
+      assert block.text == "the grass is green"
+      assert block.citations == [@citation]
+    end
+
+    test "preserves the citations array (atom keys)" do
+      data = %{content: [%{type: "text", text: "x", citations: [@citation]}]}
+      [block] = Response.from_map(data).content
+      assert block.citations == [@citation]
+    end
+
+    test "a text block without citations has no :citations key" do
+      data = %{"content" => [%{"type" => "text", "text" => "no citations"}]}
+      [block] = Response.from_map(data).content
+      refute Map.has_key?(block, :citations)
+    end
+
+    test "get_text/1 still works for citation-bearing blocks" do
+      data = %{
+        "content" => [
+          %{"type" => "text", "text" => "a "},
+          %{"type" => "text", "text" => "cited claim", "citations" => [@citation]}
+        ]
+      }
+
+      assert Response.get_text(Response.from_map(data)) == "a cited claim"
+    end
+  end
+
+  describe "get_citations/1" do
+    @c1 %{"type" => "char_location", "cited_text" => "one", "document_index" => 0}
+    @c2 %{"type" => "page_location", "cited_text" => "two", "document_index" => 1}
+
+    test "aggregates citations across all text blocks" do
+      data = %{
+        "content" => [
+          %{"type" => "text", "text" => "a", "citations" => [@c1]},
+          %{"type" => "text", "text" => "b"},
+          %{"type" => "text", "text" => "c", "citations" => [@c2]}
+        ]
+      }
+
+      assert Response.get_citations(Response.from_map(data)) == [@c1, @c2]
+    end
+
+    test "returns [] when there are no citations" do
+      data = %{"content" => [%{"type" => "text", "text" => "plain"}]}
+      assert Response.get_citations(Response.from_map(data)) == []
+    end
+  end
 end
