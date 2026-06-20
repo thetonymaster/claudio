@@ -697,4 +697,29 @@ defmodule Claudio.Messages.RequestTest do
       assert Request.required_betas(request) == []
     end
   end
+
+  describe "add_computer_tool/4 (S6)" do
+    test "emits computer_20250124 with display dims and declares the beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_computer_tool(1280, 800)
+
+      assert Request.to_map(request)["tools"] == [
+               %{
+                 "type" => "computer_20250124",
+                 "name" => "computer",
+                 "display_width_px" => 1280,
+                 "display_height_px" => 800
+               }
+             ]
+
+      assert "computer-use-2025-01-24" in Request.required_betas(request)
+    end
+
+    test "threads :display_number" do
+      request =
+        Request.new("claude-opus-4-8") |> Request.add_computer_tool(1280, 800, display_number: 1)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["display_number"] == 1
+    end
+  end
 end
