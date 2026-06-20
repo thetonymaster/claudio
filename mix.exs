@@ -85,6 +85,9 @@ defmodule Claudio.MixProject do
         "Files API": [
           Claudio.Files
         ],
+        "Models API": [
+          Claudio.Models
+        ],
         Tools: [
           Claudio.Tools
         ],
