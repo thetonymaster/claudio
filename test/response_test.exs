@@ -428,4 +428,128 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.get_citations(Response.from_map(data)) == []
     end
   end
+
+  describe "from_map/1 server-tool blocks" do
+    @web_results [
+      %{
+        "type" => "web_search_result",
+        "url" => "https://example.com",
+        "title" => "Example",
+        "encrypted_content" => "enc_abc",
+        "page_age" => "2 days ago"
+      }
+    ]
+
+    test "types a server_tool_use block (string keys)" do
+      data = %{
+        "content" => [
+          %{
+            "type" => "server_tool_use",
+            "id" => "srvtoolu_1",
+            "name" => "web_search",
+            "input" => %{"query" => "elixir"}
+          }
+        ]
+      }
+
+      [block] = Response.from_map(data).content
+
+      assert block == %{
+               type: :server_tool_use,
+               id: "srvtoolu_1",
+               name: "web_search",
+               input: %{"query" => "elixir"}
+             }
+    end
+
+    test "types a server_tool_use block (atom keys)" do
+      data = %{
+        content: [
+          %{type: "server_tool_use", id: "srvtoolu_2", name: "web_search", input: %{}}
+        ]
+      }
+
+      [block] = Response.from_map(data).content
+      assert block.type == :server_tool_use
+      assert block.id == "srvtoolu_2"
+    end
+
+    test "types a web_search_tool_result block and preserves content (string keys)" do
+      data = %{
+        "content" => [
+          %{
+            "type" => "web_search_tool_result",
+            "tool_use_id" => "srvtoolu_1",
+            "content" => @web_results
+          }
+        ]
+      }
+
+      [block] = Response.from_map(data).content
+
+      assert block == %{
+               type: :web_search_tool_result,
+               tool_use_id: "srvtoolu_1",
+               content: @web_results
+             }
+    end
+
+    test "types a web_search_tool_result block (atom keys)" do
+      data = %{
+        content: [%{type: "web_search_tool_result", tool_use_id: "srvtoolu_3", content: []}]
+      }
+
+      [block] = Response.from_map(data).content
+      assert block.type == :web_search_tool_result
+      assert block.tool_use_id == "srvtoolu_3"
+    end
+
+    test "round-trips both block types through to_assistant_content/1" do
+      data = %{
+        "content" => [
+          %{
+            "type" => "server_tool_use",
+            "id" => "srvtoolu_1",
+            "name" => "web_search",
+            "input" => %{"query" => "elixir"}
+          },
+          %{
+            "type" => "web_search_tool_result",
+            "tool_use_id" => "srvtoolu_1",
+            "content" => @web_results
+          }
+        ]
+      }
+
+      [stu, wstr] = data |> Response.from_map() |> Response.to_assistant_content()
+
+      assert stu == %{
+               "type" => "server_tool_use",
+               "id" => "srvtoolu_1",
+               "name" => "web_search",
+               "input" => %{"query" => "elixir"}
+             }
+
+      assert wstr == %{
+               "type" => "web_search_tool_result",
+               "tool_use_id" => "srvtoolu_1",
+               "content" => @web_results
+             }
+    end
+  end
+
+  describe "get_server_tool_uses/1" do
+    test "extracts only server_tool_use blocks" do
+      data = %{
+        "content" => [
+          %{"type" => "text", "text" => "searching"},
+          %{"type" => "server_tool_use", "id" => "s1", "name" => "web_search", "input" => %{}},
+          %{"type" => "web_search_tool_result", "tool_use_id" => "s1", "content" => []}
+        ]
+      }
+
+      uses = Response.get_server_tool_uses(Response.from_map(data))
+      assert [%{type: :server_tool_use, id: "s1"}] = uses
+    end
+  end
 end

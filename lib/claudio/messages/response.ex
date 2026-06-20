@@ -20,6 +20,8 @@ defmodule Claudio.Messages.Response do
           | tool_result_block()
           | mcp_tool_use_block()
           | mcp_tool_result_block()
+          | server_tool_use_block()
+          | web_search_tool_result_block()
 
   @type text_block :: %{
           :type => :text,
@@ -65,6 +67,19 @@ defmodule Claudio.Messages.Response do
           server_name: String.t(),
           content: term(),
           is_error: boolean()
+        }
+
+  @type server_tool_use_block :: %{
+          type: :server_tool_use,
+          id: String.t(),
+          name: String.t(),
+          input: map()
+        }
+
+  @type web_search_tool_result_block :: %{
+          type: :web_search_tool_result,
+          tool_use_id: String.t(),
+          content: term()
         }
 
   @type usage :: %{
@@ -145,6 +160,16 @@ defmodule Claudio.Messages.Response do
     content
     |> Enum.filter(&(&1.type == :text))
     |> Enum.flat_map(&Map.get(&1, :citations, []))
+  end
+
+  @doc """
+  Extracts all server-side tool use requests (`server_tool_use`) from the
+  response — e.g. `web_search` / `web_fetch` invocations Claude ran on the
+  server. The matching results are `web_search_tool_result` blocks.
+  """
+  @spec get_server_tool_uses(t()) :: list(server_tool_use_block())
+  def get_server_tool_uses(%__MODULE__{content: content}) do
+    Enum.filter(content, &(&1.type == :server_tool_use))
   end
 
   @doc """
@@ -282,6 +307,40 @@ defmodule Claudio.Messages.Response do
     }
   end
 
+  defp parse_content_block(%{type: "server_tool_use"} = block) do
+    %{
+      type: :server_tool_use,
+      id: block[:id],
+      name: block[:name],
+      input: block[:input]
+    }
+  end
+
+  defp parse_content_block(%{"type" => "server_tool_use"} = block) do
+    %{
+      type: :server_tool_use,
+      id: block["id"],
+      name: block["name"],
+      input: block["input"]
+    }
+  end
+
+  defp parse_content_block(%{type: "web_search_tool_result"} = block) do
+    %{
+      type: :web_search_tool_result,
+      tool_use_id: block[:tool_use_id],
+      content: block[:content]
+    }
+  end
+
+  defp parse_content_block(%{"type" => "web_search_tool_result"} = block) do
+    %{
+      type: :web_search_tool_result,
+      tool_use_id: block["tool_use_id"],
+      content: block["content"]
+    }
+  end
+
   defp parse_content_block(block), do: block
 
   defp text_block(text, nil), do: %{type: :text, text: text}
@@ -325,6 +384,23 @@ defmodule Claudio.Messages.Response do
       "server_name" => block.server_name,
       "content" => block.content,
       "is_error" => block.is_error
+    }
+  end
+
+  defp block_to_api(%{type: :server_tool_use} = block) do
+    %{
+      "type" => "server_tool_use",
+      "id" => block.id,
+      "name" => block.name,
+      "input" => block.input
+    }
+  end
+
+  defp block_to_api(%{type: :web_search_tool_result} = block) do
+    %{
+      "type" => "web_search_tool_result",
+      "tool_use_id" => block.tool_use_id,
+      "content" => block.content
     }
   end
 
