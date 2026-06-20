@@ -185,6 +185,13 @@ The `Claudio.Batches` module handles asynchronous batch processing:
 
 Batch processing is asynchronous (up to 24 hours) and supports all Messages API features.
 
+### Models API (lib/claudio/models.ex)
+The `Claudio.Models` module wraps the GA Models API (no beta header):
+- `list/2`: List available models, paginated (`:limit`, `:before_id`, `:after_id`)
+- `get/2`: Retrieve a single model by id or alias (e.g. `"claude-opus-4-8"`)
+
+Returns the raw decoded body (`{:ok, map()}`), consistent with `Claudio.Files` / `Claudio.Batches`; non-200 responses map to `Claudio.APIError`.
+
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
@@ -244,6 +251,7 @@ lib/claudio/
 │   ├── request.ex         # Request builder
 │   ├── response.ex        # Response parser
 │   └── stream.ex          # SSE streaming
+├── models.ex             # Models API
 ├── mcp/
 │   ├── server_config.ex   # API-level MCP server config
 │   ├── client.ex          # MCP client behaviour
