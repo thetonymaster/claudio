@@ -36,7 +36,8 @@ defmodule Claudio.Messages.Request do
           mcp_servers: list(map()) | nil,
           context_management: map() | nil,
           container: String.t() | map() | nil,
-          service_tier: String.t() | nil
+          service_tier: String.t() | nil,
+          betas: [String.t()]
         }
 
   defstruct [
@@ -56,7 +57,8 @@ defmodule Claudio.Messages.Request do
     :mcp_servers,
     :context_management,
     :container,
-    :service_tier
+    :service_tier,
+    betas: []
   ]
 
   @doc """
@@ -477,6 +479,7 @@ defmodule Claudio.Messages.Request do
   @spec set_context_management(t(), map()) :: t()
   def set_context_management(%__MODULE__{} = request, config) when is_map(config) do
     %{request | context_management: config}
+    |> add_beta("context-management-2025-06-27")
   end
 
   @doc """
@@ -519,6 +522,35 @@ defmodule Claudio.Messages.Request do
   def set_service_tier(%__MODULE__{} = request, tier) when tier in ["auto", "standard_only"] do
     %{request | service_tier: tier}
   end
+
+  @doc """
+  Adds a beta feature flag the request requires.
+
+  Beta flags are merged into the `anthropic-beta` request header at send time
+  (see `Claudio.Client.with_betas/2`). Use this to opt into beta-gated features
+  the library does not model with a dedicated setter.
+
+  Duplicates are ignored; insertion order is preserved.
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.add_beta("context-management-2025-06-27")
+  """
+  @spec add_beta(t(), String.t()) :: t()
+  def add_beta(%__MODULE__{betas: betas} = request, beta) when is_binary(beta) do
+    if beta in betas do
+      request
+    else
+      %{request | betas: betas ++ [beta]}
+    end
+  end
+
+  @doc """
+  Returns the list of beta feature flags this request requires.
+  """
+  @spec required_betas(t()) :: [String.t()]
+  def required_betas(%__MODULE__{betas: betas}), do: betas
 
   @doc """
   Converts the request to a map suitable for the API.

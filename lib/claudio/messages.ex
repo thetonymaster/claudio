@@ -144,6 +144,7 @@ defmodule Claudio.Messages do
   @spec create(Req.Request.t(), Request.t() | map()) ::
           {:ok, Response.t() | Req.Response.t()} | {:error, APIError.t() | term()}
   def create(client, %Request{} = request) do
+    client = Claudio.Client.with_betas(client, Request.required_betas(request))
     create(client, Request.to_map(request))
   end
 
@@ -208,7 +209,8 @@ defmodule Claudio.Messages do
   @spec count_tokens(Req.Request.t(), map() | Request.t()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
   def count_tokens(client, %Request{} = request) do
-    # Remove stream and max_tokens as they're not needed for counting
+    client = Claudio.Client.with_betas(client, Request.required_betas(request))
+
     payload =
       request
       |> Request.to_map()

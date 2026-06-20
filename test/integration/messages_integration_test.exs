@@ -153,6 +153,35 @@ defmodule Claudio.Messages.IntegrationTest do
     end
   end
 
+  describe "per-feature beta headers (S2)" do
+    test "set_context_management auto-attaches the beta (no client beta needed)",
+         %{client: client} do
+      request =
+        Request.new(test_model())
+        |> Request.add_message(:user, "Say hi in one word")
+        |> Request.set_max_tokens(32)
+        |> Request.set_context_management(%{
+          "edits" => [%{"type" => "clear_tool_uses_20250919"}]
+        })
+
+      # create_client/0 carries NO beta list; a 200 proves S2 supplied
+      # `context-management-2025-06-27`.
+      assert {:ok, %Response{}} = Messages.create(client, request)
+    end
+
+    test "the same request without the beta is rejected (negative control)",
+         %{client: client} do
+      raw = %{
+        "model" => test_model(),
+        "max_tokens" => 32,
+        "messages" => [%{"role" => "user", "content" => "Say hi in one word"}],
+        "context_management" => %{"edits" => [%{"type" => "clear_tool_uses_20250919"}]}
+      }
+
+      assert {:error, %Claudio.APIError{status_code: 400}} = Messages.create(client, raw)
+    end
+  end
+
   describe "extended thinking round-trip" do
     test "replays a thinking + tool_use assistant turn without a 400", %{client: client} do
       tool = %{

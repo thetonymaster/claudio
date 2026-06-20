@@ -108,6 +108,7 @@ defmodule Claudio.Batches do
   """
 
   alias Claudio.APIError
+  alias Claudio.Messages.Request
 
   @type batch_request :: %{
           required(:custom_id) => String.t(),
@@ -155,7 +156,14 @@ defmodule Claudio.Batches do
   """
   @spec create(Req.Request.t(), list(batch_request())) :: {:ok, map()} | {:error, APIError.t()}
   def create(client, requests) when is_list(requests) do
-    payload = %{"requests" => requests}
+    {prepared, beta_lists} =
+      requests
+      |> Enum.map(&prepare_item/1)
+      |> Enum.unzip()
+
+    betas = beta_lists |> List.flatten() |> Enum.uniq()
+    client = Claudio.Client.with_betas(client, betas)
+    payload = %{"requests" => prepared}
 
     case Req.post(client, url: "messages/batches", json: payload) do
       {:ok, %Req.Response{status: 200, body: body}} ->
@@ -356,6 +364,14 @@ defmodule Claudio.Batches do
   end
 
   # Private functions
+
+  defp prepare_item(%{params: %Request{} = req} = item),
+    do: {%{item | params: Request.to_map(req)}, Request.required_betas(req)}
+
+  defp prepare_item(%{"params" => %Request{} = req} = item),
+    do: {Map.put(item, "params", Request.to_map(req)), Request.required_betas(req)}
+
+  defp prepare_item(item), do: {item, []}
 
   defp do_wait_for_completion(client, batch_id, poll_interval, timeout, start_time, callback) do
     elapsed = System.monotonic_time(:millisecond) - start_time

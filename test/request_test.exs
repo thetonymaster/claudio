@@ -166,6 +166,53 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "betas / add_beta/2 / required_betas/1" do
+    test "a new request has no betas" do
+      assert Request.new("claude-3-5-sonnet-20241022") |> Request.required_betas() == []
+    end
+
+    test "add_beta/2 records a beta string" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_beta("context-management-2025-06-27")
+
+      assert Request.required_betas(request) == ["context-management-2025-06-27"]
+    end
+
+    test "add_beta/2 dedups and preserves insertion order" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_beta("a-2025-01-01")
+        |> Request.add_beta("b-2025-01-01")
+        |> Request.add_beta("a-2025-01-01")
+
+      assert Request.required_betas(request) == ["a-2025-01-01", "b-2025-01-01"]
+    end
+  end
+
+  describe "set_context_management/2 beta wiring" do
+    test "declares the context-management beta" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert "context-management-2025-06-27" in Request.required_betas(request)
+    end
+
+    test "to_map includes context_management but never betas" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      map = Request.to_map(request)
+
+      assert map["context_management"] == %{"edits" => [%{"type" => "clear_tool_uses_20250919"}]}
+      refute Map.has_key?(map, "betas")
+      refute Map.has_key?(map, "anthropic-beta")
+    end
+  end
+
   describe "to_map/1" do
     test "converts request to map with only required fields" do
       request = Request.new("claude-3-5-sonnet-20241022")

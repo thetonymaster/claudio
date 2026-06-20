@@ -126,4 +126,35 @@ defmodule Claudio.ClientTest do
       Application.delete_env(:claudio, :claudio)
     end
   end
+
+  describe "with_betas/2" do
+    test "is a no-op for an empty beta list" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
+      assert Claudio.Client.with_betas(client, []) == client
+    end
+
+    test "unions new betas onto the existing header" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
+      merged = Claudio.Client.with_betas(client, ["b-2025-01-01"])
+      assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
+    end
+
+    test "sets the header when the client had none" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01"})
+      merged = Claudio.Client.with_betas(client, ["b-2025-01-01"])
+      assert merged.headers["anthropic-beta"] == ["b-2025-01-01"]
+    end
+
+    test "dedups betas already present" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
+      merged = Claudio.Client.with_betas(client, ["a-2025-01-01", "b-2025-01-01"])
+      assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
+    end
+
+    test "trims and drops blank/whitespace-only betas before merging" do
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
+      merged = Claudio.Client.with_betas(client, [" b-2025-01-01 ", "", "   "])
+      assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
+    end
+  end
 end
