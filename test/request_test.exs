@@ -606,4 +606,47 @@ defmodule Claudio.Messages.RequestTest do
       assert length(Request.to_map(request)["tools"]) == 2
     end
   end
+
+  describe "add_web_fetch_tool/2 (S6)" do
+    test "default emits web_fetch_20260209 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "web_fetch_20260209", "name" => "web_fetch"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "version: :basic selects web_fetch_20250910" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool(version: :basic)
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["type"] == "web_fetch_20250910"
+    end
+
+    test "citations: true and content/domain opts are threaded" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_web_fetch_tool(
+          citations: true,
+          max_uses: 5,
+          allowed_domains: ["example.com"],
+          blocked_domains: ["spam.com"],
+          max_content_tokens: 50_000
+        )
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["citations"] == %{"enabled" => true}
+      assert tool["max_uses"] == 5
+      assert tool["allowed_domains"] == ["example.com"]
+      assert tool["blocked_domains"] == ["spam.com"]
+      assert tool["max_content_tokens"] == 50_000
+    end
+
+    test "citations: false omits the citations key" do
+      request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool(citations: false)
+      [tool] = Request.to_map(request)["tools"]
+      refute Map.has_key?(tool, "citations")
+    end
+  end
 end
