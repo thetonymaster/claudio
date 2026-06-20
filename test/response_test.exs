@@ -553,5 +553,24 @@ defmodule Claudio.Messages.ResponseTest do
       uses = Response.get_server_tool_uses(Response.from_map(data))
       assert [%{type: :server_tool_use, id: "s1"}] = uses
     end
+
+    test "tolerates raw/untyped blocks (e.g. code_execution_tool_result) without crashing" do
+      # Dynamic-filtering web_search returns code_execution_tool_result blocks
+      # Claudio does not type — they pass through as raw string-keyed maps with
+      # no atom :type key. Getters must not crash on them.
+      data = %{
+        "content" => [
+          %{"type" => "server_tool_use", "id" => "s1", "name" => "web_search", "input" => %{}},
+          %{"type" => "code_execution_tool_result", "tool_use_id" => "s1", "content" => %{}},
+          %{"type" => "text", "text" => "done"}
+        ]
+      }
+
+      response = Response.from_map(data)
+      assert [%{type: :server_tool_use, id: "s1"}] = Response.get_server_tool_uses(response)
+      assert Response.get_citations(response) == []
+      assert Response.get_tool_uses(response) == []
+      assert Response.get_text(response) == "done"
+    end
   end
 end
