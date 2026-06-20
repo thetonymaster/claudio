@@ -305,6 +305,50 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message_with_cache/4" do
+    test "adds a text block with default ephemeral cache_control" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_cache(:user, "long context...")
+
+      [message] = Request.to_map(request)["messages"]
+      assert message["role"] == "user"
+
+      assert message["content"] == [
+               %{
+                 "type" => "text",
+                 "text" => "long context...",
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_cache(:assistant, "cached", ttl: "1h")
+
+      [message] = Request.to_map(request)["messages"]
+
+      assert message["content"] == [
+               %{
+                 "type" => "text",
+                 "text" => "cached",
+                 "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ]
+    end
+
+    test "appends after other messages" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message(:user, "first")
+        |> Request.add_message_with_cache(:user, "second")
+
+      assert length(Request.to_map(request)["messages"]) == 2
+    end
+  end
+
   describe "to_map/1" do
     test "converts request to map with only required fields" do
       request = Request.new("claude-3-5-sonnet-20241022")

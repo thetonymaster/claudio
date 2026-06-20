@@ -624,6 +624,37 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds a text message whose content block carries a `cache_control` breakpoint.
+
+  Use for the "growing conversation prefix" caching pattern — mark the last
+  stable turn so the prefix up to it is cached. GA — no beta header. Up to 4
+  `cache_control` breakpoints are allowed per request (not enforced here).
+
+  ## Options
+
+  - `:ttl` — cache duration, `"5m"` (default) or `"1h"`
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.add_message_with_cache(:user, "Large shared context...", ttl: "1h")
+      |> Request.add_message(:user, "The actual question")
+  """
+  @spec add_message_with_cache(t(), role(), String.t(), keyword()) :: t()
+  def add_message_with_cache(%__MODULE__{} = request, role, text, opts \\ [])
+      when role in [:user, :assistant] and is_binary(text) do
+    content = [
+      %{
+        "type" => "text",
+        "text" => text,
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
+      }
+    ]
+
+    add_message(request, role, content)
+  end
+
+  @doc """
   Converts the request to a map suitable for the API.
   """
   @spec to_map(t()) :: map()
@@ -650,6 +681,9 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("output_config", request.output_config)
     |> maybe_put("cache_control", request.cache_control)
   end
+
+  defp cache_control_map(nil), do: %{"type" => "ephemeral"}
+  defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
 
   defp normalize_content(content) when is_binary(content), do: content
   defp normalize_content(content) when is_list(content), do: content
