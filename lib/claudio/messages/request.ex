@@ -655,6 +655,26 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Sets a top-level `cache_control` breakpoint, auto-placed on the last cacheable
+  block of the request (server-side). The simplest way to cache the request
+  prefix when you don't need per-block placement. GA — no beta header.
+
+  ## Options
+
+  - `:ttl` — cache duration, `"5m"` (default) or `"1h"`
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_system("Large shared context...")
+      |> Request.set_cache_control(ttl: "1h")
+  """
+  @spec set_cache_control(t(), keyword()) :: t()
+  def set_cache_control(%__MODULE__{} = request, opts \\ []) do
+    %{request | cache_control: cache_control_map(Keyword.get(opts, :ttl))}
+  end
+
+  @doc """
   Converts the request to a map suitable for the API.
   """
   @spec to_map(t()) :: map()

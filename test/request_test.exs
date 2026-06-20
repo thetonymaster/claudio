@@ -349,6 +349,28 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "set_cache_control/2" do
+    test "sets top-level cache_control with default ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_cache_control()
+
+      assert Request.to_map(request)["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_cache_control(ttl: "1h")
+
+      assert Request.to_map(request)["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
+    end
+
+    test "to_map omits cache_control when unset" do
+      refute Map.has_key?(Request.to_map(Request.new("claude-sonnet-4-6")), "cache_control")
+    end
+  end
+
   describe "to_map/1" do
     test "converts request to map with only required fields" do
       request = Request.new("claude-3-5-sonnet-20241022")
