@@ -37,7 +37,9 @@ defmodule Claudio.Messages.Request do
           context_management: map() | nil,
           container: String.t() | map() | nil,
           service_tier: String.t() | nil,
-          betas: [String.t()]
+          betas: [String.t()],
+          output_config: map() | nil,
+          cache_control: map() | nil
         }
 
   defstruct [
@@ -58,7 +60,9 @@ defmodule Claudio.Messages.Request do
     :context_management,
     :container,
     :service_tier,
-    betas: []
+    betas: [],
+    output_config: nil,
+    cache_control: nil
   ]
 
   @doc """
@@ -553,6 +557,48 @@ defmodule Claudio.Messages.Request do
   def required_betas(%__MODULE__{betas: betas}), do: betas
 
   @doc """
+  Sets the raw `output_config` map.
+
+  `output_config` is the API container for output controls (`format`, and on
+  supported models `effort` / `task_budget`). This replaces the whole map; for
+  structured JSON output prefer `set_output_format/2`, which merges.
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_output_config(%{"effort" => "high"})
+  """
+  @spec set_output_config(t(), map()) :: t()
+  def set_output_config(%__MODULE__{} = request, config) when is_map(config) do
+    %{request | output_config: config}
+  end
+
+  @doc """
+  Requests structured JSON output matching `schema` (a JSON Schema map).
+
+  Sets `output_config.format` to `{type: "json_schema", schema: schema}`, merging
+  into any existing `output_config` (so a prior `set_output_config/2` survives).
+  GA — no beta header. The schema must use `"additionalProperties" => false` and
+  list its `"required"` keys. Not compatible with document citations.
+
+  ## Example
+
+      Request.new("claude-opus-4-8")
+      |> Request.set_output_format(%{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"],
+        "additionalProperties" => false
+      })
+  """
+  @spec set_output_format(t(), map()) :: t()
+  def set_output_format(%__MODULE__{output_config: existing} = request, schema)
+      when is_map(schema) do
+    format = %{"type" => "json_schema", "schema" => schema}
+    %{request | output_config: Map.put(existing || %{}, "format", format)}
+  end
+
+  @doc """
   Converts the request to a map suitable for the API.
   """
   @spec to_map(t()) :: map()
@@ -576,6 +622,8 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("context_management", request.context_management)
     |> maybe_put("container", request.container)
     |> maybe_put("service_tier", request.service_tier)
+    |> maybe_put("output_config", request.output_config)
+    |> maybe_put("cache_control", request.cache_control)
   end
 
   defp normalize_content(content) when is_binary(content), do: content

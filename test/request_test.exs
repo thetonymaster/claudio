@@ -213,6 +213,55 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "set_output_config/2 and set_output_format/2" do
+    test "set_output_format wraps a JSON schema as a json_schema format" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"],
+        "additionalProperties" => false
+      }
+
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_format(schema)
+
+      map = Request.to_map(request)
+
+      assert map["output_config"] == %{
+               "format" => %{"type" => "json_schema", "schema" => schema}
+             }
+    end
+
+    test "set_output_format preserves other output_config keys (merge, not replace)" do
+      schema = %{"type" => "object", "properties" => %{}, "additionalProperties" => false}
+
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_config(%{"effort" => "high"})
+        |> Request.set_output_format(schema)
+
+      map = Request.to_map(request)
+
+      assert map["output_config"]["effort"] == "high"
+      assert map["output_config"]["format"]["type"] == "json_schema"
+      assert map["output_config"]["format"]["schema"] == schema
+    end
+
+    test "set_output_config sets the raw map" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.set_output_config(%{"format" => %{"type" => "json_schema", "schema" => %{}}})
+
+      assert Request.to_map(request)["output_config"] ==
+               %{"format" => %{"type" => "json_schema", "schema" => %{}}}
+    end
+
+    test "to_map omits output_config when unset" do
+      refute Map.has_key?(Request.to_map(Request.new("claude-sonnet-4-6")), "output_config")
+    end
+  end
+
   describe "to_map/1" do
     test "converts request to map with only required fields" do
       request = Request.new("claude-3-5-sonnet-20241022")
