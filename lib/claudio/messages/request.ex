@@ -769,6 +769,36 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds the `computer` tool (`computer_20250124`) for desktop control, and
+  declares the required `computer-use-2025-01-24` beta header (via `add_beta/2`,
+  so the send path attaches it automatically).
+
+  Client-side: Claude requests screenshots / mouse / keyboard actions that your
+  application executes. Typically paired with `add_bash_tool/1` and
+  `add_text_editor_tool/2`.
+
+  ## Options
+
+  - `:display_number` — X11 display number for the environment.
+  """
+  @spec add_computer_tool(t(), pos_integer(), pos_integer(), keyword()) :: t()
+  def add_computer_tool(%__MODULE__{} = request, display_width_px, display_height_px, opts \\ [])
+      when is_integer(display_width_px) and is_integer(display_height_px) do
+    tool =
+      %{
+        "type" => "computer_20250124",
+        "name" => "computer",
+        "display_width_px" => display_width_px,
+        "display_height_px" => display_height_px
+      }
+      |> maybe_put("display_number", Keyword.get(opts, :display_number))
+
+    request
+    |> add_beta("computer-use-2025-01-24")
+    |> add_tool(tool)
+  end
+
+  @doc """
   Adds a text message whose content block carries a `cache_control` breakpoint.
 
   Use for the "growing conversation prefix" caching pattern — mark the last
