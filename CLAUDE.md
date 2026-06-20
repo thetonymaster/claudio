@@ -90,6 +90,13 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
 - **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
+- **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
+  - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
+  - `add_web_fetch_tool/2` — `web_fetch_20260209` (default) / `web_fetch_20250910` (`version: :basic`); `:citations`; GA
+  - `add_code_execution_tool/1` — `code_execution_20260120`; GA (pairs with `set_container/2`)
+  - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
+  - `add_memory_tool/1` — `memory_20250818`; GA, client-side
+  - `add_computer_tool/4` — `computer_20250124`; **auto-declares the `computer-use-2025-01-24` beta** via `add_beta/2`
 - Converts to map via `to_map/1` for API submission
 
 Example:
