@@ -262,6 +262,49 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_strict_tool/2 and add_tool_with_eager_streaming/2" do
+    @tool %{
+      "name" => "get_weather",
+      "description" => "Get weather",
+      "input_schema" => %{
+        "type" => "object",
+        "properties" => %{"location" => %{"type" => "string"}},
+        "required" => ["location"],
+        "additionalProperties" => false
+      }
+    }
+
+    test "add_strict_tool sets strict: true on the tool" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_strict_tool(@tool)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["strict"] == true
+      assert tool["name"] == "get_weather"
+    end
+
+    test "add_tool_with_eager_streaming sets eager_input_streaming: true" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_tool_with_eager_streaming(@tool)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["eager_input_streaming"] == true
+      assert tool["name"] == "get_weather"
+    end
+
+    test "both helpers append to existing tools" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_tool(@tool)
+        |> Request.add_strict_tool(@tool)
+        |> Request.add_tool_with_eager_streaming(@tool)
+
+      assert length(Request.to_map(request)["tools"]) == 3
+    end
+  end
+
   describe "to_map/1" do
     test "converts request to map with only required fields" do
       request = Request.new("claude-3-5-sonnet-20241022")

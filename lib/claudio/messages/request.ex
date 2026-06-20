@@ -599,6 +599,31 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds a tool with strict schema validation enabled (`strict: true`).
+
+  Guarantees the model's `tool_use.input` validates exactly against the schema.
+  The schema must use `"additionalProperties" => false` and list `"required"`.
+  GA — no beta header. (`strict` is a plain tool field; `add_tool/2` also passes
+  it through if you set it yourself.)
+  """
+  @spec add_strict_tool(t(), map()) :: t()
+  def add_strict_tool(%__MODULE__{} = request, tool) when is_map(tool) do
+    add_tool(request, Map.put(tool, "strict", true))
+  end
+
+  @doc """
+  Adds a tool with fine-grained ("eager") input streaming enabled.
+
+  Sets `eager_input_streaming: true` so the tool's `input_json_delta` chunks
+  stream as they are generated. GA — not a beta feature; use the regular
+  streaming path (`enable_streaming/1`).
+  """
+  @spec add_tool_with_eager_streaming(t(), map()) :: t()
+  def add_tool_with_eager_streaming(%__MODULE__{} = request, tool) when is_map(tool) do
+    add_tool(request, Map.put(tool, "eager_input_streaming", true))
+  end
+
+  @doc """
   Converts the request to a map suitable for the API.
   """
   @spec to_map(t()) :: map()
