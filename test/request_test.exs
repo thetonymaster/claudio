@@ -52,6 +52,36 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "set_system_with_cache/2" do
+    test "wraps text in a system text block with default ephemeral cache_control" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.set_system_with_cache("Long context")
+
+      assert request.system == [
+               %{
+                 "type" => "text",
+                 "text" => "Long context",
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "honours an explicit ttl" do
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.set_system_with_cache("Long context", ttl: "1h")
+
+      assert request.system == [
+               %{
+                 "type" => "text",
+                 "text" => "Long context",
+                 "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ]
+    end
+  end
+
   describe "set_max_tokens/2" do
     test "sets max tokens" do
       request =
@@ -137,6 +167,29 @@ defmodule Claudio.Messages.RequestTest do
         |> Request.add_tool(tool2)
 
       assert request.tools == [tool1, tool2]
+    end
+  end
+
+  describe "add_tool_with_cache/3" do
+    test "appends a tool with default ephemeral cache_control" do
+      tool = %{"name" => "get_weather", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_tool_with_cache(tool)
+
+      assert request.tools == [Map.put(tool, "cache_control", %{"type" => "ephemeral"})]
+    end
+
+    test "honours an explicit ttl" do
+      tool = %{"name" => "get_weather", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.new("claude-3-5-sonnet-20241022")
+        |> Request.add_tool_with_cache(tool, ttl: "1h")
+
+      assert request.tools ==
+               [Map.put(tool, "cache_control", %{"type" => "ephemeral", "ttl" => "1h"})]
     end
   end
 

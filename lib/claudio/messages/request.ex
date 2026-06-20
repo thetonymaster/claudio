@@ -237,19 +237,11 @@ defmodule Claudio.Messages.Request do
   """
   @spec set_system_with_cache(t(), String.t(), keyword()) :: t()
   def set_system_with_cache(%__MODULE__{} = request, text, opts \\ []) do
-    ttl = Keyword.get(opts, :ttl)
-
-    cache_control =
-      case ttl do
-        nil -> %{"type" => "ephemeral"}
-        ttl -> %{"type" => "ephemeral", "ttl" => ttl}
-      end
-
     system = [
       %{
         "type" => "text",
         "text" => text,
-        "cache_control" => cache_control
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
       }
     ]
 
@@ -380,15 +372,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
   def add_tool_with_cache(%__MODULE__{} = request, tool, opts \\ []) when is_map(tool) do
-    ttl = Keyword.get(opts, :ttl)
-
-    cache_control =
-      case ttl do
-        nil -> %{"type" => "ephemeral"}
-        ttl -> %{"type" => "ephemeral", "ttl" => ttl}
-      end
-
-    tool_with_cache = Map.put(tool, "cache_control", cache_control)
+    tool_with_cache = Map.put(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
     add_tool(request, tool_with_cache)
   end
 
