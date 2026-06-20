@@ -134,7 +134,7 @@ defmodule Claudio.Messages.Response do
   @spec get_text(t()) :: String.t()
   def get_text(%__MODULE__{content: content}) do
     content
-    |> Enum.filter(&(&1.type == :text))
+    |> Enum.filter(&(&1[:type] == :text))
     |> Enum.map(& &1.text)
     |> Enum.join("")
   end
@@ -144,7 +144,7 @@ defmodule Claudio.Messages.Response do
   """
   @spec get_tool_uses(t()) :: list(tool_use_block())
   def get_tool_uses(%__MODULE__{content: content}) do
-    Enum.filter(content, &(&1.type == :tool_use))
+    Enum.filter(content, &(&1[:type] == :tool_use))
   end
 
   @doc """
@@ -158,7 +158,7 @@ defmodule Claudio.Messages.Response do
   @spec get_citations(t()) :: list()
   def get_citations(%__MODULE__{content: content}) do
     content
-    |> Enum.filter(&(&1.type == :text))
+    |> Enum.filter(&(&1[:type] == :text))
     |> Enum.flat_map(&Map.get(&1, :citations, []))
   end
 
@@ -169,7 +169,7 @@ defmodule Claudio.Messages.Response do
   """
   @spec get_server_tool_uses(t()) :: list(server_tool_use_block())
   def get_server_tool_uses(%__MODULE__{content: content}) do
-    Enum.filter(content, &(&1.type == :server_tool_use))
+    Enum.filter(content, &(&1[:type] == :server_tool_use))
   end
 
   @doc """
@@ -177,7 +177,7 @@ defmodule Claudio.Messages.Response do
   """
   @spec get_mcp_tool_uses(t()) :: list(mcp_tool_use_block())
   def get_mcp_tool_uses(%__MODULE__{content: content}) do
-    Enum.filter(content, &(&1.type == :mcp_tool_use))
+    Enum.filter(content, &(&1[:type] == :mcp_tool_use))
   end
 
   @doc """
@@ -185,7 +185,7 @@ defmodule Claudio.Messages.Response do
   """
   @spec get_mcp_tool_uses(t(), String.t()) :: list(mcp_tool_use_block())
   def get_mcp_tool_uses(%__MODULE__{content: content}, server_name) when is_binary(server_name) do
-    Enum.filter(content, &(&1.type == :mcp_tool_use && &1.server_name == server_name))
+    Enum.filter(content, &(&1[:type] == :mcp_tool_use && &1[:server_name] == server_name))
   end
 
   @doc """
