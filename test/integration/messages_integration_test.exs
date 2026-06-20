@@ -233,4 +233,55 @@ defmodule Claudio.Messages.IntegrationTest do
       assert {:ok, %Response{}} = Messages.create(client, second)
     end
   end
+
+  describe "request-builder additions (S3)" do
+    # Structured outputs are GA on Sonnet 4.6 / Opus 4.8 / Haiku 4.5 — NOT on the
+    # default test_model (Sonnet 4.5). Pin to a supporting model.
+    @structured_model "claude-sonnet-4-6"
+
+    test "structured outputs returns schema-valid JSON", %{client: client} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "city" => %{"type" => "string"},
+          "country" => %{"type" => "string"}
+        },
+        "required" => ["city", "country"],
+        "additionalProperties" => false
+      }
+
+      request =
+        Request.new(@structured_model)
+        |> Request.add_message(:user, "The capital of France, as JSON.")
+        |> Request.set_max_tokens(256)
+        |> Request.set_output_format(schema)
+
+      assert {:ok, %Response{} = response} = Messages.create(client, request)
+
+      # output_config.format guarantees the first text block is valid JSON.
+      decoded = Jason.decode!(Response.get_text(response))
+      assert Map.has_key?(decoded, "city")
+      assert Map.has_key?(decoded, "country")
+    end
+
+    test "message-level cache_control is accepted and caches the prefix",
+         %{client: client} do
+      # A prefix long enough to exceed the model's min cacheable size (~1024
+      # tokens on Sonnet 4.5) so cache_creation_input_tokens is populated.
+      long_context = String.duplicate("The quick brown fox jumps over the lazy dog. ", 400)
+
+      request =
+        Request.new(test_model())
+        |> Request.add_message_with_cache(:user, long_context, ttl: "5m")
+        |> Request.add_message(:user, "Reply with the single word: ok")
+        |> Request.set_max_tokens(16)
+
+      assert {:ok, %Response{usage: usage}} = Messages.create(client, request)
+
+      # A 200 proves cache_control was accepted; a non-nil creation OR read count
+      # proves the prefix was actually cached (read can occur if a prior run
+      # already warmed the same prefix).
+      assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
+    end
+  end
 end
