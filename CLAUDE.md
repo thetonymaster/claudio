@@ -50,15 +50,18 @@ mix compile           # Compile the project
 ### HTTP Client Layer (lib/claudio/client.ex)
 The `Claudio.Client` module wraps Req HTTP client with Anthropic-specific configuration:
 - Uses Mint adapter (configured in config/config.exs)
-- Handles authentication via x-api-key header
+- Handles authentication via `x-api-key` header (default) **or** `Authorization: Bearer` (set `auth_type: :bearer`) — for OAuth / Workload Identity Federation tokens. The `:token` field carries the credential in both modes.
 - Supports API versioning via anthropic-version header
 - Supports beta features via anthropic-beta header
 - Uses Poison for JSON encoding/decoding
 
 Client initialization requires:
-- `token`: API key
+- `token`: API key (or, with `auth_type: :bearer`, an OAuth/WIF bearer token)
 - `version`: API version (e.g., "2023-06-01")
+- `auth_type`: (optional) `:api_key` (default) or `:bearer`. Claude-Code-style OAuth tokens also need `beta: ["oauth-2025-04-20"]`.
 - `beta`: (optional) list of beta feature flags
+
+> **Alt deployments (Bedrock / Vertex):** not implemented — they need SigV4 / GCP ADC signing, model-id prefixing, and per-feature masking (large effort, deferred until demand). The OAuth token-exchange flow (`POST /v1/oauth/token`) is likewise out of scope; supply an already-obtained bearer token.
 
 ### Messages API (lib/claudio/messages.ex)
 The `Claudio.Messages` module provides both legacy and new APIs:
@@ -218,6 +221,13 @@ One flat module with grouped functions over a shared private request helper:
 
 Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token (S8) and are not covered.
 
+### Skills API (lib/claudio/skills.ex) — beta
+The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). Every request carries `anthropic-beta: skills-2025-10-02`, attached automatically via `Claudio.Client.with_betas/2` (callers don't pre-configure the beta).
+- **Read/manage:** `list/2` (`:limit`/`:page`/`:source`), `get/2`, `delete/2`, `list_versions/3`, `get_version/3`, `delete_version/3`
+- **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + beta + multipart transport.
+
+Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. **Prompt-tools** (`/v1/experimental/*`) are intentionally **not** implemented — experimental, access-gated, beta header unverified.
+
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
@@ -278,6 +288,7 @@ lib/claudio/
 │   ├── response.ex        # Response parser
 │   └── stream.ex          # SSE streaming
 ├── admin.ex              # Admin API (organizations/*)
+├── skills.ex             # Agent Skills API (beta)
 ├── models.ex             # Models API
 ├── mcp/
 │   ├── server_config.ex   # API-level MCP server config

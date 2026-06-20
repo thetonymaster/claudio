@@ -193,7 +193,7 @@ defmodule Claudio.Client do
     headers = [
       {"user-agent", "claudio"},
       {"anthropic-version", version},
-      {"x-api-key", token}
+      auth_header(auth, token)
     ]
 
     case auth do
@@ -204,6 +204,12 @@ defmodule Claudio.Client do
         headers
     end
   end
+
+  # Authentication header: `x-api-key` by default, or `Authorization: Bearer`
+  # when the client is built with `auth_type: :bearer` (OAuth / Workload
+  # Identity Federation tokens). The same `:token` field carries the credential.
+  defp auth_header(%{auth_type: :bearer}, token), do: {"authorization", "Bearer #{token}"}
+  defp auth_header(_auth, token), do: {"x-api-key", token}
 
   defp get_timeout_config do
     client_config = config()

@@ -127,6 +127,49 @@ defmodule Claudio.ClientTest do
     end
   end
 
+  describe "Bearer / OAuth auth (S8)" do
+    test "auth_type: :bearer sends an Authorization header and no x-api-key" do
+      client =
+        Claudio.Client.new(%{
+          token: "oauth-token-xyz",
+          version: "2023-06-01",
+          auth_type: :bearer
+        })
+
+      assert client.headers["authorization"] == ["Bearer oauth-token-xyz"]
+      assert client.headers["x-api-key"] == nil
+    end
+
+    test "default auth still sends x-api-key and no Authorization (backward compatible)" do
+      client = Claudio.Client.new(%{token: "test-token", version: "2023-06-01"})
+
+      assert client.headers["x-api-key"] == ["test-token"]
+      assert client.headers["authorization"] == nil
+    end
+
+    test "auth_type: :api_key is explicit x-api-key" do
+      client =
+        Claudio.Client.new(%{token: "test-token", version: "2023-06-01", auth_type: :api_key})
+
+      assert client.headers["x-api-key"] == ["test-token"]
+      assert client.headers["authorization"] == nil
+    end
+
+    test "bearer auth composes with anthropic-version and beta headers" do
+      client =
+        Claudio.Client.new(%{
+          token: "tok",
+          version: "2023-06-01",
+          auth_type: :bearer,
+          beta: ["oauth-2025-04-20"]
+        })
+
+      assert client.headers["authorization"] == ["Bearer tok"]
+      assert client.headers["anthropic-version"] == ["2023-06-01"]
+      assert client.headers["anthropic-beta"] == ["oauth-2025-04-20"]
+    end
+  end
+
   describe "with_betas/2" do
     test "is a no-op for an empty beta list" do
       client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
