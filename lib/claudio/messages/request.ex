@@ -718,6 +718,44 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds the server-side `code_execution` tool (`code_execution_20260120`). GA —
+  no beta header. Pairs with `set_container/2` for container reuse and the Files
+  API (`container_upload` blocks). Results are typed as
+  `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`.
+  """
+  @spec add_code_execution_tool(t()) :: t()
+  def add_code_execution_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "code_execution_20260120", "name" => "code_execution"})
+  end
+
+  @doc """
+  Adds the client-side, schema-less `bash` tool (`bash_20250124`). You execute
+  the returned `tool_use` locally and send back a `tool_result`. Do **not** add
+  an `input_schema` — the schema is built into the model.
+  """
+  @spec add_bash_tool(t()) :: t()
+  def add_bash_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "bash_20250124", "name" => "bash"})
+  end
+
+  @doc """
+  Adds the client-side, schema-less text editor tool (`text_editor_20250728`,
+  name `str_replace_based_edit_tool`). Client-executed like `bash`.
+
+  ## Options
+
+  - `:max_characters` — cap `view`-command output length.
+  """
+  @spec add_text_editor_tool(t(), keyword()) :: t()
+  def add_text_editor_tool(%__MODULE__{} = request, opts \\ []) do
+    tool =
+      %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
+      |> maybe_put("max_characters", Keyword.get(opts, :max_characters))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
   Adds a text message whose content block carries a `cache_control` breakpoint.
 
   Use for the "growing conversation prefix" caching pattern — mark the last

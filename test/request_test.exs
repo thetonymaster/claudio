@@ -649,4 +649,40 @@ defmodule Claudio.Messages.RequestTest do
       refute Map.has_key?(tool, "citations")
     end
   end
+
+  describe "code execution / bash / text editor (S6)" do
+    test "add_code_execution_tool emits code_execution_20260120 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_code_execution_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "code_execution_20260120", "name" => "code_execution"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "add_bash_tool emits the schema-less bash tool" do
+      request = Request.new("claude-opus-4-8") |> Request.add_bash_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "bash_20250124", "name" => "bash"}
+             ]
+    end
+
+    test "add_text_editor_tool emits str_replace_based_edit_tool" do
+      request = Request.new("claude-opus-4-8") |> Request.add_text_editor_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
+             ]
+    end
+
+    test "add_text_editor_tool threads :max_characters" do
+      request =
+        Request.new("claude-opus-4-8") |> Request.add_text_editor_tool(max_characters: 10_000)
+
+      [tool] = Request.to_map(request)["tools"]
+      assert tool["max_characters"] == 10_000
+    end
+  end
 end
