@@ -175,26 +175,81 @@ defmodule Claudio.Messages.Request do
   @doc """
   Adds a text message with a document from the Files API.
 
-  ## Example
+  ## Options
+
+  - `:citations` - When `true`, enables citations on the document
+    (`"citations" => %{"enabled" => true}`). The API requires citations to be
+    enabled on all-or-none of the documents in a request. **Incompatible with
+    structured outputs** (`set_output_config/2`) — the API returns 400.
+  - `:title` - Optional document title (length-limited; not cited from).
+  - `:context` - Optional document metadata passed to the model but not cited from.
+
+  ## Examples
 
       Request.new("claude-3-5-sonnet-20241022")
       |> Request.add_message_with_document(:user, "Summarize this document", "file_abc123")
+
+      Request.new("claude-opus-4-8")
+      |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
+        citations: true,
+        title: "Q4 Report"
+      )
   """
-  @spec add_message_with_document(t(), role(), String.t(), String.t()) :: t()
-  def add_message_with_document(%__MODULE__{} = request, role, text, file_id)
+  @spec add_message_with_document(t(), role(), String.t(), String.t(), keyword()) :: t()
+  def add_message_with_document(%__MODULE__{} = request, role, text, file_id, opts \\ [])
       when role in [:user, :assistant] do
-    content = [
+    document =
       %{
         "type" => "document",
         "source" => %{
           "type" => "file",
           "file_id" => file_id
         }
-      },
-      %{"type" => "text", "text" => text}
-    ]
+      }
+      |> maybe_put_citations(Keyword.get(opts, :citations))
+      |> maybe_put("title", Keyword.get(opts, :title))
+      |> maybe_put("context", Keyword.get(opts, :context))
+
+    content = [document, %{"type" => "text", "text" => text}]
 
     add_message(request, role, content)
+  end
+
+  @doc """
+  Builds a `search_result` content block for RAG / grounded citations.
+
+  `contents` may be a list of strings (each wrapped as a `text` block) or a list
+  of pre-built text-block maps. Compose into a turn with `add_message/3`:
+
+      result =
+        Request.search_result_block("https://docs/api", "API Reference", ["…"],
+          citations: true
+        )
+
+      request
+      |> Request.add_message(:user, [
+        result,
+        %{"type" => "text", "text" => "How do I authenticate?"}
+      ])
+
+  ## Options
+
+  - `:citations` - When `true`, enables citations on this result
+    (surfaces as `search_result_location` citations on response text blocks).
+  - `:cache_control` - `true` for default ephemeral caching, or a ttl string
+    (`"5m"` / `"1h"`).
+  """
+  @spec search_result_block(String.t(), String.t(), [String.t() | map()], keyword()) :: map()
+  def search_result_block(source, title, contents, opts \\ [])
+      when is_binary(source) and is_binary(title) and is_list(contents) do
+    %{
+      "type" => "search_result",
+      "source" => source,
+      "title" => title,
+      "content" => Enum.map(contents, &normalize_search_result_content/1)
+    }
+    |> maybe_put_citations(Keyword.get(opts, :citations))
+    |> maybe_put("cache_control", search_result_cache(Keyword.get(opts, :cache_control)))
   end
 
   @doc """
@@ -695,4 +750,17 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
+  defp maybe_put_citations(map, _), do: map
+
+  defp normalize_search_result_content(text) when is_binary(text),
+    do: %{"type" => "text", "text" => text}
+
+  defp normalize_search_result_content(%{} = block), do: block
+
+  defp search_result_cache(nil), do: nil
+  defp search_result_cache(false), do: nil
+  defp search_result_cache(true), do: cache_control_map(nil)
+  defp search_result_cache(ttl) when is_binary(ttl), do: cache_control_map(ttl)
 end
