@@ -82,11 +82,13 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - Support for system prompts, stop sequences, and metadata
 - Tool definitions and tool choice configuration
 - Thinking mode configuration
-- **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`)
+- **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`, plus `add_message_with_cache/4` for message-level breakpoints and `set_cache_control/2` for top-level auto-placement — all GA, no beta header)
 - **Vision/image support** (`add_message_with_image/4`, `add_message_with_image_url/3`)
 - **Document support** (`add_message_with_document/3`)
 - **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps)
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
+- **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
+- **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
 - Converts to map via `to_map/1` for API submission
 
 Example:
