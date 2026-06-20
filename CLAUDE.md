@@ -84,7 +84,8 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - Thinking mode configuration
 - **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`, plus `add_message_with_cache/4` for message-level breakpoints and `set_cache_control/2` for top-level auto-placement — all GA, no beta header)
 - **Vision/image support** (`add_message_with_image/4`, `add_message_with_image_url/3`)
-- **Document support** (`add_message_with_document/3`)
+- **Document support** (`add_message_with_document/5` — opts `:citations` / `:title` / `:context`; backward-compatible with the original `/4` arity)
+- **Citations + search results** (`add_message_with_document/5` with `citations: true` for grounded document citations; `search_result_block/4` builds RAG `search_result` content blocks — both GA, no beta header. ⚠️ Citations are **incompatible with structured outputs** — combining them returns 400.)
 - **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps)
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
@@ -104,12 +105,15 @@ Request.new("claude-sonnet-4-5-20250929")
 
 ### Response Handling (lib/claudio/messages/response.ex)
 The `Claudio.Messages.Response` module parses API responses into structured data:
-- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result)
+- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result)
 - Converts stop_reason strings to atoms (:end_turn, :max_tokens, :tool_use, etc.)
 - **Tracks cache metrics** (cache_creation_input_tokens, cache_read_input_tokens)
+- **Preserves citations** on `text` blocks (the raw citation maps — `char_location`, `page_location`, `content_block_location`, `search_result_location`, `web_search_result_location` — kept verbatim for reading; not replayed by `to_assistant_content/1`)
 - Provides helper methods:
   - `get_text/1`: Extracts all text content
   - `get_tool_uses/1`: Extracts tool use requests
+  - `get_citations/1`: Aggregates citations across all text blocks (document order)
+  - `get_server_tool_uses/1`: Extracts `server_tool_use` requests (e.g. server-run `web_search`)
   - `get_mcp_tool_uses/1`: Extracts MCP tool use requests
   - `get_mcp_tool_uses/2`: Extracts MCP tool uses for a specific server
 - Handles both string and atom keys from API responses

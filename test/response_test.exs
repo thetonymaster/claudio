@@ -374,7 +374,9 @@ defmodule Claudio.Messages.ResponseTest do
 
     test "preserves the citations array (string keys)" do
       data = %{
-        "content" => [%{"type" => "text", "text" => "the grass is green", "citations" => [@citation]}]
+        "content" => [
+          %{"type" => "text", "text" => "the grass is green", "citations" => [@citation]}
+        ]
       }
 
       [block] = Response.from_map(data).content

@@ -474,9 +474,7 @@ defmodule Claudio.Messages.RequestTest do
     test "citations: true enables citations on the document block" do
       request =
         Request.new("claude-sonnet-4-6")
-        |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
-          citations: true
-        )
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123", citations: true)
 
       [message] = Request.to_map(request)["messages"]
       [document, _text] = message["content"]
@@ -500,9 +498,7 @@ defmodule Claudio.Messages.RequestTest do
     test "citations: false omits the citations key" do
       request =
         Request.new("claude-sonnet-4-6")
-        |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
-          citations: false
-        )
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123", citations: false)
 
       [message] = Request.to_map(request)["messages"]
       [document, _text] = message["content"]
