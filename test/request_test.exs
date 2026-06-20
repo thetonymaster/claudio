@@ -685,4 +685,16 @@ defmodule Claudio.Messages.RequestTest do
       assert tool["max_characters"] == 10_000
     end
   end
+
+  describe "add_memory_tool/1 (S6)" do
+    test "emits memory_20250818 with no beta" do
+      request = Request.new("claude-opus-4-8") |> Request.add_memory_tool()
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "memory_20250818", "name" => "memory"}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+  end
 end

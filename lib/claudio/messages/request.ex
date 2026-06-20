@@ -756,6 +756,19 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds the client-side `memory` tool (`memory_20250818`). GA — no beta header.
+
+  Claude issues `view` / `create` / `str_replace` / `insert` / `delete` /
+  `rename` commands scoped to a `/memories` directory; you execute them locally.
+  **Confine every operation to `/memories`** and reject path traversal. Pairs
+  with `set_context_management/2` for long-running agents.
+  """
+  @spec add_memory_tool(t()) :: t()
+  def add_memory_tool(%__MODULE__{} = request) do
+    add_tool(request, %{"type" => "memory_20250818", "name" => "memory"})
+  end
+
+  @doc """
   Adds a text message whose content block carries a `cache_control` breakpoint.
 
   Use for the "growing conversation prefix" caching pattern — mark the last
