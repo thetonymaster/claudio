@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-19
+
+A large coverage release closing the gap between Claudio and the current
+Anthropic API surface (roadmap specs S1–S9). All additions are
+backward-compatible — no breaking changes.
+
+### Added
+
+- **Models API** (`Claudio.Models`) — GA, no beta header.
+  - `list/2` (`GET /v1/models`, paginated: `:limit`, `:before_id`, `:after_id`)
+    and `get/2` (`GET /v1/models/{id}`, id or alias).
+- **Structured outputs** (`Claudio.Messages.Request`) — GA.
+  - `set_output_format/2` builds `output_config.format` from a JSON schema;
+    `set_output_config/2` is the raw setter.
+  - `add_strict_tool/2` (`strict: true`) and `add_tool_with_eager_streaming/2`
+    (`eager_input_streaming: true`).
+- **Message-level prompt caching** — `add_message_with_cache/4` (per-message
+  `cache_control` breakpoints) and `set_cache_control/2` (top-level).
+- **Per-feature beta-header management** — `Request.add_beta/2` /
+  `required_betas/1` and `Client.with_betas/2`; feature setters (e.g.
+  `set_context_management/2`) declare their own betas, which the send path
+  merges into `anthropic-beta` automatically.
+- **Citations & search results** — GA.
+  - `add_message_with_document/5` threads `:citations` / `:title` / `:context`
+    (backward-compatible with the `/4` arity).
+  - `search_result_block/4` builds RAG `search_result` content blocks.
+  - `Response.get_citations/1` aggregates citations preserved on `text` blocks
+    (`char_location`, `page_location`, `content_block_location`,
+    `search_result_location`, `web_search_result_location`).
+  - `server_tool_use` and `web_search_tool_result` content blocks are now typed;
+    `Response.get_server_tool_uses/1` extracts them.
+- **Server-side tool helpers** (`Claudio.Messages.Request`) — only computer-use
+  declares a beta (`computer-use-2025-01-24`, auto-declared):
+  - `add_web_search_tool/2`, `add_web_fetch_tool/2`,
+    `add_code_execution_tool/1`, `add_bash_tool/1`, `add_text_editor_tool/2`,
+    `add_memory_tool/1`, `add_computer_tool/4`.
+- **Admin API** (`Claudio.Admin`) — GA, uses an Admin API key (`sk-ant-admin…`)
+  via the existing `x-api-key` header.
+  - Organization (`get_organization/1`), members, invites, workspaces, API keys,
+    and usage/cost reports (`usage_report/2`, `cost_report/2`).
+- **Bearer / OAuth auth** (`Claudio.Client`) — `auth_type: :bearer` sends
+  `Authorization: Bearer <token>` (for OAuth / Workload Identity Federation
+  tokens) instead of `x-api-key`. Defaults to `:api_key` (no behavior change).
+- **Agent Skills API** (`Claudio.Skills`) — beta `skills-2025-10-02` (attached
+  automatically). `list/2`, `get/2`, `delete/2`, version sub-resources, and
+  multipart `create/2` / `create_version/3`.
+
+### Fixed
+
+- **Extended-thinking multi-turn round-trips** — `thinking` blocks now preserve
+  `signature`, `redacted_thinking` blocks are typed and preserved, and the
+  streaming parser keeps `signature_delta` / `citations_delta`. Replaying an
+  extended-thinking + tool-use turn no longer triggers `400 invalid_request_error`.
+  `Response.to_assistant_content/1` is the single serializer (the divergent
+  `Agent` serializer was removed).
+- **Response content getters tolerate untyped blocks** — `get_text/1`,
+  `get_tool_uses/1`, `get_citations/1`, `get_server_tool_uses/1`, and
+  `get_mcp_tool_uses/1,2` no longer raise `KeyError` on raw blocks Claudio
+  doesn't type (e.g. `code_execution_tool_result` from dynamic-filtering
+  web search).
+
+### Notes
+
+- **Not implemented (documented):** Bedrock/Vertex transports (SigV4 / GCP ADC)
+  and the OAuth token-exchange flow are out of scope (supply an already-obtained
+  bearer token); prompt-tools (`/v1/experimental/*`) are deferred (experimental,
+  access-gated, beta header unverified).
+
 ## [0.5.0] - 2026-05-01
 
 ### Added
