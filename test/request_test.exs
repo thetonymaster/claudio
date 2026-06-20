@@ -453,4 +453,60 @@ defmodule Claudio.Messages.RequestTest do
       assert length(map["messages"]) == 1
     end
   end
+
+  describe "add_message_with_document/5" do
+    test "no opts emits the original document block (backward compatible)" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123")
+
+      [message] = Request.to_map(request)["messages"]
+
+      assert message["content"] == [
+               %{
+                 "type" => "document",
+                 "source" => %{"type" => "file", "file_id" => "file_abc123"}
+               },
+               %{"type" => "text", "text" => "Summarize"}
+             ]
+    end
+
+    test "citations: true enables citations on the document block" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
+          citations: true
+        )
+
+      [message] = Request.to_map(request)["messages"]
+      [document, _text] = message["content"]
+      assert document["citations"] == %{"enabled" => true}
+    end
+
+    test ":title and :context are threaded onto the document block" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
+          title: "Q4 Report",
+          context: "Internal financials"
+        )
+
+      [message] = Request.to_map(request)["messages"]
+      [document, _text] = message["content"]
+      assert document["title"] == "Q4 Report"
+      assert document["context"] == "Internal financials"
+    end
+
+    test "citations: false omits the citations key" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
+          citations: false
+        )
+
+      [message] = Request.to_map(request)["messages"]
+      [document, _text] = message["content"]
+      refute Map.has_key?(document, "citations")
+    end
+  end
 end

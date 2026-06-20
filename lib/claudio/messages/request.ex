@@ -175,24 +175,42 @@ defmodule Claudio.Messages.Request do
   @doc """
   Adds a text message with a document from the Files API.
 
-  ## Example
+  ## Options
+
+  - `:citations` - When `true`, enables citations on the document
+    (`"citations" => %{"enabled" => true}`). The API requires citations to be
+    enabled on all-or-none of the documents in a request. **Incompatible with
+    structured outputs** (`set_output_config/2`) — the API returns 400.
+  - `:title` - Optional document title (length-limited; not cited from).
+  - `:context` - Optional document metadata passed to the model but not cited from.
+
+  ## Examples
 
       Request.new("claude-3-5-sonnet-20241022")
       |> Request.add_message_with_document(:user, "Summarize this document", "file_abc123")
+
+      Request.new("claude-opus-4-8")
+      |> Request.add_message_with_document(:user, "Summarize", "file_abc123",
+        citations: true,
+        title: "Q4 Report"
+      )
   """
-  @spec add_message_with_document(t(), role(), String.t(), String.t()) :: t()
-  def add_message_with_document(%__MODULE__{} = request, role, text, file_id)
+  @spec add_message_with_document(t(), role(), String.t(), String.t(), keyword()) :: t()
+  def add_message_with_document(%__MODULE__{} = request, role, text, file_id, opts \\ [])
       when role in [:user, :assistant] do
-    content = [
+    document =
       %{
         "type" => "document",
         "source" => %{
           "type" => "file",
           "file_id" => file_id
         }
-      },
-      %{"type" => "text", "text" => text}
-    ]
+      }
+      |> maybe_put_citations(Keyword.get(opts, :citations))
+      |> maybe_put("title", Keyword.get(opts, :title))
+      |> maybe_put("context", Keyword.get(opts, :context))
+
+    content = [document, %{"type" => "text", "text" => text}]
 
     add_message(request, role, content)
   end
@@ -695,4 +713,7 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
+  defp maybe_put_citations(map, _), do: map
 end
