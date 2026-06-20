@@ -91,6 +91,9 @@ defmodule Claudio.MixProject do
         "Admin API": [
           Claudio.Admin
         ],
+        "Skills API (beta)": [
+          Claudio.Skills
+        ],
         Tools: [
           Claudio.Tools
         ],
