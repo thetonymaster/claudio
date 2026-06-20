@@ -325,4 +325,41 @@ defmodule Claudio.Messages.IntegrationTest do
       assert usage.cache_creation_input_tokens > 0 or usage.cache_read_input_tokens > 0
     end
   end
+
+  describe "citations + content-block parsing (S5)" do
+    test "search_result blocks yield search_result_location citations", %{client: client} do
+      results = [
+        Request.search_result_block(
+          "https://docs.company.com/auth",
+          "Authentication Guide",
+          ["All API requests must include an API key in the Authorization header."],
+          citations: true
+        ),
+        Request.search_result_block(
+          "https://docs.company.com/limits",
+          "Rate Limits",
+          ["The API allows 1000 requests per hour per key."],
+          citations: true
+        )
+      ]
+
+      question = %{
+        "type" => "text",
+        "text" => "How do I authenticate and what is the rate limit? Cite your sources."
+      }
+
+      request =
+        Request.new(test_model())
+        |> Request.add_message(:user, results ++ [question])
+        |> Request.set_max_tokens(512)
+
+      assert {:ok, %Response{} = response} = Messages.create(client, request)
+
+      # get_citations/1 aggregates citations across text blocks; with cited
+      # search_result blocks the model returns search_result_location entries.
+      citations = Response.get_citations(response)
+      assert citations != []
+      assert Enum.any?(citations, &(&1["type"] == "search_result_location"))
+    end
+  end
 end
