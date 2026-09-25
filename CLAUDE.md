@@ -52,7 +52,7 @@ The `Claudio.Client` module wraps Req HTTP client with Anthropic-specific config
 - Handles authentication via `x-api-key` header (default) **or** `Authorization: Bearer` (set `auth_type: :bearer`) — for OAuth / Workload Identity Federation tokens. The `:token` field carries the credential in both modes.
 - Supports API versioning via anthropic-version header
 - Supports beta features via anthropic-beta header
-- Uses Poison for JSON encoding/decoding
+- Uses Jason for JSON (Req's built-in encoder/decoder)
 
 Client initialization requires:
 - `token`: API key (or, with `auth_type: :bearer`, an OAuth/WIF bearer token)
@@ -253,8 +253,7 @@ The `Claudio.APIError` exception provides structured error handling:
 - `add_mcp_server/2` accepts both `ServerConfig` structs and raw maps
 
 ### JSON Handling
-- Poison used for production JSON encoding/decoding
-- Jason used in addition to Poison for JSON handling
+- Jason for all JSON encoding/decoding (Req depends on it; `json:` request bodies go through it)
 - All API responses parsed with atom keys for easier access
 
 ### Streaming Implementation
