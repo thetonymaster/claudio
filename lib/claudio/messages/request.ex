@@ -486,24 +486,67 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
-  Adds MCP (Model Context Protocol) server definitions.
+  Adds a server for the MCP connector (`mcp-client-2025-11-20`).
 
-  ## Example
+  Emits both halves the API requires: the server entry in `mcp_servers` and an
+  `mcp_toolset` entry in `tools` referencing it by name. Declares the
+  `mcp-client-2025-11-20` beta via `add_beta/2`.
 
-      Request.new("claude-sonnet-4-5-20250929")
-      |> Request.add_mcp_server(%{
-        "name" => "my_server",
-        "url" => "http://localhost:8080"
-      })
+  Accepts a `Claudio.MCP.ServerConfig` or a raw map; a legacy
+  `tool_configuration` key in a raw map is translated onto the toolset with a
+  deprecation warning. If `tools` already holds an `mcp_toolset` for that
+  server name (the API allows one per server), no second toolset is added —
+  unless the new one carries `default_config`/`configs`, which would be lost,
+  so that raises `ArgumentError`. Add hand-built toolsets **before** calling
+  this, or the request will carry two.
+
+      Request.new("claude-opus-5")
+      |> Request.add_mcp_server(
+        Claudio.MCP.ServerConfig.new("my_server", "https://mcp.example.com/sse")
+      )
   """
   @spec add_mcp_server(t(), Claudio.MCP.ServerConfig.t() | map()) :: t()
   def add_mcp_server(%__MODULE__{} = request, %Claudio.MCP.ServerConfig{} = server) do
-    add_mcp_server(request, Claudio.MCP.ServerConfig.to_map(server))
+    put_mcp_server(
+      request,
+      Claudio.MCP.ServerConfig.to_map(server),
+      Claudio.MCP.ServerConfig.to_toolset(server)
+    )
   end
 
-  def add_mcp_server(%__MODULE__{mcp_servers: servers} = request, server) when is_map(server) do
-    current_servers = servers || []
-    %{request | mcp_servers: current_servers ++ [server]}
+  def add_mcp_server(%__MODULE__{} = request, server) when is_map(server) do
+    {server_map, toolset} = Claudio.MCP.ServerConfig.split_raw(server)
+    put_mcp_server(request, server_map, toolset)
+  end
+
+  defp put_mcp_server(%__MODULE__{mcp_servers: servers} = request, server_map, toolset) do
+    request = %{request | mcp_servers: (servers || []) ++ [server_map]}
+
+    name = toolset["mcp_server_name"]
+
+    request =
+      cond do
+        not has_mcp_toolset?(request.tools, name) ->
+          add_tool(request, toolset)
+
+        Map.has_key?(toolset, "default_config") or Map.has_key?(toolset, "configs") ->
+          raise ArgumentError,
+                "request already has an mcp_toolset for #{inspect(name)}; the new server's " <>
+                  "tool config (#{inspect(Map.take(toolset, ["default_config", "configs"]))}) " <>
+                  "would be dropped. Put the config on one toolset only."
+
+        true ->
+          request
+      end
+
+    add_beta(request, "mcp-client-2025-11-20")
+  end
+
+  defp has_mcp_toolset?(tools, server_name) do
+    Enum.any?(tools || [], fn tool ->
+      (tool["type"] || tool[:type]) == "mcp_toolset" and
+        (tool["mcp_server_name"] || tool[:mcp_server_name]) == server_name
+    end)
   end
 
   @doc """
