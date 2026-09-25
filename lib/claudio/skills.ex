@@ -3,9 +3,12 @@ defmodule Claudio.Skills do
   Anthropic **Agent Skills API** client (`/v1/skills`) — manage custom skills
   (packaged `SKILL.md` + files) and their versions.
 
-  **Beta.** Every request carries `anthropic-beta: skills-2025-10-02`, attached
-  automatically (via `Claudio.Client.with_betas/2`) — you do not need to build
-  the client with it.
+  **GA — no beta header.** Without the header, list responses are
+  `%{"data" => [...], "next_page" => cursor | nil}` — page by passing
+  `next_page` back as `:page`. The old beta shape also carried `"has_more"`;
+  callers that depend on it can opt back in:
+
+      client = Claudio.Client.with_betas(client, ["skills-2025-10-02"])
 
       client = Claudio.Client.new(%{token: "sk-ant-...", version: "2023-06-01"})
       {:ok, %{"data" => skills}} = Claudio.Skills.list(client, source: "custom")
@@ -26,13 +29,15 @@ defmodule Claudio.Skills do
   > experimental, access-gated, and the beta header is unverified.
   """
 
-  alias Claudio.{APIError, Client}
-
-  @beta "skills-2025-10-02"
+  alias Claudio.APIError
 
   @type result :: {:ok, map()} | {:error, APIError.t() | term()}
 
-  @doc "Lists skills. Opts (`:limit`/`:page`/`:source`) become query params."
+  @doc """
+  Lists skills. Opts become query params: `:limit`, `:page` (the previous
+  response's `"next_page"`), `:source`. Returns `%{"data" => _, "next_page" => _}`
+  (no `"has_more"` unless the client sends `skills-2025-10-02`).
+  """
   @spec list(Req.Request.t(), keyword()) :: result()
   def list(client, opts \\ []), do: http_get(client, "skills", opts)
 
@@ -74,15 +79,13 @@ defmodule Claudio.Skills do
 
   # --- internals ----------------------------------------------------------
 
-  defp beta(client), do: Client.with_betas(client, [@beta])
-
   defp http_get(client, url, params),
-    do: handle(Req.get(beta(client), url: url, params: params))
+    do: handle(Req.get(client, url: url, params: params))
 
-  defp http_delete(client, url), do: handle(Req.delete(beta(client), url: url))
+  defp http_delete(client, url), do: handle(Req.delete(client, url: url))
 
   defp http_multipart(client, url, form),
-    do: handle(Req.post(beta(client), url: url, form_multipart: form))
+    do: handle(Req.post(client, url: url, form_multipart: form))
 
   defp handle({:ok, %Req.Response{status: status, body: body}}) when status in 200..299,
     do: {:ok, body}
