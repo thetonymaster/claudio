@@ -651,14 +651,35 @@ defmodule Claudio.Messages.RequestTest do
   end
 
   describe "code execution / bash / text editor (S6)" do
-    test "add_code_execution_tool emits code_execution_20260120 with no beta" do
-      request = Request.new("claude-opus-4-8") |> Request.add_code_execution_tool()
+    test "add_code_execution_tool defaults to code_execution_20260521 with no beta" do
+      request = Request.new("claude-opus-5") |> Request.add_code_execution_tool()
 
       assert Request.to_map(request)["tools"] == [
-               %{"type" => "code_execution_20260120", "name" => "code_execution"}
+               %{"type" => "code_execution_20260521", "name" => "code_execution"}
              ]
 
       assert Request.required_betas(request) == []
+    end
+
+    test "add_code_execution_tool :version selects older versions" do
+      for {version, type} <- [
+            {:"20260120", "code_execution_20260120"},
+            {:"20250825", "code_execution_20250825"}
+          ] do
+        [tool] =
+          Request.new("claude-opus-5")
+          |> Request.add_code_execution_tool(version: version)
+          |> Request.to_map()
+          |> Map.fetch!("tools")
+
+        assert tool == %{"type" => type, "name" => "code_execution"}
+      end
+    end
+
+    test "add_code_execution_tool rejects an unknown version" do
+      assert_raise ArgumentError, ~r/:version must be one of/, fn ->
+        Request.new("claude-opus-5") |> Request.add_code_execution_tool(version: :"20250522")
+      end
     end
 
     test "add_bash_tool emits the schema-less bash tool" do

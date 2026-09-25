@@ -760,15 +760,32 @@ defmodule Claudio.Messages.Request do
     add_tool(request, tool)
   end
 
+  @code_execution_versions [:"20260521", :"20260120", :"20250825"]
+
   @doc """
-  Adds the server-side `code_execution` tool (`code_execution_20260120`). GA —
-  no beta header. Pairs with `set_container/2` for container reuse and the Files
-  API (`container_upload` blocks). Results are typed as
-  `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`.
+  Adds the server-side `code_execution` tool. GA — no beta header. Pairs with
+  `set_container/2` for container reuse and the Files API (`container_upload`
+  blocks). Results arrive as `bash_code_execution_tool_result` /
+  `text_editor_code_execution_tool_result` blocks.
+
+  ## Options
+
+    * `:version` — `:"20260521"` (default), `:"20260120"`, or `:"20250825"`.
+      `20260521` and `20260120` run the same runtime (REPL persistence and
+      programmatic tool calling); `20260521` also tells Claude about the
+      90-second per-cell limit. Use `:"20250825"` to turn those features off.
   """
-  @spec add_code_execution_tool(t()) :: t()
-  def add_code_execution_tool(%__MODULE__{} = request) do
-    add_tool(request, %{"type" => "code_execution_20260120", "name" => "code_execution"})
+  @spec add_code_execution_tool(t(), keyword()) :: t()
+  def add_code_execution_tool(%__MODULE__{} = request, opts \\ []) do
+    version = Keyword.get(opts, :version, :"20260521")
+
+    unless version in @code_execution_versions do
+      raise ArgumentError,
+            "add_code_execution_tool/2 :version must be one of " <>
+              "#{inspect(@code_execution_versions)}; got #{inspect(version)}"
+    end
+
+    add_tool(request, %{"type" => "code_execution_#{version}", "name" => "code_execution"})
   end
 
   @doc """
