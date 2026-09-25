@@ -18,7 +18,8 @@
 - Code execution versions: `:"20260521"` (default) `| :"20260120" | :"20250825"`; anything else raises `ArgumentError`.
 - No model-aware validation anywhere (library stays model-agnostic; the API validates).
 - No existing public function signature changes. Removing `ServerConfig`'s `:tool_configuration` struct field is the one intentional struct change.
-- Commits: add files individually (never `git add .`); no AI attribution lines in commit messages.
+- Commits: add files individually (never `git add .`); no AI attribution lines in commit messages. Run `mix format` on the task's files before every commit.
+- Doc facts with sources (keep them): Files list default 20 / max 1,000 and "`ids[]` cannot be combined with `page` or `limit`" — live Files doc; `stop_details` populated only on `refusal` — `claude-api` reference, "Stop details".
 - Done = `mix test` green, `mix format --check-formatted` clean, `mix compile --warnings-as-errors` clean. Baseline before this plan: 282 tests, 0 failures, 25 excluded.
 - Work on branch `feat/s10-api-drift` created from `docs/s10-api-drift-spec`.
 
@@ -628,6 +629,30 @@ defmodule Claudio.Messages.Request.MCPTest do
       assert map["tools"] == [hand_built]
     end
 
+    test "raises instead of dropping config when a toolset already exists (struct path)" do
+      assert_raise ArgumentError, ~r/already has an mcp_toolset for "s"/, fn ->
+        Request.new("claude-opus-5")
+        |> Request.add_tool(%{"type" => "mcp_toolset", "mcp_server_name" => "s"})
+        |> Request.add_mcp_server(
+          ServerConfig.new("s", "https://x") |> ServerConfig.allow_tools(["only_this"])
+        )
+      end
+    end
+
+    test "raises instead of dropping translated legacy config when a toolset already exists" do
+      capture_log(fn ->
+        assert_raise ArgumentError, ~r/already has an mcp_toolset for "raw"/, fn ->
+          Request.new("claude-opus-5")
+          |> Request.add_tool(%{"type" => "mcp_toolset", "mcp_server_name" => "raw"})
+          |> Request.add_mcp_server(%{
+            "name" => "raw",
+            "url" => "https://x",
+            "tool_configuration" => %{"allowed_tools" => ["a"]}
+          })
+        end
+      end)
+    end
+
     test "legacy tool_configuration is translated, stripped, and warned about" do
       log =
         capture_log(fn ->
@@ -680,7 +705,7 @@ end
 - [ ] **Step 2: Run to verify failure**
 
 Run: `mix test test/mcp/request_mcp_test.exs`
-Expected: FAIL — `map["tools"]` is `nil` and `required_betas` is `[]` in the new assertions.
+Expected: FAIL — `map["tools"]` is `nil` and `required_betas` is `[]` in the new assertions. ("does not duplicate a hand-built toolset" passes vacuously before the change — it only asserts nothing was added; that's expected.)
 
 - [ ] **Step 3: Implement** — in `lib/claudio/messages/request.ex`, replace the whole `@doc` for `add_mcp_server` and both clauses (from the `@doc """` above `@spec add_mcp_server` through the end of the raw-map clause) with:
 
@@ -692,11 +717,13 @@ Expected: FAIL — `map["tools"]` is `nil` and `required_betas` is `[]` in the n
   `mcp_toolset` entry in `tools` referencing it by name. Declares the
   `mcp-client-2025-11-20` beta via `add_beta/2`.
 
-  Accepts a `Claudio.MCP.ServerConfig` or a raw map. For a raw map, no toolset
-  is added when `tools` already holds an `mcp_toolset` for that server name
-  (the API rejects two toolsets for one server); a legacy `tool_configuration`
-  key is translated onto the toolset with a deprecation warning. Add hand-built
-  toolsets **before** calling this, or the request will carry two.
+  Accepts a `Claudio.MCP.ServerConfig` or a raw map; a legacy
+  `tool_configuration` key in a raw map is translated onto the toolset with a
+  deprecation warning. If `tools` already holds an `mcp_toolset` for that
+  server name (the API allows one per server), no second toolset is added —
+  unless the new one carries `default_config`/`configs`, which would be lost,
+  so that raises `ArgumentError`. Add hand-built toolsets **before** calling
+  this, or the request will carry two.
 
       Request.new("claude-opus-5")
       |> Request.add_mcp_server(
@@ -720,10 +747,22 @@ Expected: FAIL — `map["tools"]` is `nil` and `required_betas` is `[]` in the n
   defp put_mcp_server(%__MODULE__{mcp_servers: servers} = request, server_map, toolset) do
     request = %{request | mcp_servers: (servers || []) ++ [server_map]}
 
+    name = toolset["mcp_server_name"]
+
     request =
-      if has_mcp_toolset?(request.tools, toolset["mcp_server_name"]),
-        do: request,
-        else: add_tool(request, toolset)
+      cond do
+        not has_mcp_toolset?(request.tools, name) ->
+          add_tool(request, toolset)
+
+        Map.has_key?(toolset, "default_config") or Map.has_key?(toolset, "configs") ->
+          raise ArgumentError,
+                "request already has an mcp_toolset for #{inspect(name)}; the new server's " <>
+                  "tool config (#{inspect(Map.take(toolset, ["default_config", "configs"]))}) " <>
+                  "would be dropped. Put the config on one toolset only."
+
+        true ->
+          request
+      end
 
     add_beta(request, "mcp-client-2025-11-20")
   end
@@ -892,6 +931,15 @@ end'
 
 Expected: two lines, both `status=200`. **If the key is missing or either status is not 200: STOP. Report the exact output to Q; do not pick a branch.** Otherwise record both lines verbatim — they go in the Step 7 commit message.
 
+Plan review (2026-09-25) already ran this probe and got:
+
+```
+with_beta: status=200 keys=["data", "has_more", "next_page"]
+without_beta: status=200 keys=["data", "next_page"]
+```
+
+→ **Branch B**. Re-run to confirm; if the output matches, take Branch B. If it differs, STOP and report to Q.
+
 - Keys identical → **Branch A** moduledoc (Step 4a).
 - Keys differ → **Branch B** moduledoc (Step 4b).
 
@@ -935,14 +983,25 @@ Change `alias Claudio.{APIError, Client}` to `alias Claudio.APIError`; delete `@
   **GA — no beta header.** Requests go out on the client as built.
 ```
 
-- [ ] **Step 4b (Branch B — keys differ):** replace the same paragraph with (fill both key lists from the Step 1 output):
+- [ ] **Step 4b (Branch B — keys differ; expected):** replace the same paragraph with:
 
 ```markdown
-  **GA — no beta header.** Without the header, `list/2` / `list_versions/3`
-  return the GA shape (top-level keys: <without_beta keys from Step 1>). Callers
-  that depend on the old beta shape (<with_beta keys from Step 1>) can opt back in:
+  **GA — no beta header.** Without the header, list responses are
+  `%{"data" => [...], "next_page" => cursor | nil}` — page by passing
+  `next_page` back as `:page`. The old beta shape also carried `"has_more"`;
+  callers that depend on it can opt back in:
 
       client = Claudio.Client.with_betas(client, ["skills-2025-10-02"])
+```
+
+and replace the `list/2` doc line `@doc "Lists skills. Opts (\`:limit\`/\`:page\`/\`:source\`) become query params."` with:
+
+```elixir
+  @doc """
+  Lists skills. Opts become query params: `:limit`, `:page` (the previous
+  response's `"next_page"`), `:source`. Returns `%{"data" => _, "next_page" => _}`
+  (no `"has_more"` unless the client sends `skills-2025-10-02`).
+  """
 ```
 
 - [ ] **Step 5: Add the live regression test** — create `test/integration/skills_integration_test.exs`:
@@ -965,8 +1024,10 @@ defmodule Claudio.SkillsIntegrationTest do
   end
 
   test "list works without the skills beta header", %{client: client} do
-    assert {:ok, %{"data" => skills}} = Claudio.Skills.list(client, limit: 1)
+    assert {:ok, %{"data" => skills} = body} = Claudio.Skills.list(client, limit: 1)
     assert is_list(skills)
+    # has_more only appears when skills-2025-10-02 is sent (probe, 2026-09-25)
+    refute Map.has_key?(body, "has_more")
   end
 end
 ```
@@ -1128,24 +1189,24 @@ Append to `test/messages/stream_test.exs` (before the final `end`; the helper is
 
 ```elixir
   defp final_message(delta_json) do
-      sse = [
-        ~s(event: message_start),
-        ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}),
-        "",
-        ~s(event: message_delta),
-        ~s(data: {"type":"message_delta","delta":#{delta_json},"usage":{"output_tokens":3}}),
-        "",
-        ~s(event: message_stop),
-        ~s(data: {"type":"message_stop"}),
-        ""
-      ]
+    sse = [
+      ~s(event: message_start),
+      ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}),
+      "",
+      ~s(event: message_delta),
+      ~s(data: {"type":"message_delta","delta":#{delta_json},"usage":{"output_tokens":3}}),
+      "",
+      ~s(event: message_stop),
+      ~s(data: {"type":"message_stop"}),
+      ""
+    ]
 
-      {:ok, message} =
-        [Enum.join(sse, "\n") <> "\n"]
-        |> ClaudioStream.parse_events()
-        |> ClaudioStream.build_final_message()
+    {:ok, message} =
+      [Enum.join(sse, "\n") <> "\n"]
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
 
-      message
+    message
   end
 
   describe "build_final_message/1 stop_details" do
@@ -1269,7 +1330,9 @@ and, in that client example, remove the `beta: ["files-api-2025-04-14"]` line.
   - Architecture → MCP Support → server-side bullets: change `- \`Request.add_mcp_server/2\`: Accepts \`ServerConfig\` structs or raw maps` to `- \`Request.add_mcp_server/2\`: Accepts \`ServerConfig\` structs or raw maps; emits the \`mcp_servers\` entry **and** an \`mcp_toolset\` in \`tools\`, and declares \`mcp-client-2025-11-20\`. \`ServerConfig.allow_tools/2\` takes exact names (patterns raise); legacy \`tool_configuration\` in raw maps is translated with a warning.`
   - Request Builder: change `- \`add_code_execution_tool/1\` — \`code_execution_20260120\`; GA (pairs with \`set_container/2\`)` to `- \`add_code_execution_tool/2\` — \`code_execution_20260521\` (default; \`version:\` \`:"20260120"\` / \`:"20250825"\`); GA (pairs with \`set_container/2\`)`
   - Response Handling: add bullet `- **\`stop_details\`** — raw refusal details map (\`type\`/\`category\`/\`explanation\`), \`nil\` unless \`stop_reason: :refusal\``
-  - Skills API section: change the heading suffix `— beta` to `— GA` and replace the sentence starting `Every request carries \`anthropic-beta: skills-2025-10-02\`` (through `(callers don't pre-configure the beta).`) with `GA — no beta header is attached.`
+  - Skills API section: change the heading suffix `— beta` to `— GA` and replace the sentence starting `Every request carries \`anthropic-beta: skills-2025-10-02\`` (through `(callers don't pre-configure the beta).`) with `GA — no beta header is attached. List responses are \`{data, next_page}\` (no \`has_more\`); opt back into the old shape with \`Claudio.Client.with_betas(client, ["skills-2025-10-02"])\`.`
+  - Request Builder, line 91: change `- **MCP servers** (\`add_mcp_server/2\` — accepts \`ServerConfig\` structs or raw maps)` to `- **MCP servers** (\`add_mcp_server/2\` — accepts \`ServerConfig\` structs or raw maps; adds the \`mcp_toolset\` and declares \`mcp-client-2025-11-20\`)`
+  - Module Organization, line 286: change `# Agent Skills API (beta)` to `# Agent Skills API`
 
 - [ ] **Step 6: CHANGELOG** — insert above `## [0.6.0] - 2026-06-19`:
 
@@ -1290,6 +1353,12 @@ and, in that client example, remove the `beta: ["files-api-2025-04-14"]` line.
   `*`/`?` patterns (the connector matches names literally; a pattern would enable
   no tools). Raw maps with legacy `tool_configuration` are translated with a warning.
 - `Claudio.Skills` no longer attaches `anthropic-beta: skills-2025-10-02` (Skills API is GA).
+  `Skills.list/2` / `list_versions/3` responses lose `"has_more"` — page with
+  `next_page` → `:page`, or opt back in with
+  `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
+- `Request.add_mcp_server/2` raises `ArgumentError` when `tools` already holds an
+  `mcp_toolset` for that server and the new server carries tool config (it would
+  otherwise be dropped).
 - `Request.add_code_execution_tool/2` defaults to `code_execution_20260521`
   (same runtime as `20260120`).
 
