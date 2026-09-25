@@ -30,7 +30,6 @@ defmodule Claudio.MixProject do
   defp deps do
     [
       {:req, "~> 0.5"},
-      {:poison, "~> 6.0"},
       {:bypass, "~> 2.1", only: :test},
       {:plug_cowboy, "~> 2.0", only: :test},
       {:jason, "~> 1.4"},

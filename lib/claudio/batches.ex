@@ -409,7 +409,7 @@ defmodule Claudio.Batches do
   defp maybe_add_param(params, key, value), do: [{key, value} | params]
 
   defp parse_jsonl_line(line) do
-    case Poison.decode(line, keys: :atoms) do
+    case Jason.decode(line, keys: :atoms) do
       {:ok, data} -> data
       {:error, _} -> nil
     end

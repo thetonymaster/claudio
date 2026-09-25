@@ -12,7 +12,7 @@ defmodule Claudio.A2A.ClientTest do
     test "fetches and parses agent card", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "GET", "/.well-known/agent-card.json", fn conn ->
         body =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "name" => "Test Agent",
             "description" => "A test agent",
             "version" => "1.0.0",
@@ -54,14 +54,14 @@ defmodule Claudio.A2A.ClientTest do
     test "sends JSON-RPC request and returns task", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         assert request["jsonrpc"] == "2.0"
         assert request["method"] == "message/send"
         assert request["params"]["message"]["role"] == "user"
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
@@ -87,10 +87,10 @@ defmodule Claudio.A2A.ClientTest do
     test "returns Message when agent responds directly", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
@@ -117,10 +117,10 @@ defmodule Claudio.A2A.ClientTest do
     test "returns JSON-RPC error", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "error" => %{"code" => -32_001, "message" => "Task not found"}
@@ -142,13 +142,13 @@ defmodule Claudio.A2A.ClientTest do
     test "fetches task by ID", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         assert request["method"] == "tasks/get"
         assert request["params"]["id"] == "task-123"
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
@@ -174,12 +174,12 @@ defmodule Claudio.A2A.ClientTest do
     test "lists tasks with pagination", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         assert request["method"] == "tasks/list"
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
@@ -206,13 +206,13 @@ defmodule Claudio.A2A.ClientTest do
     test "cancels a task", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         assert request["method"] == "tasks/cancel"
         assert request["params"]["id"] == "task-to-cancel"
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
@@ -238,10 +238,10 @@ defmodule Claudio.A2A.ClientTest do
         assert auth == ["Bearer my-secret-token"]
 
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{"id" => "t-1", "status" => %{"state" => "working"}}
@@ -263,10 +263,10 @@ defmodule Claudio.A2A.ClientTest do
     test "uses explicit HTTP transport", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Poison.decode!(body)
+        request = Jason.decode!(body)
 
         response =
-          Poison.encode!(%{
+          Jason.encode!(%{
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{"id" => "t-explicit", "status" => %{"state" => "working"}}

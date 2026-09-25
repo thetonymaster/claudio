@@ -2,7 +2,7 @@ defmodule Claudio.A2A.Transport.HTTP do
   @moduledoc """
   JSON-RPC 2.0 over HTTP transport for the A2A protocol.
 
-  This is the default transport. Uses Req for HTTP and Poison for JSON.
+  This is the default transport. Uses Req for HTTP and Jason for JSON.
   """
 
   @behaviour Claudio.A2A.Transport
@@ -114,7 +114,7 @@ defmodule Claudio.A2A.Transport.HTTP do
   defp http_post(endpoint, body, opts) do
     headers = [{"content-type", "application/json"}] ++ build_headers(opts)
 
-    encoded = Poison.encode!(body)
+    encoded = Jason.encode!(body)
     req_opts = [body: encoded, headers: headers, decode_body: false] ++ timeout_opts(opts)
 
     case Req.post(endpoint, req_opts) do
@@ -153,7 +153,7 @@ defmodule Claudio.A2A.Transport.HTTP do
   defp parse_rpc_error(error), do: error
 
   defp decode_json(body) do
-    case Poison.decode(body) do
+    case Jason.decode(body) do
       {:ok, decoded} -> {:ok, decoded}
       {:error, _} -> {:error, :invalid_json}
     end

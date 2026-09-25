@@ -178,7 +178,7 @@ defmodule Claudio.Tools do
       cond do
         is_binary(result) -> result
         is_list(result) -> result
-        is_map(result) -> Poison.encode!(result)
+        is_map(result) -> Jason.encode!(result)
         true -> to_string(result)
       end
 

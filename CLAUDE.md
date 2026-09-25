@@ -49,11 +49,10 @@ mix compile           # Compile the project
 
 ### HTTP Client Layer (lib/claudio/client.ex)
 The `Claudio.Client` module wraps Req HTTP client with Anthropic-specific configuration:
-- Uses Mint adapter (configured in config/config.exs)
 - Handles authentication via `x-api-key` header (default) **or** `Authorization: Bearer` (set `auth_type: :bearer`) — for OAuth / Workload Identity Federation tokens. The `:token` field carries the credential in both modes.
 - Supports API versioning via anthropic-version header
 - Supports beta features via anthropic-beta header
-- Uses Poison for JSON encoding/decoding
+- Uses Jason for JSON (Req's built-in encoder/decoder)
 
 Client initialization requires:
 - `token`: API key (or, with `auth_type: :bearer`, an OAuth/WIF bearer token)
@@ -104,10 +103,9 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 
 Example:
 ```elixir
-Request.new("claude-sonnet-4-5-20250929")
+Request.new("claude-opus-4-8")
 |> Request.add_message(:user, "Hello!")
 |> Request.set_max_tokens(1024)
-|> Request.set_temperature(0.7)
 |> Request.add_tool(tool_definition)
 |> Request.set_system_with_cache("Long context...", ttl: "1h")
 |> Request.add_message_with_image(:user, "Describe this", base64_image)
@@ -219,7 +217,7 @@ One flat module with grouped functions over a shared private request helper:
 - **API keys:** `list_api_keys/2`, `get_api_key/2`, `update_api_key/3` (create/delete are Console-only)
 - **Usage/cost:** `usage_report/2`, `cost_report/2` (opts pass through as query params)
 
-Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token (S8) and are not covered.
+Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token and are not covered.
 
 ### Skills API (lib/claudio/skills.ex) — beta
 The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). Every request carries `anthropic-beta: skills-2025-10-02`, attached automatically via `Claudio.Client.with_betas/2` (callers don't pre-configure the beta).
@@ -239,16 +237,10 @@ The `Claudio.APIError` exception provides structured error handling:
 - Uses Bypass for mocking HTTP calls
 - Tests use `async: true` for parallel execution where possible
 - Integration tests excluded by default (run with `--include integration`)
-- Comprehensive test coverage:
-  - `test/messages_test.exs`: Legacy Messages API tests
-  - `test/request_test.exs`: Request builder tests
-  - `test/response_test.exs`: Response parsing tests
-  - `test/tools_test.exs`: Tool utilities tests
-  - `test/api_error_test.exs`: Error handling tests
-  - `test/mcp/`: MCP module tests (server_config, response, request, client, tool_adapter, result_mapper)
+- One `*_test.exs` per module at the `test/` top level (e.g. `test/request_test.exs`, `test/models_test.exs`); `test/a2a/`, `test/mcp/`, `test/messages/` hold the multi-file areas
+- `test/integration/`: live-API tests, tagged `:integration` and excluded in `test/test_helper.exs`
 
 ### Configuration
-- Req client configured globally in config/config.exs
 - Environment-specific config loaded via `import_config "#{config_env()}.exs"`
 - Client adapter overridable via Application config under `:claudio, Claudio.Client`
 
@@ -257,12 +249,11 @@ The `Claudio.APIError` exception provides structured error handling:
 ### Backward Compatibility
 - Legacy `create_message/2` API maintained alongside new `create/2`
 - Both string and atom keys supported in response parsing
-- Error responses now return structured `APIError` exceptions but maintain `:error` tuple pattern
+- Error responses return structured `APIError` exceptions inside the `{:error, _}` tuple
 - `add_mcp_server/2` accepts both `ServerConfig` structs and raw maps
 
 ### JSON Handling
-- Poison used for production JSON encoding/decoding
-- Jason used in addition to Poison for JSON handling
+- Jason for all JSON encoding/decoding (Req depends on it; `json:` request bodies go through it)
 - All API responses parsed with atom keys for easier access
 
 ### Streaming Implementation
@@ -278,26 +269,20 @@ The `Claudio.APIError` exception provides structured error handling:
 
 ### Module Organization
 ```
-lib/claudio/
-├── api_error.ex           # Error handling
-├── batches.ex             # Batches API
-├── client.ex              # HTTP client setup
-├── messages.ex            # Main Messages API
-├── messages/
-│   ├── request.ex         # Request builder
-│   ├── response.ex        # Response parser
-│   └── stream.ex          # SSE streaming
-├── admin.ex              # Admin API (organizations/*)
-├── skills.ex             # Agent Skills API (beta)
-├── models.ex             # Models API
-├── mcp/
-│   ├── server_config.ex   # API-level MCP server config
-│   ├── client.ex          # MCP client behaviour
-│   ├── tool_adapter.ex    # MCP tools → Claudio tools
-│   ├── result_mapper.ex   # Response → MCP calls
-│   └── adapters/
-│       ├── hermes_mcp.ex  # hermes_mcp adapter
-│       ├── ex_mcp.ex      # ex_mcp adapter
-│       └── mcp_ex.ex      # mcp_ex adapter
-└── tools.ex               # Tool utilities
+lib/
+├── claudio.ex                 # Top-level Claudio module
+└── claudio/
+    ├── a2a/                   # A2A protocol (agent_card, artifact, client, message, part, task, util, transport/{http,grpc})
+    ├── admin.ex               # Admin API (organizations/*)
+    ├── agent.ex               # Stateless tool-calling loop (Claudio.Agent)
+    ├── api_error.ex           # Error handling
+    ├── batches.ex             # Batches API
+    ├── client.ex              # HTTP client setup
+    ├── files.ex               # Files API
+    ├── mcp/                   # server_config, client behaviour, tool_adapter, result_mapper, adapters/{hermes_mcp,ex_mcp,mcp_ex}
+    ├── messages.ex            # Main Messages API
+    ├── messages/              # request.ex (builder), response.ex (parser), stream.ex (SSE)
+    ├── models.ex              # Models API
+    ├── skills.ex              # Agent Skills API (beta)
+    └── tools.ex               # Tool utilities
 ```

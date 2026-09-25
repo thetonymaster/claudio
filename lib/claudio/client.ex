@@ -167,7 +167,6 @@ defmodule Claudio.Client do
     opts = [
       base_url: endpoint,
       headers: get_headers(auth),
-      json: Poison,
       receive_timeout: recv_timeout,
       connect_options: [timeout: timeout]
     ]
