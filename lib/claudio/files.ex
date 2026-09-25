@@ -6,20 +6,16 @@ defmodule Claudio.Files do
   content blocks via the `type: "document"` / `source: {type: "file", file_id}`
   shape (see `Claudio.Messages.Request.add_message_with_document/4`).
 
-  ## Beta gating
+  ## GA — no beta header
 
-  The Files API is currently behind the `files-api-2025-04-14` Anthropic beta
-  flag. Pass it on the client built by `Claudio.Client.new/2`:
+  The Files API is generally available; no `anthropic-beta` header is needed.
+  Responses without the header use the GA shapes: `list/2` returns
+  `%{"data" => [...], "next_page" => cursor | nil}` and pages with `:page`
+  (or fetches up to 100 known ids with `:ids`); `before_id`/`after_id` return 400.
 
-      client = Claudio.Client.new(%{
-        token: "sk-ant-...",
-        beta: ["files-api-2025-04-14"]
-      })
-
-  Or set it globally via application config (applies to every Claudio call):
-
-      config :claudio, :claudio,
-        default_beta_features: ["files-api-2025-04-14"]
+  Callers that still put `files-api-2025-04-14` on their client keep the old
+  beta shapes (`has_more`/`first_id`/`last_id`, `:before_id`/`:after_id`
+  cursors, no `expires_at`) — Claudio passes whatever you choose through.
 
   ## Example
 
@@ -28,7 +24,7 @@ defmodule Claudio.Files do
           filename: "contract.pdf")
 
       request =
-        Claudio.Messages.Request.new("claude-sonnet-4-6")
+        Claudio.Messages.Request.new("claude-opus-5")
         |> Claudio.Messages.Request.add_message_with_document(:user, "Summarise.", file_id)
 
       Claudio.Messages.create(client, request)
@@ -45,23 +41,22 @@ defmodule Claudio.Files do
   @doc """
   Lists files uploaded to the Anthropic Files API.
 
-  ## Beta gating
-
-  Requires the `files-api-2025-04-14` Anthropic beta flag on the client (see
-  moduledoc).
-
   ## Parameters
 
     * `client` — A `Req.Request` from `Claudio.Client.new/2`.
     * `opts` — Optional keyword list:
-        * `:limit` — Number of files to return (default server-side: 20).
-        * `:before_id` — Cursor for the previous page (file id).
-        * `:after_id` — Cursor for the next page (file id).
+        * `:limit` — Files per page (server default 20, max 1000).
+        * `:page` — Cursor from a previous response's `"next_page"`.
+        * `:ids` — Up to 100 file ids, sent as repeated `ids[]`; returns a single page.
+          Not combinable with `:page`/`:limit` (the API rejects it).
+        * `:before_id` / `:after_id` — Legacy cursors; only valid when the client
+          sends the `files-api-2025-04-14` beta header.
 
   ## Returns
 
-    * `{:ok, %{"data" => [...], "first_id" => _, "last_id" => _, "has_more" => _}}`
-      on success.
+    * `{:ok, %{"data" => [...], "next_page" => _}}` (GA) or
+      `{:ok, %{"data" => [...], "first_id" => _, "last_id" => _, "has_more" => _}}`
+      (with the legacy beta header).
     * `{:error, %Claudio.APIError{}}` on a non-200 response.
     * `{:error, term()}` on a transport/Req error.
   """
@@ -86,8 +81,7 @@ defmodule Claudio.Files do
 
   ## Parameters
 
-    * `client` — A `Req.Request` from `Claudio.Client.new/2`. Should have the
-      `files-api-2025-04-14` beta feature configured (see moduledoc).
+    * `client` — A `Req.Request` from `Claudio.Client.new/2`.
     * `bytes` — The raw file contents as a binary.
     * `opts` — Required keyword list:
         * `:content_type` — MIME type (e.g. `"application/pdf"`).
@@ -236,12 +230,11 @@ defmodule Claudio.Files do
   end
 
   defp build_query_params(opts) do
-    []
-    |> maybe_add_param(:limit, Keyword.get(opts, :limit))
-    |> maybe_add_param(:before_id, Keyword.get(opts, :before_id))
-    |> maybe_add_param(:after_id, Keyword.get(opts, :after_id))
-  end
+    scalars =
+      for key <- [:limit, :page, :before_id, :after_id],
+          Keyword.get(opts, key) != nil,
+          do: {key, Keyword.get(opts, key)}
 
-  defp maybe_add_param(params, _key, nil), do: params
-  defp maybe_add_param(params, key, value), do: [{key, value} | params]
+    scalars ++ Enum.map(Keyword.get(opts, :ids, []), &{"ids[]", &1})
+  end
 end

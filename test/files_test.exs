@@ -218,5 +218,32 @@ defmodule Claudio.FilesTest do
                  before_id: "file_y"
                )
     end
+
+    test "passes :page and repeats ids[] in order", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        # URI.decode_query collapses repeated keys, so read the raw pairs
+        pairs = conn.query_string |> URI.query_decoder() |> Enum.to_list()
+        assert pairs == [{"page", "pg_2"}, {"ids[]", "file_a"}, {"ids[]", "file_b"}]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, %{"data" => [], "next_page" => nil}} =
+               Claudio.Files.list(client, page: "pg_2", ids: ["file_a", "file_b"])
+    end
+
+    test "empty ids sends no ids[] parameter", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, _} = Claudio.Files.list(client, ids: [])
+    end
   end
 end
