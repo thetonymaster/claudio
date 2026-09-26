@@ -36,10 +36,14 @@ defmodule Claudio.MCP.ResultMapper do
   If you define non-MCP tools with `__` in their names, they will be incorrectly
   captured. Use `mcp_tool_use` blocks (from the server-side MCP connector) or avoid
   `__` in regular tool names to prevent ambiguity.
+
+  After a server-side fallback, calls before the last `fallback` block came from the
+  model that declined and are skipped (see `Response.to_assistant_content/1`).
   """
   @spec extract_mcp_calls(Response.t()) :: [mcp_call()]
   def extract_mcp_calls(%Response{content: content}) do
     content
+    |> Response.since_last_fallback()
     |> Enum.flat_map(&extract_call/1)
   end
 

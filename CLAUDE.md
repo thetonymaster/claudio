@@ -93,6 +93,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
 - **Thinking & effort** (`enable_adaptive_thinking/2` with `display:` — `:updates` declares `thinking-display-updates-2026-08-18`; `disable_thinking/1`; `set_effort/2` → `output_config.effort`, GA; `set_task_budget/3` → `output_config.task_budget`, declares `task-budgets-2026-03-13`. Output-config helpers merge; `set_output_config/2` replaces. No per-model validation — the API's 400 is authoritative.)
 - **5.x request surface** (`add_system_message/3` — mid-conversation `role: "system"` messages, GA; `clear_at:` declares `mid-conversation-system-clear-at-2026-08-21`, `effort:` declares `mid-conversation-output-config-2026-07-01`. `set_speed/2` always declares `fast-mode-2026-02-01`; `set_inference_geo/2` and `enable_cache_diagnostics/2` are GA. Placement rules are left to the API.)
+- **Refusal fallbacks** (`set_fallbacks/2` — `:default` or a list of model strings / override maps; declares `server-side-fallback-2026-07-01`. Entry cap, distinctness and `allowed_fallback_models` are left to the API; not sent by `count_tokens`; unsupported in Batches.)
 - **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
 - **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
   - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
@@ -115,7 +116,7 @@ Request.new("claude-opus-4-8")
 
 ### Response Handling (lib/claudio/messages/response.ex)
 The `Claudio.Messages.Response` module parses API responses into structured data:
-- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result)
+- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result, fallback)
 - Converts stop_reason strings to atoms (:end_turn, :max_tokens, :tool_use, etc.)
 - **Tracks cache metrics** (cache_creation_input_tokens, cache_read_input_tokens)
 - **Preserves citations** on `text` blocks (the raw citation maps — `char_location`, `page_location`, `content_block_location`, `search_result_location`, `web_search_result_location` — kept verbatim for reading; not replayed by `to_assistant_content/1`)
@@ -129,9 +130,11 @@ The `Claudio.Messages.Response` module parses API responses into structured data
   - `get_thinking/1`: Non-empty thinking texts, in order (a list — one per `display: :updates` progress note)
   - `thinking_interrupted?/1`: True for the API's interrupted-update placeholder block
 - **`usage.output_tokens_details`** — raw map (e.g. `thinking_tokens`), `nil` when absent; `:thinking_tokens` also appears in usage telemetry
-- **`usage` keeps every field** — documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`); unknown fields keep the key they arrived with
+- **`usage` keeps every field** — documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`, `iterations`); unknown fields keep the key they arrived with
 - **`diagnostics`** — raw cache-diagnostics map (`cache_miss_reason`), `nil` unless requested via `enable_cache_diagnostics/2`
-- **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`), `nil` unless `stop_reason: :refusal`
+- **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`; with fallbacks also `recommended_model`, `fallback_credit_token`, `fallback_has_prefill_claim`), `nil` unless `stop_reason: :refusal`
+- **`fallback` blocks** — `%{type: :fallback, from:, to:, trigger:, raw:}`; `fallbacks/1` lists them, `served_by/1` names the serving model (last block's `to.model`, else `model` — a streamed mid-output fallback keeps the requested model in `model`); `usage.iterations` records each attempt
+- **`to_assistant_content/1`** applies the fallback continuation rules (drops / pairing before the last `fallback` block); a no-op without a mid-output fallback. `get_tool_uses/1` (and `Tools.extract_tool_uses/1`) skip `tool_use` before the last `fallback`; `add_message/3` declares the fallback beta when replaying a `fallback` block
 - Handles both string and atom keys from API responses
 
 ### Streaming (lib/claudio/messages/stream.ex)
@@ -274,7 +277,7 @@ The `Claudio.APIError` exception provides structured error handling:
 ### Type Safety
 - Extensive use of `@type` and `@spec` for documentation and Dialyzer
 - Stop reasons converted to atoms for pattern matching
-- Content blocks typed by their :type field (:text, :tool_use, :thinking, :mcp_tool_use, etc.)
+- Content blocks typed by their :type field (:text, :tool_use, :thinking, :mcp_tool_use, :fallback, etc.)
 
 ### Module Organization
 ```

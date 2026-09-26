@@ -3,15 +3,21 @@ defmodule Claudio.Messages.Response do
   Structured response from the Messages API.
 
   `stop_details` is the raw API map (`"type"`, `"category"`, `"explanation"`), set only
-  when `stop_reason` is `:refusal`. For streamed responses it is read from
-  `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
-  Anthropic's streaming docs.
+  when `stop_reason` is `:refusal`. With `Request.set_fallbacks/2` it can also carry
+  `"recommended_model"` (a model to retry directly when the fallback attempt was
+  skipped), `"fallback_credit_token"` and `"fallback_has_prefill_claim"`. For streamed
+  responses it is read from `message_delta.delta` next to `stop_reason`; that location
+  is unconfirmed in Anthropic's streaming docs.
 
   `diagnostics` is carried raw (see `Request.enable_cache_diagnostics/2`):
   `nil` when diagnostics were not requested, there was nothing to compare, or the
   comparison found no divergence; `%{"cache_miss_reason" => nil}` when the comparison
   was still pending (inconclusive — check the next turn); otherwise a reason map such
   as `%{"cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => n}}`.
+
+  With `Request.set_fallbacks/2`, a refused request may be retried on another model.
+  Each handoff is a `:fallback` content block (`fallbacks/1`); `served_by/1` names the
+  model that produced the message, and `usage.iterations` records every attempt.
 
   `usage` keeps every field the API returns: documented fields are atom keys (`nil`
   when absent); any other field keeps the key it arrived with (so it may be a string
@@ -38,6 +44,7 @@ defmodule Claudio.Messages.Response do
           | mcp_tool_result_block()
           | server_tool_use_block()
           | web_search_tool_result_block()
+          | fallback_block()
 
   @type text_block :: %{
           :type => :text,
@@ -99,9 +106,24 @@ defmodule Claudio.Messages.Response do
         }
 
   @typedoc """
+  A server-side fallback handoff (`Request.set_fallbacks/2`). `raw` is the block as
+  received; `Response.to_assistant_content/1` re-emits it unchanged.
+  """
+  @type fallback_block :: %{
+          type: :fallback,
+          from: map() | nil,
+          to: map() | nil,
+          trigger: map() | nil,
+          raw: map()
+        }
+
+  @typedoc """
   Token usage. Documented fields are atom keys (`nil` when the API did not send
   them); any other field the API returns is kept under the key it arrived with.
   A usage map missing `input_tokens` or `output_tokens` is returned as received.
+  `iterations` (present when `fallbacks` was set) lists each attempt as the raw
+  API map: `"type" => "message"` for a model that declined, `"fallback_message"`
+  for the one that served; the top-level counts cover only the returned attempt.
   """
   @type usage :: %{
           optional(atom() | String.t()) => term(),
@@ -113,7 +135,8 @@ defmodule Claudio.Messages.Response do
           cache_creation: map() | nil,
           service_tier: String.t() | nil,
           inference_geo: String.t() | nil,
-          speed: String.t() | nil
+          speed: String.t() | nil,
+          iterations: [map()] | nil
         }
 
   @type t :: %__MODULE__{
@@ -198,11 +221,15 @@ defmodule Claudio.Messages.Response do
   def thinking_interrupted?(_block), do: false
 
   @doc """
-  Extracts all tool use requests from the response.
+  Extracts the tool use requests to execute. After a server-side fallback, `tool_use`
+  blocks before the last `fallback` block came from the model that declined; they are
+  skipped here, as `to_assistant_content/1` drops them from the replay.
   """
   @spec get_tool_uses(t()) :: list(tool_use_block())
   def get_tool_uses(%__MODULE__{content: content}) do
-    Enum.filter(content, &(&1[:type] == :tool_use))
+    content
+    |> since_last_fallback()
+    |> Enum.filter(&(&1[:type] == :tool_use))
   end
 
   @doc """
@@ -247,6 +274,44 @@ defmodule Claudio.Messages.Response do
   end
 
   @doc """
+  Returns every `fallback` block, in content order (`[]` when the request was not
+  retried on a fallback model). One block marks each handoff between models.
+  """
+  @spec fallbacks(t()) :: [fallback_block()]
+  def fallbacks(%__MODULE__{content: content}) do
+    for %{type: :fallback} = block <- content, do: block
+  end
+
+  @doc """
+  Returns the model that produced the returned message: the last `fallback` block's
+  `to.model`, else `model`.
+
+  Not simply `model`: a streamed response that fell back mid-output keeps the
+  requested (declining) model from `message_start` in `model`. When every model in
+  the chain declined (`stop_reason: :refusal`), it names the model whose refusal was
+  returned.
+  """
+  @spec served_by(t()) :: String.t() | nil
+  def served_by(%__MODULE__{model: model} = response) do
+    case List.last(fallbacks(response)) do
+      %{to: to} when is_map(to) -> Map.get(to, "model") || Map.get(to, :model) || model
+      _ -> model
+    end
+  end
+
+  # Blocks from the last `fallback` block on — every block when there is none. Earlier
+  # blocks belong to a model that declined (see to_assistant_content/1). Reads parsed
+  # and raw (string- or atom-keyed) content alike; shared with Claudio.Tools.
+  @doc false
+  @spec since_last_fallback(list()) :: list()
+  def since_last_fallback(blocks) when is_list(blocks) do
+    case last_fallback_index(blocks) do
+      nil -> blocks
+      index -> Enum.drop(blocks, index)
+    end
+  end
+
+  @doc """
   Converts the response content into API-shaped assistant content blocks for
   replaying as the assistant turn in a follow-up request:
 
@@ -257,10 +322,20 @@ defmodule Claudio.Messages.Response do
   (redacted_thinking) — both required by the API when continuing an
   extended-thinking + tool-use conversation. Unknown block types are passed
   through unchanged (coverage grows in later specs).
+
+  After a server-side fallback (`Request.set_fallbacks/2`) it applies the API's
+  continuation rules: before the last `fallback` block it drops `thinking`,
+  `redacted_thinking`, `connector_text` and `tool_use` blocks, and keeps a
+  `server_tool_use` or `mcp_tool_use` only when its result block is present.
+  `fallback` blocks stay where they are. In practice this only changes a streamed
+  response that fell back mid-output; a non-streaming response normally puts the
+  `fallback` block first. `response.content` still holds every block.
   """
   @spec to_assistant_content(t()) :: [map()]
   def to_assistant_content(%__MODULE__{content: content}) do
-    Enum.map(content, &block_to_api/1)
+    content
+    |> Enum.map(&block_to_api/1)
+    |> apply_fallback_continuation_rules()
   end
 
   defp parse_content(content) when is_list(content) do
@@ -399,10 +474,22 @@ defmodule Claudio.Messages.Response do
     }
   end
 
+  defp parse_content_block(%{type: "fallback"} = block) do
+    fallback_block(block, block[:from], block[:to], block[:trigger])
+  end
+
+  defp parse_content_block(%{"type" => "fallback"} = block) do
+    fallback_block(block, block["from"], block["to"], block["trigger"])
+  end
+
   defp parse_content_block(block), do: block
 
   defp text_block(text, nil), do: %{type: :text, text: text}
   defp text_block(text, citations), do: %{type: :text, text: text, citations: citations}
+
+  defp fallback_block(raw, from, to, trigger) do
+    %{type: :fallback, from: from, to: to, trigger: trigger, raw: raw}
+  end
 
   defp block_to_api(%{type: :text, text: text}) do
     %{"type" => "text", "text" => text}
@@ -462,7 +549,68 @@ defmodule Claudio.Messages.Response do
     }
   end
 
+  defp block_to_api(%{type: :fallback, raw: raw}), do: raw
+
   defp block_to_api(block), do: block
+
+  # Continuation rules after a server-side fallback (platform.claude.com/docs/en/
+  # build-with-claude/refusals-and-fallback, "Continuing the conversation", fetched
+  # 2026-09-25). mcp_tool_use is not in that table; it follows the server_tool_use
+  # pairing rule because an unpaired one is rejected (probed 2026-09-25).
+  @dropped_before_fallback ~w(thinking redacted_thinking connector_text tool_use)
+  @paired_before_fallback ~w(server_tool_use mcp_tool_use)
+
+  defp apply_fallback_continuation_rules(blocks) do
+    case last_fallback_index(blocks) do
+      index when is_integer(index) and index > 0 ->
+        {before, rest} = Enum.split(blocks, index)
+
+        result_ids =
+          for block <- blocks, id = field(block, "tool_use_id"), into: MapSet.new(), do: id
+
+        Enum.filter(before, &keep_before_fallback?(&1, result_ids)) ++ rest
+
+      _none_or_first ->
+        blocks
+    end
+  end
+
+  defp last_fallback_index(blocks) do
+    blocks
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn {block, index}, last ->
+      if block_type(block) == "fallback", do: index, else: last
+    end)
+  end
+
+  defp keep_before_fallback?(block, result_ids) do
+    type = block_type(block)
+
+    cond do
+      type in @dropped_before_fallback -> false
+      type in @paired_before_fallback -> MapSet.member?(result_ids, field(block, "id"))
+      true -> true
+    end
+  end
+
+  # Replayed blocks are string-keyed, but unknown blocks pass through with whatever
+  # keys they arrived with, and a typed block Claudio does not re-emit (e.g.
+  # :tool_result) keeps an atom type.
+  defp block_type(block) do
+    case field(block, "type") do
+      type when is_atom(type) and not is_nil(type) -> Atom.to_string(type)
+      type -> type
+    end
+  end
+
+  defp field(block, key) when is_map(block) do
+    case Map.fetch(block, key) do
+      {:ok, value} -> value
+      :error -> Map.get(block, String.to_existing_atom(key))
+    end
+  end
+
+  defp field(_not_a_map, _key), do: nil
 
   defp parse_stop_reason("end_turn"), do: :end_turn
   defp parse_stop_reason("max_tokens"), do: :max_tokens
@@ -485,7 +633,8 @@ defmodule Claudio.Messages.Response do
     :cache_creation,
     :service_tier,
     :inference_geo,
-    :speed
+    :speed,
+    :iterations
   ]
   @usage_string_keys Enum.map(@usage_keys, &Atom.to_string/1)
 

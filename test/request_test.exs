@@ -42,6 +42,29 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with a fallback block" do
+    test "declares the fallback beta (the API rejects a replayed fallback block without it)" do
+      for block <- [
+            %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+            %{type: "fallback"},
+            %{type: :fallback}
+          ] do
+        request =
+          Request.new("m")
+          |> Request.add_message(:assistant, [block, %{"type" => "text", "text" => "hi"}])
+
+        assert Request.required_betas(request) == ["server-side-fallback-2026-07-01"]
+      end
+    end
+
+    test "content without a fallback block declares nothing" do
+      for content <- ["hi", [%{"type" => "text", "text" => "hi"}], ["stray"]] do
+        request = Request.new("m") |> Request.add_message(:user, content)
+        assert Request.required_betas(request) == []
+      end
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =
@@ -1114,6 +1137,68 @@ defmodule Claudio.Messages.RequestTest do
         assert_raise ArgumentError,
                      ~r/set_inference_geo\/2 geo must be one of :global, :us; got/,
                      fn -> Request.new("m") |> Request.set_inference_geo(bad) end
+      end
+    end
+  end
+
+  describe "set_fallbacks/2" do
+    test ":default is emitted as \"default\" and declares the fallback beta" do
+      request = Request.new("claude-opus-5-5") |> Request.set_fallbacks(:default)
+
+      assert Request.to_map(request)["fallbacks"] == "default"
+      assert Request.required_betas(request) == ["server-side-fallback-2026-07-01"]
+    end
+
+    test "model strings become model entries, maps pass through, order kept" do
+      override = %{"model" => "claude-opus-5", "max_tokens" => 512}
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_fallbacks(["claude-opus-4-8", override])
+
+      assert Request.to_map(request)["fallbacks"] == [
+               %{"model" => "claude-opus-4-8"},
+               override
+             ]
+    end
+
+    test "calling twice replaces the value and declares the beta once" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_fallbacks(["claude-opus-4-8"])
+        |> Request.set_fallbacks(:default)
+
+      assert Request.to_map(request)["fallbacks"] == "default"
+      assert Request.required_betas(request) == ["server-side-fallback-2026-07-01"]
+    end
+
+    test "four entries are sent as-is (the three-entry cap is the API's)" do
+      models = ["a", "b", "c", "d"]
+      request = Request.new("m") |> Request.set_fallbacks(models)
+
+      assert length(Request.to_map(request)["fallbacks"]) == 4
+    end
+
+    test "without set_fallbacks/2 there is no fallbacks key and no beta" do
+      request = Request.new("m") |> Request.add_message(:user, "hi")
+
+      refute Map.has_key?(Request.to_map(request), "fallbacks")
+      assert Request.required_betas(request) == []
+    end
+
+    test "shapes other than :default or a non-empty list raise" do
+      for bad <- ["default", :auto, nil, [], %{"model" => "x"}] do
+        assert_raise ArgumentError,
+                     ~r/set_fallbacks\/2 fallbacks must be :default or a non-empty list of model strings or maps; got/,
+                     fn -> Request.new("m") |> Request.set_fallbacks(bad) end
+      end
+    end
+
+    test "an entry that is neither a string nor a map raises" do
+      for bad <- [:"claude-opus-4-8", nil, 1] do
+        assert_raise ArgumentError,
+                     ~r/set_fallbacks\/2 each entry must be a model string or a map; got/,
+                     fn -> Request.new("m") |> Request.set_fallbacks(["ok", bad]) end
       end
     end
   end

@@ -5,6 +5,19 @@ defmodule Claudio.MCP.ResultMapperTest do
   alias Claudio.Messages.Response
 
   describe "extract_mcp_calls/1" do
+    test "skips tool calls before the last fallback block (they came from the declining model)" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{"type" => "tool_use", "id" => "toolu_old", "name" => "srv__t", "input" => %{}},
+            %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+            %{"type" => "tool_use", "id" => "toolu_new", "name" => "srv__t", "input" => %{}}
+          ]
+        })
+
+      assert [%{id: "toolu_new"}] = ResultMapper.extract_mcp_calls(response)
+    end
+
     test "extracts mcp_tool_use blocks" do
       response =
         Response.from_map(%{

@@ -408,4 +408,68 @@ defmodule Claudio.Messages.StreamTest do
              }
     end
   end
+
+  describe "build_final_message/1 mid-output fallback" do
+    # RF "Streaming": on a mid-output decline the fallback block is a
+    # content_block_start/stop pair with no deltas; message_start named the
+    # requested model, so the serving model is read from the block's to.model.
+    test "the no-delta fallback block survives and parses into the Response" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":5,"output_tokens":1}}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Part"}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":1,"content_block":{"type":"fallback","from":{"model":"claude-opus-5-5"},"to":{"model":"claude-opus-4-8"}}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":1}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Hello"}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":2}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"iterations":[{"type":"message","model":"claude-opus-5-5","input_tokens":5,"output_tokens":1},{"type":"fallback_message","model":"claude-opus-4-8","input_tokens":7,"output_tokens":3}]}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      # RF: the serving model is also in the final message_delta's usage.iterations.
+      assert [
+               %{"type" => "message"},
+               %{"type" => "fallback_message", "model" => "claude-opus-4-8"}
+             ] =
+               message["usage"]["iterations"]
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      assert [%{type: :text, text: "Part"}, %{type: :fallback}, %{type: :text, text: "Hello"}] =
+               response.content
+
+      assert response.model == "claude-opus-5-5"
+      assert Claudio.Messages.Response.served_by(response) == "claude-opus-4-8"
+      assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
+    end
+  end
 end

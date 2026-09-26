@@ -25,6 +25,26 @@ defmodule Claudio.ToolsTest do
   end
 
   describe "extract_tool_uses/1" do
+    test "skips tool_use blocks before the last fallback block (raw maps and Response)" do
+      raw = %{
+        "content" => [
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ]
+      }
+
+      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(raw)
+      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(Claudio.Messages.Response.from_map(raw))
+
+      atom_keyed = %{
+        content: [%{type: "tool_use", id: "toolu_1", name: "x", input: %{}}, %{type: "fallback"}]
+      }
+
+      assert Tools.extract_tool_uses(atom_keyed) == []
+      refute Tools.has_tool_uses?(atom_keyed)
+    end
+
     test "extracts tool uses from response with string keys" do
       response = %{
         "content" => [

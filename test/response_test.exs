@@ -32,7 +32,8 @@ defmodule Claudio.Messages.ResponseTest do
                cache_creation: nil,
                service_tier: nil,
                inference_geo: nil,
-               speed: nil
+               speed: nil,
+               iterations: nil
              }
     end
 
@@ -750,11 +751,11 @@ defmodule Claudio.Messages.ResponseTest do
           "usage" => %{
             "input_tokens" => 1,
             "output_tokens" => 2,
-            "iterations" => [%{"type" => "message"}]
+            "future_field" => [%{"type" => "message"}]
           }
         }).usage
 
-      assert string_keyed["iterations"] == [%{"type" => "message"}]
+      assert string_keyed["future_field"] == [%{"type" => "message"}]
 
       atom_keyed =
         Response.from_map(%{
@@ -781,13 +782,43 @@ defmodule Claudio.Messages.ResponseTest do
       refute Map.has_key?(usage, "speed")
     end
 
+    test "iterations becomes an atom key with raw entries (RF example)" do
+      iterations = [
+        %{
+          "type" => "message",
+          "model" => "claude-fable-5",
+          "input_tokens" => 535,
+          "output_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "cache_creation_input_tokens" => 0
+        },
+        %{
+          "type" => "fallback_message",
+          "model" => "claude-opus-4-8",
+          "input_tokens" => 412,
+          "output_tokens" => 264,
+          "cache_read_input_tokens" => 0,
+          "cache_creation_input_tokens" => 0
+        }
+      ]
+
+      usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 412, "output_tokens" => 264, "iterations" => iterations}
+        }).usage
+
+      assert usage.iterations == iterations
+      refute Map.has_key?(usage, "iterations")
+    end
+
     test "nil usage has the new keys as nil" do
       usage = Response.from_map(%{"content" => []}).usage
 
       assert usage.input_tokens == 0
       assert usage.output_tokens == 0
 
-      for key <- [:cache_creation, :service_tier, :inference_geo, :speed] do
+      for key <- [:cache_creation, :service_tier, :inference_geo, :speed, :iterations] do
         assert Map.fetch!(usage, key) == nil
       end
     end
@@ -829,6 +860,339 @@ defmodule Claudio.Messages.ResponseTest do
     test "a usage map missing a token count is still returned as-is" do
       assert Response.from_map(%{"content" => [], "usage" => %{"output_tokens" => 3}}).usage ==
                %{"output_tokens" => 3}
+    end
+  end
+
+  # RF's documented example block (refusals-and-fallback, fetched 2026-09-25).
+  @fallback_block %{
+    "type" => "fallback",
+    "from" => %{"model" => "claude-fable-5"},
+    "to" => %{"model" => "claude-opus-4-8"}
+  }
+
+  describe "from_map/1 fallback blocks" do
+    test "string-keyed block parses to a typed map that keeps the original" do
+      [block] = Response.from_map(%{"content" => [@fallback_block]}).content
+
+      assert block == %{
+               type: :fallback,
+               from: %{"model" => "claude-fable-5"},
+               to: %{"model" => "claude-opus-4-8"},
+               trigger: nil,
+               raw: @fallback_block
+             }
+    end
+
+    test "optional trigger is kept" do
+      trigger = %{"type" => "refusal", "category" => "cyber"}
+
+      [block] =
+        Response.from_map(%{"content" => [Map.put(@fallback_block, "trigger", trigger)]}).content
+
+      assert block.trigger == trigger
+    end
+
+    test "atom-keyed block parses too" do
+      raw = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+      [block] = Response.from_map(%{content: [raw]}).content
+
+      assert %{type: :fallback, from: %{model: "a"}, to: %{model: "b"}, raw: ^raw} = block
+    end
+
+    test "to_assistant_content/1 re-emits the original block, unknown sub-fields included" do
+      raw = Map.put(@fallback_block, "future", %{"x" => 1})
+
+      response =
+        Response.from_map(%{
+          "content" => [raw, %{"type" => "text", "text" => "Hi"}]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               raw,
+               %{"type" => "text", "text" => "Hi"}
+             ]
+    end
+  end
+
+  describe "fallbacks/1" do
+    test "returns [] without fallback blocks" do
+      response = Response.from_map(%{"content" => [%{"type" => "text", "text" => "x"}]})
+      assert Response.fallbacks(response) == []
+    end
+
+    test "returns every fallback block in content order" do
+      second = %{
+        "type" => "fallback",
+        "from" => %{"model" => "claude-opus-4-8"},
+        "to" => %{"model" => "claude-opus-5"}
+      }
+
+      response =
+        Response.from_map(%{
+          "content" => [
+            @fallback_block,
+            %{"type" => "text", "text" => "x"},
+            second
+          ]
+        })
+
+      assert [%{raw: @fallback_block}, %{raw: ^second}] = Response.fallbacks(response)
+    end
+  end
+
+  describe "served_by/1" do
+    test "is the top-level model when there is no fallback block" do
+      response = Response.from_map(%{"model" => "claude-opus-5-5", "content" => []})
+      assert Response.served_by(response) == "claude-opus-5-5"
+    end
+
+    test "is the last fallback block's to.model, even when model names the declining model" do
+      second = %{
+        "type" => "fallback",
+        "from" => %{"model" => "claude-opus-4-8"},
+        "to" => %{"model" => "claude-opus-5"}
+      }
+
+      response =
+        Response.from_map(%{
+          "model" => "claude-fable-5",
+          "content" => [@fallback_block, second]
+        })
+
+      assert Response.served_by(response) == "claude-opus-5"
+    end
+
+    test "reads an atom-keyed to.model" do
+      response =
+        Response.from_map(%{
+          model: "a",
+          content: [%{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}]
+        })
+
+      assert Response.served_by(response) == "b"
+    end
+
+    test "falls back to model when the block has no to.model" do
+      response =
+        Response.from_map(%{"model" => "m", "content" => [%{"type" => "fallback"}]})
+
+      assert Response.served_by(response) == "m"
+    end
+  end
+
+  defp fb(from, to) do
+    %{"type" => "fallback", "from" => %{"model" => from}, "to" => %{"model" => to}}
+  end
+
+  defp content(blocks), do: Response.from_map(%{"content" => blocks})
+
+  describe "to_assistant_content/1 continuation rules after a fallback" do
+    # RF "Continuing the conversation" (fetched 2026-09-25); mcp_tool_use follows the
+    # server_tool_use pairing rule (spec §3, probes P12b/P13).
+    test "no fallback block: unchanged, thinking and tool_use included" do
+      blocks = [
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        %{"type" => "text", "text" => "a"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "fallback first (every non-streaming response): unchanged" do
+      blocks = [
+        fb("claude-fable-5", "claude-opus-4-8"),
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        %{"type" => "text", "text" => "a"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "mid-output fallback: drops and pairing apply before it, everything after is kept" do
+      paired_srv = %{
+        "type" => "server_tool_use",
+        "id" => "srv_1",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      srv_result = %{
+        "type" => "web_search_tool_result",
+        "tool_use_id" => "srv_1",
+        "content" => []
+      }
+
+      unpaired_srv = %{
+        "type" => "server_tool_use",
+        "id" => "srv_2",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      paired_mcp = %{
+        "type" => "mcp_tool_use",
+        "id" => "mcp_1",
+        "name" => "x",
+        "server_name" => "s",
+        "input" => %{}
+      }
+
+      mcp_result = %{
+        "type" => "mcp_tool_result",
+        "tool_use_id" => "mcp_1",
+        "server_name" => "s",
+        "content" => [],
+        "is_error" => false
+      }
+
+      unpaired_mcp = %{paired_mcp | "id" => "mcp_2"}
+      unknown = %{"type" => "container_upload", "file_id" => "file_1"}
+      fallback = fb("claude-opus-5-5", "claude-opus-4-8")
+      after_tool_use = %{"type" => "tool_use", "id" => "toolu_9", "name" => "x", "input" => %{}}
+
+      blocks = [
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "redacted_thinking", "data" => "enc"},
+        %{"type" => "connector_text", "text" => "narration"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        paired_srv,
+        srv_result,
+        unpaired_srv,
+        paired_mcp,
+        mcp_result,
+        unpaired_mcp,
+        %{"type" => "text", "text" => "partial"},
+        unknown,
+        fallback,
+        %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+        %{"type" => "text", "text" => "Hello"},
+        after_tool_use
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == [
+               paired_srv,
+               srv_result,
+               paired_mcp,
+               mcp_result,
+               %{"type" => "text", "text" => "partial"},
+               unknown,
+               fallback,
+               %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+               %{"type" => "text", "text" => "Hello"},
+               after_tool_use
+             ]
+    end
+
+    test "a result after the fallback still pairs a server_tool_use before it" do
+      srv = %{"type" => "server_tool_use", "id" => "srv_1", "name" => "web_fetch", "input" => %{}}
+      result = %{"type" => "web_fetch_tool_result", "tool_use_id" => "srv_1", "content" => %{}}
+      blocks = [%{"type" => "text", "text" => "a"}, srv, fb("a", "b"), result]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "two fallback blocks: rules apply only before the last one" do
+      first = fb("claude-opus-5-5", "claude-opus-4-8")
+      last = fb("claude-opus-4-8", "claude-opus-5")
+
+      blocks = [
+        %{"type" => "text", "text" => "a"},
+        first,
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "text", "text" => "b"},
+        last,
+        %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+        %{"type" => "text", "text" => "c"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == [
+               %{"type" => "text", "text" => "a"},
+               first,
+               %{"type" => "text", "text" => "b"},
+               last,
+               %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+               %{"type" => "text", "text" => "c"}
+             ]
+    end
+
+    test "non-map entries pass through without crashing the filter" do
+      blocks = [
+        "stray",
+        %{"type" => "text", "text" => "a"},
+        fb("a", "b"),
+        %{"type" => "text", "text" => "b"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "atom-keyed blocks before the fallback are dropped by the same rules" do
+      fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+
+      response =
+        Response.from_map(%{
+          content: [
+            %{type: :connector_text, text: "atom-valued type"},
+            %{type: "server_tool_use", id: "srv_unpaired", name: "web_fetch", input: %{}},
+            %{type: "thinking", thinking: "t", signature: "s"},
+            %{type: "text", text: "p"},
+            fallback
+          ]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "text", "text" => "p"},
+               fallback
+             ]
+    end
+
+    test "atom-keyed input follows the same rules" do
+      fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+      connector = %{type: "connector_text", text: "narration"}
+      srv = %{type: "server_tool_use", id: "srv_1", name: "web_fetch", input: %{}}
+      result = %{type: "web_fetch_tool_result", tool_use_id: "srv_1", content: %{}}
+
+      response =
+        Response.from_map(%{
+          content: [connector, srv, result, %{type: "text", text: "p"}, fallback]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "server_tool_use",
+                 "id" => "srv_1",
+                 "name" => "web_fetch",
+                 "input" => %{}
+               },
+               result,
+               %{"type" => "text", "text" => "p"},
+               fallback
+             ]
+    end
+  end
+
+  describe "get_tool_uses/1 after a fallback" do
+    test "skips tool_use blocks before the last fallback block" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          fb("a", "b"),
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+
+    test "without a fallback block every tool_use is returned" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_1"}, %{id: "toolu_2"}] = Response.get_tool_uses(response)
     end
   end
 end
