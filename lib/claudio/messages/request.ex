@@ -494,12 +494,66 @@ defmodule Claudio.Messages.Request do
       |> Request.enable_thinking(%{"type" => "adaptive"})
 
   `%{"type" => "enabled", "budget_tokens" => n}` returns 400 on Claude Opus 4.7+,
-  Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. Dedicated
-  thinking/effort helpers are planned (roadmap S11).
+  Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. This is the raw
+  setter (replaces `thinking`); prefer `enable_adaptive_thinking/2` /
+  `disable_thinking/1`, and `set_effort/2` to steer how much the model thinks.
   """
   @spec enable_thinking(t(), map()) :: t()
   def enable_thinking(%__MODULE__{} = request, config) when is_map(config) do
     %{request | thinking: config}
+  end
+
+  @thinking_displays [:summarized, :omitted, :updates]
+  @thinking_display_updates_beta "thinking-display-updates-2026-08-18"
+
+  @doc """
+  Enables adaptive thinking (`thinking: %{"type" => "adaptive"}`), replacing any
+  previous `thinking` config. The model decides how much to think; steer it with
+  `set_effort/2`.
+
+  ## Options
+
+  - `:display` — `:summarized`, `:omitted` or `:updates`. Omit it to use the
+    model's default. `:updates` (progress notes as separate `thinking` blocks)
+    also declares the `thinking-display-updates-2026-08-18` beta. A beta declared
+    here stays declared if `thinking` is later replaced.
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.enable_adaptive_thinking(display: :summarized)
+      |> Request.set_effort(:high)
+  """
+  @spec enable_adaptive_thinking(t(), keyword()) :: t()
+  def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:display])
+
+    case Keyword.fetch(opts, :display) do
+      :error ->
+        %{request | thinking: %{"type" => "adaptive"}}
+
+      {:ok, display} when display in @thinking_displays ->
+        thinking = %{"type" => "adaptive", "display" => Atom.to_string(display)}
+        request = %{request | thinking: thinking}
+
+        if display == :updates,
+          do: add_beta(request, @thinking_display_updates_beta),
+          else: request
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "Request.enable_adaptive_thinking/2 :display must be one of " <>
+                ":summarized, :omitted, :updates; got #{inspect(other)}"
+    end
+  end
+
+  @doc """
+  Turns thinking off (`thinking: %{"type" => "disabled"}`), replacing any previous
+  `thinking` config. Models that always think reject this with a 400.
+  """
+  @spec disable_thinking(t()) :: t()
+  def disable_thinking(%__MODULE__{} = request) do
+    %{request | thinking: %{"type" => "disabled"}}
   end
 
   @doc """

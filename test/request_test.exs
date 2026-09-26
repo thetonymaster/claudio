@@ -743,4 +743,82 @@ defmodule Claudio.Messages.RequestTest do
       assert tool["display_number"] == 1
     end
   end
+
+  describe "enable_adaptive_thinking/2" do
+    test "no opts emits type adaptive only, no betas" do
+      request = Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
+    end
+
+    test "each display value is emitted as a string" do
+      for display <- [:summarized, :omitted, :updates] do
+        request =
+          Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: display)
+
+        assert Request.to_map(request)["thinking"] == %{
+                 "type" => "adaptive",
+                 "display" => Atom.to_string(display)
+               }
+      end
+    end
+
+    test "only display: :updates declares the updates beta, once" do
+      updates =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates)
+        |> Request.enable_adaptive_thinking(display: :updates)
+
+      assert Request.required_betas(updates) == ["thinking-display-updates-2026-08-18"]
+
+      omitted =
+        Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: :omitted)
+
+      assert Request.required_betas(omitted) == []
+    end
+
+    test "re-calling without display replaces thinking; the beta stays declared" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates)
+        |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == ["thinking-display-updates-2026-08-18"]
+    end
+
+    test "unknown display values raise" do
+      for bad <- [:full, "omitted", nil] do
+        assert_raise ArgumentError,
+                     ~r/enable_adaptive_thinking\/2 :display must be one of :summarized, :omitted, :updates; got/,
+                     fn ->
+                       Request.new("claude-opus-5-5")
+                       |> Request.enable_adaptive_thinking(display: bad)
+                     end
+      end
+    end
+
+    test "unknown option keys raise" do
+      assert_raise ArgumentError, fn ->
+        Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(budget_tokens: 1024)
+      end
+    end
+  end
+
+  describe "disable_thinking/1" do
+    test "emits type disabled" do
+      request = Request.new("claude-opus-5") |> Request.disable_thinking()
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "replaces a prior adaptive config (no display survives)" do
+      request =
+        Request.new("claude-opus-5")
+        |> Request.enable_adaptive_thinking(display: :summarized)
+        |> Request.disable_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+  end
 end
