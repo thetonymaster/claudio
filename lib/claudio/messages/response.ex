@@ -6,6 +6,14 @@ defmodule Claudio.Messages.Response do
   when `stop_reason` is `:refusal`. For streamed responses it is read from
   `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
   Anthropic's streaming docs.
+
+  `diagnostics` is carried raw: `nil`, or a map whose `"cache_miss_reason"` is `nil`
+  (no miss, or the comparison is still pending) or a reason map such as
+  `%{"type" => "system_changed", "cache_missed_input_tokens" => n}` (see
+  `Request.enable_cache_diagnostics/2`).
+
+  `usage` keeps every field the API returns: documented fields are atom keys; any
+  other field keeps the key it arrived with (so it may be a string key).
   """
 
   @type stop_reason ::
@@ -113,6 +121,7 @@ defmodule Claudio.Messages.Response do
           stop_reason: stop_reason() | nil,
           stop_sequence: String.t() | nil,
           stop_details: map() | nil,
+          diagnostics: map() | nil,
           usage: usage()
         }
 
@@ -125,6 +134,7 @@ defmodule Claudio.Messages.Response do
     :stop_reason,
     :stop_sequence,
     :stop_details,
+    :diagnostics,
     :usage
   ]
 
@@ -142,6 +152,7 @@ defmodule Claudio.Messages.Response do
       stop_reason: parse_stop_reason(data[:stop_reason] || data["stop_reason"]),
       stop_sequence: data[:stop_sequence] || data["stop_sequence"],
       stop_details: data[:stop_details] || data["stop_details"],
+      diagnostics: data[:diagnostics] || data["diagnostics"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end

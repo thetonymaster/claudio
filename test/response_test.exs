@@ -792,4 +792,23 @@ defmodule Claudio.Messages.ResponseTest do
       end
     end
   end
+
+  describe "from_map/1 diagnostics" do
+    @miss %{
+      "cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => 41_850}
+    }
+
+    test "kept raw, string keys" do
+      assert Response.from_map(%{"content" => [], "diagnostics" => @miss}).diagnostics == @miss
+    end
+
+    test "atom keys" do
+      assert Response.from_map(%{content: [], diagnostics: @miss}).diagnostics == @miss
+    end
+
+    test "nil when absent or null" do
+      assert Response.from_map(%{"content" => []}).diagnostics == nil
+      assert Response.from_map(%{"content" => [], "diagnostics" => nil}).diagnostics == nil
+    end
+  end
 end
