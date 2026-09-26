@@ -235,6 +235,14 @@ defmodule Claudio.Files do
           Keyword.get(opts, key) != nil,
           do: {key, Keyword.get(opts, key)}
 
-    scalars ++ Enum.map(Keyword.get(opts, :ids, []), &{"ids[]", &1})
+    scalars ++ ids_params(Keyword.get(opts, :ids))
+  end
+
+  defp ids_params(nil), do: []
+  defp ids_params(ids) when is_list(ids), do: Enum.map(ids, &{"ids[]", &1})
+
+  defp ids_params(other) do
+    raise ArgumentError,
+          "Claudio.Files.list/2 :ids must be a list of file ids; got #{inspect(other)}"
   end
 end

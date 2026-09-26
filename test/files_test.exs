@@ -245,5 +245,26 @@ defmodule Claudio.FilesTest do
 
       assert {:ok, _} = Claudio.Files.list(client, ids: [])
     end
+
+    test "ids: nil sends no ids[] parameter, like the other options", %{
+      client: client,
+      bypass: bypass
+    } do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, _} = Claudio.Files.list(client, ids: nil)
+    end
+
+    test "a non-list :ids raises an ArgumentError naming the option", %{client: client} do
+      assert_raise ArgumentError,
+                   ~s(Claudio.Files.list/2 :ids must be a list of file ids; got "file_a"),
+                   fn -> Claudio.Files.list(client, ids: "file_a") end
+    end
   end
 end
