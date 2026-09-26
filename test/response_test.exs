@@ -27,7 +27,8 @@ defmodule Claudio.Messages.ResponseTest do
                input_tokens: 10,
                output_tokens: 5,
                cache_creation_input_tokens: nil,
-               cache_read_input_tokens: nil
+               cache_read_input_tokens: nil,
+               output_tokens_details: nil
              }
     end
 
@@ -597,6 +598,47 @@ defmodule Claudio.Messages.ResponseTest do
     test "atom-keyed stop_details" do
       response = Response.from_map(%{content: [], stop_reason: "refusal", stop_details: @details})
       assert response.stop_details == @details
+    end
+  end
+
+  describe "from_map/1 usage.output_tokens_details" do
+    test "string keys: carried raw" do
+      response =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{
+            "input_tokens" => 10,
+            "output_tokens" => 50,
+            "output_tokens_details" => %{"thinking_tokens" => 30}
+          }
+        })
+
+      assert response.usage.output_tokens_details == %{"thinking_tokens" => 30}
+    end
+
+    test "atom keys: carried raw" do
+      response =
+        Response.from_map(%{
+          content: [],
+          usage: %{
+            input_tokens: 10,
+            output_tokens: 50,
+            output_tokens_details: %{thinking_tokens: 30}
+          }
+        })
+
+      assert response.usage.output_tokens_details == %{thinking_tokens: 30}
+    end
+
+    test "nil when absent, and when usage itself is absent" do
+      with_usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 2}
+        })
+
+      assert with_usage.usage.output_tokens_details == nil
+      assert Response.from_map(%{"content" => []}).usage.output_tokens_details == nil
     end
   end
 end

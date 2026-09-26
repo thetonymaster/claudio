@@ -91,7 +91,8 @@ defmodule Claudio.Messages.Response do
           input_tokens: integer(),
           output_tokens: integer(),
           cache_creation_input_tokens: integer() | nil,
-          cache_read_input_tokens: integer() | nil
+          cache_read_input_tokens: integer() | nil,
+          output_tokens_details: map() | nil
         }
 
   @type t :: %__MODULE__{
@@ -429,7 +430,8 @@ defmodule Claudio.Messages.Response do
       input_tokens: input,
       output_tokens: output,
       cache_creation_input_tokens: usage[:cache_creation_input_tokens],
-      cache_read_input_tokens: usage[:cache_read_input_tokens]
+      cache_read_input_tokens: usage[:cache_read_input_tokens],
+      output_tokens_details: usage[:output_tokens_details]
     }
   end
 
@@ -438,7 +440,8 @@ defmodule Claudio.Messages.Response do
       input_tokens: input,
       output_tokens: output,
       cache_creation_input_tokens: usage["cache_creation_input_tokens"],
-      cache_read_input_tokens: usage["cache_read_input_tokens"]
+      cache_read_input_tokens: usage["cache_read_input_tokens"],
+      output_tokens_details: usage["output_tokens_details"]
     }
   end
 
@@ -447,7 +450,8 @@ defmodule Claudio.Messages.Response do
       input_tokens: 0,
       output_tokens: 0,
       cache_creation_input_tokens: nil,
-      cache_read_input_tokens: nil
+      cache_read_input_tokens: nil,
+      output_tokens_details: nil
     }
   end
 

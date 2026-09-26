@@ -220,4 +220,28 @@ defmodule Claudio.Messages.StreamTest do
       refute Map.has_key?(message, "stop_details")
     end
   end
+
+  describe "output_tokens_details through build_final_message/1 → Response.from_map/1" do
+    test "final message_delta usage details survive into the parsed Response" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      response = Claudio.Messages.Response.from_map(message)
+      assert response.usage.output_tokens_details == %{"thinking_tokens" => 25}
+    end
+  end
 end
