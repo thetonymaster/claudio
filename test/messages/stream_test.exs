@@ -177,4 +177,47 @@ defmodule Claudio.Messages.StreamTest do
       assert %{"type" => "char_location", "cited_text" => "second source"} = second_citation
     end
   end
+
+  defp final_message(delta_json) do
+    sse = [
+      ~s(event: message_start),
+      ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}),
+      "",
+      ~s(event: message_delta),
+      ~s(data: {"type":"message_delta","delta":#{delta_json},"usage":{"output_tokens":3}}),
+      "",
+      ~s(event: message_stop),
+      ~s(data: {"type":"message_stop"}),
+      ""
+    ]
+
+    {:ok, message} =
+      [Enum.join(sse, "\n") <> "\n"]
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+
+    message
+  end
+
+  describe "build_final_message/1 stop_details" do
+    test "copies stop_details from message_delta" do
+      message =
+        final_message(
+          ~s({"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"declined"}})
+        )
+
+      assert message["stop_reason"] == "refusal"
+
+      assert message["stop_details"] == %{
+               "type" => "refusal",
+               "category" => "cyber",
+               "explanation" => "declined"
+             }
+    end
+
+    test "absent stop_details leaves the key off" do
+      message = final_message(~s({"stop_reason":"end_turn","stop_sequence":null}))
+      refute Map.has_key?(message, "stop_details")
+    end
+  end
 end

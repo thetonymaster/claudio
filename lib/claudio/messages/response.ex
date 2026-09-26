@@ -1,6 +1,11 @@
 defmodule Claudio.Messages.Response do
   @moduledoc """
   Structured response from the Messages API.
+
+  `stop_details` is the raw API map (`"type"`, `"category"`, `"explanation"`), set only
+  when `stop_reason` is `:refusal`. For streamed responses it is read from
+  `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
+  Anthropic's streaming docs.
   """
 
   @type stop_reason ::
@@ -97,6 +102,7 @@ defmodule Claudio.Messages.Response do
           content: list(content_block()),
           stop_reason: stop_reason() | nil,
           stop_sequence: String.t() | nil,
+          stop_details: map() | nil,
           usage: usage()
         }
 
@@ -108,6 +114,7 @@ defmodule Claudio.Messages.Response do
     :content,
     :stop_reason,
     :stop_sequence,
+    :stop_details,
     :usage
   ]
 
@@ -124,6 +131,7 @@ defmodule Claudio.Messages.Response do
       content: parse_content(data[:content] || data["content"] || []),
       stop_reason: parse_stop_reason(data[:stop_reason] || data["stop_reason"]),
       stop_sequence: data[:stop_sequence] || data["stop_sequence"],
+      stop_details: data[:stop_details] || data["stop_details"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end
