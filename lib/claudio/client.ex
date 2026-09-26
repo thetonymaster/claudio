@@ -53,7 +53,8 @@ defmodule Claudio.Client do
   a 5xx — the API may already have processed the request, and the retry sends it again:
   a second message is generated and billed, and a create call (a batch, a file upload,
   an Admin invite) can run twice. None of these endpoints take an idempotency key, so
-  leave `retry:` off where a duplicate is unacceptable and retry in your own code instead.
+  set `retry: false` where a duplicate is unacceptable. After an ambiguous failure,
+  retry only if your application can deduplicate requests or reconcile the outcome.
 
   ## Usage
 
