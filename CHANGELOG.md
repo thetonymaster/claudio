@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
-- Examples use `claude-opus-5`; `enable_thinking/2` and `set_tool_choice/2`
+- Examples use `claude-opus-5-5`; `enable_thinking/2` and `set_tool_choice/2`
   document the 400s on current models; Files documented as GA.
 
 ## [0.6.0] - 2026-06-19

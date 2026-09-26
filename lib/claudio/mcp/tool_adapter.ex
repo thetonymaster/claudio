@@ -9,7 +9,7 @@ defmodule Claudio.MCP.ToolAdapter do
 
       {:ok, tools} = MyAdapter.list_tools(client)
 
-      request = Request.new("claude-opus-5")
+      request = Request.new("claude-opus-5-5")
       |> Claudio.MCP.ToolAdapter.add_tools(tools)
 
       # With server prefix for disambiguation:

@@ -24,7 +24,7 @@ defmodule Claudio.Files do
           filename: "contract.pdf")
 
       request =
-        Claudio.Messages.Request.new("claude-opus-5")
+        Claudio.Messages.Request.new("claude-opus-5-5")
         |> Claudio.Messages.Request.add_message_with_document(:user, "Summarise.", file_id)
 
       Claudio.Messages.create(client, request)

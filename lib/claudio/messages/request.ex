@@ -6,7 +6,7 @@ defmodule Claudio.Messages.Request do
 
       alias Claudio.Messages.Request
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_system("You are a helpful assistant")
       |> Request.set_max_tokens(1024)
@@ -70,7 +70,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
   """
   @spec new(String.t()) :: t()
   def new(model) when is_binary(model) do
@@ -90,11 +90,11 @@ defmodule Claudio.Messages.Request do
   ## Examples
 
       # Simple text message
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What is the weather?")
 
       # Multimodal message with image
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, [
         %{"type" => "image", "source" => %{
           "type" => "base64",
@@ -120,7 +120,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_image(:user, "What's in this image?", base64_data, "image/jpeg")
   """
   @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t()) :: t()
@@ -152,7 +152,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_image_url(:user, "What's in this image?", "https://example.com/image.jpg")
   """
   @spec add_message_with_image_url(t(), role(), String.t(), String.t()) :: t()
@@ -186,7 +186,7 @@ defmodule Claudio.Messages.Request do
 
   ## Examples
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_document(:user, "Summarize this document", "file_abc123")
 
       Request.new("claude-opus-4-8")
@@ -260,11 +260,11 @@ defmodule Claudio.Messages.Request do
   ## Examples
 
       # Simple string
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_system("You are a helpful assistant")
 
       # With prompt caching
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_system([
         %{
           "type" => "text",
@@ -287,7 +287,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_system_with_cache("Long system prompt...", ttl: "1h")
   """
   @spec set_system_with_cache(t(), String.t(), keyword()) :: t()
@@ -308,7 +308,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_max_tokens(1024)
   """
   @spec set_max_tokens(t(), integer()) :: t()
@@ -321,7 +321,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_temperature(0.7)
   """
   @spec set_temperature(t(), float()) :: t()
@@ -335,7 +335,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_top_p(0.9)
   """
   @spec set_top_p(t(), float()) :: t()
@@ -349,7 +349,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_top_k(40)
   """
   @spec set_top_k(t(), integer()) :: t()
@@ -362,7 +362,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_stop_sequences(["END", "STOP"])
   """
   @spec set_stop_sequences(t(), list(String.t())) :: t()
@@ -375,7 +375,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.enable_streaming()
   """
   @spec enable_streaming(t()) :: t()
@@ -400,7 +400,7 @@ defmodule Claudio.Messages.Request do
         }
       }
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_tool(tool)
   """
   @spec add_tool(t(), map()) :: t()
@@ -422,7 +422,7 @@ defmodule Claudio.Messages.Request do
         "input_schema" => %{"type" => "object", "properties" => %{}}
       }
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_tool_with_cache(tool)
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
@@ -436,7 +436,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_tool_choice(:auto)
       |> Request.set_tool_choice(:any)
       |> Request.set_tool_choice({:tool, "get_weather"})
@@ -469,7 +469,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_metadata(%{"user_id" => "123"})
   """
   @spec set_metadata(t(), map()) :: t()
@@ -482,7 +482,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.enable_thinking(%{"type" => "adaptive"})
 
   `%{"type" => "enabled", "budget_tokens" => n}` returns 400 on Claude Opus 4.7+,
@@ -510,7 +510,7 @@ defmodule Claudio.Messages.Request do
   this, or the request will carry two. Server names must be unique; adding a
   second server with an existing name raises `ArgumentError`.
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_mcp_server(
         Claudio.MCP.ServerConfig.new("my_server", "https://mcp.example.com/sse")
       )
@@ -572,7 +572,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_context_management(%{
         "strategy" => "auto",
         "max_context_tokens" => 100000
@@ -592,11 +592,11 @@ defmodule Claudio.Messages.Request do
   ## Example
 
       # String container ID
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_container("my-container-123")
 
       # Container config object
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_container(%{
         "id" => "my-container",
         "ttl" => 3600
@@ -617,7 +617,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.set_service_tier("auto")
   """
   @spec set_service_tier(t(), String.t()) :: t()

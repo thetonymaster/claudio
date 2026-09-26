@@ -19,7 +19,7 @@ defmodule Claudio.MCP.ServerConfig do
         |> ServerConfig.set_auth_token("bearer-token-here")
         |> ServerConfig.allow_tools(["search_events", "fetch_data"])
 
-      Request.new("claude-opus-5")
+      Request.new("claude-opus-5-5")
       |> Request.add_mcp_server(server)
   """
 
