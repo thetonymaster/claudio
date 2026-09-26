@@ -75,6 +75,11 @@ defmodule Claudio.Messages.Request do
   # Server-side refusal fallbacks; also needed to replay a `fallback` block (probed 2026-09-25).
   @fallback_beta "server-side-fallback-2026-07-01"
 
+  # Context editing (clear_* edits) and threshold compaction (compact_20260112; also needed
+  # to replay an unsigned compaction block). Probed 2026-09-26.
+  @context_management_beta "context-management-2025-06-27"
+  @compaction_beta "compact-2026-01-12"
+
   @doc """
   Creates a new request builder with the specified model.
 
@@ -141,6 +146,20 @@ defmodule Claudio.Messages.Request do
   end
 
   defp has_fallback_block?(_content), do: false
+
+  defp has_compact_edit?(config) do
+    case Map.get(config, "edits") || Map.get(config, :edits) do
+      edits when is_list(edits) ->
+        Enum.any?(edits, fn
+          %{"type" => type} -> type in ["compact_20260112", :compact_20260112]
+          %{type: type} -> type in ["compact_20260112", :compact_20260112]
+          _ -> false
+        end)
+
+      _ ->
+        false
+    end
+  end
 
   @doc """
   Adds a text message with an image from a base64-encoded string.
@@ -656,22 +675,170 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
-  Sets context management configuration.
-
-  Controls how context is managed across requests.
+  Sets the raw `context_management` map, replacing any previous one (including edits added
+  by `add_clear_tool_uses/2`, `add_clear_thinking/2`, `add_compaction/2`; betas they
+  declared stay). Always declares `context-management-2025-06-27`; also declares
+  `compact-2026-01-12` when `edits` holds a `compact_20260112` edit (the API rejects it
+  otherwise). Prefer the builders.
 
   ## Example
 
       Request.new("claude-opus-5-5")
       |> Request.set_context_management(%{
-        "strategy" => "auto",
-        "max_context_tokens" => 100000
+        "edits" => [
+          %{"type" => "clear_thinking_20251015", "keep" => "all"},
+          %{"type" => "clear_tool_uses_20250919", "keep" => %{"type" => "tool_uses", "value" => 3}},
+          %{"type" => "compact_20260112", "trigger" => %{"type" => "input_tokens", "value" => 150_000}}
+        ]
       })
   """
   @spec set_context_management(t(), map()) :: t()
   def set_context_management(%__MODULE__{} = request, config) when is_map(config) do
-    %{request | context_management: config}
-    |> add_beta("context-management-2025-06-27")
+    request = add_beta(%{request | context_management: config}, @context_management_beta)
+    if has_compact_edit?(config), do: add_beta(request, @compaction_beta), else: request
+  end
+
+  @doc """
+  Adds a `clear_tool_uses_20250919` context edit (declares `context-management-2025-06-27`):
+  once the trigger is reached, the API clears older tool results from the prompt it sends
+  to the model. Your stored history is unchanged.
+
+  ## Options (each omitted option is left to the API default)
+
+  - `:trigger` — `{:input_tokens, n}` or `{:tool_uses, n}`
+  - `:keep` — number of most recent tool uses to keep
+  - `:clear_at_least` — minimum input tokens to clear (makes the cache invalidation worth it)
+  - `:exclude_tools` — tool names never cleared
+  - `:clear_tool_inputs` — `true`, `false`, or a list of tool names whose inputs are cleared too
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.add_clear_tool_uses(trigger: {:input_tokens, 100_000}, keep: 3)
+  """
+  @spec add_clear_tool_uses(t(), keyword()) :: t()
+  def add_clear_tool_uses(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts =
+      Keyword.validate!(opts, [
+        :trigger,
+        :keep,
+        :clear_at_least,
+        :exclude_tools,
+        :clear_tool_inputs
+      ])
+
+    fun = "add_clear_tool_uses/2"
+
+    edit =
+      %{"type" => "clear_tool_uses_20250919"}
+      |> maybe_put("trigger", map_opt(opts, :trigger, &clear_trigger!/1))
+      |> maybe_put("keep", map_opt(opts, :keep, &count_map!(fun, :keep, "tool_uses", &1)))
+      |> maybe_put(
+        "clear_at_least",
+        map_opt(opts, :clear_at_least, &count_map!(fun, :clear_at_least, "input_tokens", &1))
+      )
+      |> maybe_put("exclude_tools", opts[:exclude_tools])
+      |> maybe_put("clear_tool_inputs", Keyword.get(opts, :clear_tool_inputs))
+
+    request |> put_edit(edit, :last) |> add_beta(@context_management_beta)
+  end
+
+  @doc """
+  Adds a `clear_thinking_20251015` context edit (declares `context-management-2025-06-27`).
+  It is always placed **first** in `edits` — the API rejects it anywhere else.
+
+  ## Options
+
+  - `:keep` — `:all`, or a positive number of recent assistant turns whose thinking is kept.
+    Omitted: the model's default.
+  """
+  @spec add_clear_thinking(t(), keyword()) :: t()
+  def add_clear_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:keep])
+
+    keep =
+      case Keyword.get(opts, :keep) do
+        nil ->
+          nil
+
+        :all ->
+          "all"
+
+        n when is_integer(n) and n > 0 ->
+          %{"type" => "thinking_turns", "value" => n}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_clear_thinking/2 :keep must be :all or a positive integer; " <>
+                  "got #{inspect(other)}"
+      end
+
+    edit = maybe_put(%{"type" => "clear_thinking_20251015"}, "keep", keep)
+    request |> put_edit(edit, :first) |> add_beta(@context_management_beta)
+  end
+
+  @doc """
+  Adds a `compact_20260112` edit — **threshold compaction** (declares `compact-2026-01-12`).
+  When the input passes the trigger, the API summarizes the conversation into a
+  `compaction` block at the start of the reply; everything before that block is ignored
+  on later turns. Keep this edit on every later request that replays the block (the API
+  rejects a replayed threshold block without it); see `apply_compaction/2`.
+
+  ## Options (each omitted option is left to the API default)
+
+  - `:trigger` — input tokens that trigger compaction (API default 150000, minimum 50000)
+  - `:pause_after_compaction` — `true` returns right after the summary
+    (`stop_reason: :compaction`)
+  - `:instructions` — summarization instructions
+  """
+  @spec add_compaction(t(), keyword()) :: t()
+  def add_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:trigger, :pause_after_compaction, :instructions])
+
+    edit =
+      %{"type" => "compact_20260112"}
+      |> maybe_put(
+        "trigger",
+        map_opt(opts, :trigger, &count_map!("add_compaction/2", :trigger, "input_tokens", &1))
+      )
+      |> maybe_put("pause_after_compaction", Keyword.get(opts, :pause_after_compaction))
+      |> maybe_put("instructions", opts[:instructions])
+
+    request |> put_edit(edit, :last) |> add_beta(@compaction_beta)
+  end
+
+  # nil means "not given"; any other value (including false) is validated by `fun`.
+  defp map_opt(opts, key, fun) do
+    case Keyword.get(opts, key) do
+      nil -> nil
+      value -> fun.(value)
+    end
+  end
+
+  defp clear_trigger!({kind, n}) when kind in [:input_tokens, :tool_uses] and is_integer(n),
+    do: %{"type" => Atom.to_string(kind), "value" => n}
+
+  defp clear_trigger!(other) do
+    raise ArgumentError,
+          "Request.add_clear_tool_uses/2 :trigger must be {:input_tokens, n} or " <>
+            "{:tool_uses, n}; got #{inspect(other)}"
+  end
+
+  defp count_map!(_fun, _opt, type, n) when is_integer(n), do: %{"type" => type, "value" => n}
+
+  defp count_map!(fun, opt, _type, other) do
+    raise ArgumentError,
+          "Request.#{fun} #{inspect(opt)} must be an integer; got #{inspect(other)}"
+  end
+
+  # Appends (or, for clear_thinking, prepends) an edit, keeping whichever key style
+  # (`"edits"` / `:edits`) a raw set_context_management/2 used and any other keys.
+  defp put_edit(%__MODULE__{context_management: cm} = request, edit, position) do
+    cm = cm || %{}
+    key = if Map.has_key?(cm, :edits) and not Map.has_key?(cm, "edits"), do: :edits, else: "edits"
+    current = Map.get(cm, key) || []
+    edits = if position == :first, do: [edit | current], else: current ++ [edit]
+    %{request | context_management: Map.put(cm, key, edits)}
   end
 
   @doc """

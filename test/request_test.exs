@@ -287,6 +287,194 @@ defmodule Claudio.Messages.RequestTest do
       refute Map.has_key?(map, "betas")
       refute Map.has_key?(map, "anthropic-beta")
     end
+
+    test "a raw compact_20260112 edit also declares compact-2026-01-12" do
+      for config <- [
+            %{"edits" => [%{"type" => "compact_20260112"}]},
+            %{edits: [%{type: "compact_20260112"}]}
+          ] do
+        request = Request.new("claude-opus-5-5") |> Request.set_context_management(config)
+
+        assert Request.required_betas(request) == [
+                 "context-management-2025-06-27",
+                 "compact-2026-01-12"
+               ]
+      end
+    end
+
+    test "without a compact edit only the context-management beta is declared" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert Request.required_betas(request) == ["context-management-2025-06-27"]
+    end
+  end
+
+  describe "context-editing builders" do
+    defp edits(request), do: Request.to_map(request)["context_management"]["edits"]
+
+    test "add_clear_tool_uses/2 with no options sends only the type" do
+      request = Request.new("claude-opus-5-5") |> Request.add_clear_tool_uses()
+
+      assert edits(request) == [%{"type" => "clear_tool_uses_20250919"}]
+      assert Request.required_betas(request) == ["context-management-2025-06-27"]
+    end
+
+    test "add_clear_tool_uses/2 maps every option" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses(
+          trigger: {:tool_uses, 5},
+          keep: 2,
+          clear_at_least: 1000,
+          exclude_tools: ["web_search"],
+          clear_tool_inputs: false
+        )
+
+      assert edits(request) == [
+               %{
+                 "type" => "clear_tool_uses_20250919",
+                 "trigger" => %{"type" => "tool_uses", "value" => 5},
+                 "keep" => %{"type" => "tool_uses", "value" => 2},
+                 "clear_at_least" => %{"type" => "input_tokens", "value" => 1000},
+                 "exclude_tools" => ["web_search"],
+                 "clear_tool_inputs" => false
+               }
+             ]
+    end
+
+    test "add_clear_tool_uses/2 input_tokens trigger" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses(trigger: {:input_tokens, 100_000})
+
+      assert [%{"trigger" => %{"type" => "input_tokens", "value" => 100_000}}] = edits(request)
+    end
+
+    test "add_clear_thinking/2 maps keep: :all and keep: n" do
+      assert edits(Request.new("m") |> Request.add_clear_thinking(keep: :all)) ==
+               [%{"type" => "clear_thinking_20251015", "keep" => "all"}]
+
+      assert edits(Request.new("m") |> Request.add_clear_thinking(keep: 2)) ==
+               [
+                 %{
+                   "type" => "clear_thinking_20251015",
+                   "keep" => %{"type" => "thinking_turns", "value" => 2}
+                 }
+               ]
+
+      assert edits(Request.new("m") |> Request.add_clear_thinking()) ==
+               [%{"type" => "clear_thinking_20251015"}]
+    end
+
+    test "add_compaction/2 with no options sends only the type" do
+      assert edits(Request.new("m") |> Request.add_compaction()) == [
+               %{"type" => "compact_20260112"}
+             ]
+    end
+
+    test "add_compaction/2 maps its options and declares compact-2026-01-12" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction(
+          trigger: 150_000,
+          pause_after_compaction: true,
+          instructions: "Keep file paths."
+        )
+
+      assert edits(request) == [
+               %{
+                 "type" => "compact_20260112",
+                 "trigger" => %{"type" => "input_tokens", "value" => 150_000},
+                 "pause_after_compaction" => true,
+                 "instructions" => "Keep file paths."
+               }
+             ]
+
+      assert Request.required_betas(request) == ["compact-2026-01-12"]
+    end
+
+    test "clear_thinking is placed first whatever the call order; others keep their order" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses()
+        |> Request.add_compaction()
+        |> Request.add_clear_thinking(keep: :all)
+
+      assert Enum.map(edits(request), & &1["type"]) ==
+               ["clear_thinking_20251015", "clear_tool_uses_20250919", "compact_20260112"]
+
+      assert Request.required_betas(request) == [
+               "context-management-2025-06-27",
+               "compact-2026-01-12"
+             ]
+    end
+
+    test "builders keep other keys a raw set_context_management/2 put there" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{"edits" => [], "future_key" => 1})
+        |> Request.add_clear_tool_uses()
+
+      assert Request.to_map(request)["context_management"] == %{
+               "edits" => [%{"type" => "clear_tool_uses_20250919"}],
+               "future_key" => 1
+             }
+    end
+
+    test "an atom-keyed raw config keeps a single :edits key" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{edits: [%{type: "clear_tool_uses_20250919"}]})
+        |> Request.add_compaction()
+
+      cm = Request.to_map(request)["context_management"]
+
+      refute Map.has_key?(cm, "edits")
+      assert [%{type: "clear_tool_uses_20250919"}, %{"type" => "compact_20260112"}] = cm.edits
+    end
+
+    test "set_context_management/2 after builders replaces the edits; betas stay" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction()
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert edits(request) == [%{"type" => "clear_tool_uses_20250919"}]
+      assert "compact-2026-01-12" in Request.required_betas(request)
+    end
+
+    test "invalid shapes raise ArgumentError" do
+      r = Request.new("claude-opus-5-5")
+
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :trigger/, fn ->
+        Request.add_clear_tool_uses(r, trigger: {:turns, 3})
+      end
+
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
+        Request.add_clear_tool_uses(r, keep: "3")
+      end
+
+      assert_raise ArgumentError, ~r/add_clear_thinking\/2 :keep/, fn ->
+        Request.add_clear_thinking(r, keep: 0)
+      end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
+        Request.add_compaction(r, trigger: {:input_tokens, 50_000})
+      end
+
+      assert_raise ArgumentError, fn -> Request.add_compaction(r, bogus: 1) end
+
+      # false is not "absent": it must be rejected, not sent.
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
+        Request.add_clear_tool_uses(r, keep: false)
+      end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
+        Request.add_compaction(r, trigger: false)
+      end
+    end
   end
 
   describe "set_output_config/2 and set_output_format/2" do
