@@ -57,18 +57,18 @@ defmodule Claudio.Batches do
       {:ok, batch} = Batches.create(client, requests)
       IO.puts("Batch ID: \#{batch["id"]}")
 
-      # Wait for completion with progress updates
-      {:ok, completed} = Batches.wait_for_completion(client, batch["id"], fn status ->
-        counts = status["request_counts"]
-        IO.puts("Progress: \#{counts["succeeded"]}/\#{counts["processing"]}")
-      end)
+      # Wait for completion with progress updates (poll_interval in seconds)
+      {:ok, _completed} =
+        Batches.wait_for_completion(client, batch["id"],
+          poll_interval: 30,
+          callback: fn status ->
+            counts = status["request_counts"]
+            IO.puts("Progress: \#{counts["succeeded"]} succeeded, \#{counts["processing"]} processing")
+          end
+        )
 
-      # Download results
-      {:ok, results_jsonl} = Batches.get_results(client, batch["id"])
-
-      # Parse JSONL results
-      results = String.split(results_jsonl, "\n", trim: true)
-      |> Enum.map(&Jason.decode!/1)
+      # Download results: a list of decoded (string-keyed) maps
+      {:ok, results} = Batches.get_results(client, batch["id"])
 
       # Process each result
       Enum.each(results, fn result ->
@@ -212,31 +212,31 @@ defmodule Claudio.Batches do
 
       Enum.each(results, fn result ->
         case result do
-          %{"custom_id" => id, "result" => result} ->
+          %{"custom_id" => id, "result" => %{"type" => "succeeded", "message" => message}} ->
             IO.puts("Success for \#{id}")
-            IO.inspect(result)
+            IO.inspect(Claudio.Messages.Response.from_map(message))
 
-          %{"custom_id" => id, "error" => error} ->
-            IO.puts("Error for \#{id}")
-            IO.inspect(error)
+          %{"custom_id" => id, "result" => %{"type" => type} = outcome} ->
+            IO.puts("\#{type} for \#{id}")
+            IO.inspect(outcome["error"])
         end
       end)
   """
-  @spec get_results(Req.Request.t(), String.t()) :: {:ok, list(map())} | {:error, APIError.t()}
+  @spec get_results(Req.Request.t(), String.t()) ::
+          {:ok, list(map())}
+          | {:error, APIError.t() | {:invalid_result_line, pos_integer(), String.t()} | term()}
   def get_results(client, batch_id) when is_binary(batch_id) do
     case Req.get(client, url: "messages/batches/#{batch_id}/results") do
       {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
-        # Results are returned as JSONL (one JSON object per line)
-        results =
-          body
-          |> String.split("\n", trim: true)
-          |> Enum.map(&parse_jsonl_line/1)
-          |> Enum.reject(&is_nil/1)
-
-        {:ok, results}
+        # Results are JSONL (one JSON object per line).
+        parse_jsonl(body)
 
       {:ok, %Req.Response{status: 200, body: body}} when is_list(body) ->
         {:ok, body}
+
+      # A one-result body served as JSON is decoded by Req into a single map.
+      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
+        {:ok, [body]}
 
       {:ok, %Req.Response{status: status, body: body}} ->
         {:error, APIError.from_response(status, body)}
@@ -345,12 +345,12 @@ defmodule Claudio.Batches do
         poll_interval: 60,
         timeout: 3600,
         callback: fn status ->
-          IO.puts("Status: \#{status.processing_status}")
-          IO.inspect(status.request_counts)
+          IO.puts("Status: \#{status["processing_status"]}")
+          IO.inspect(status["request_counts"])
         end
       )
 
-      {:ok, results} = Claudio.Batches.get_results(client, final_batch.id)
+      {:ok, results} = Claudio.Batches.get_results(client, final_batch["id"])
   """
   @spec wait_for_completion(Req.Request.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -411,10 +411,21 @@ defmodule Claudio.Batches do
   defp maybe_add_param(params, _key, nil), do: params
   defp maybe_add_param(params, key, value), do: [{key, value} | params]
 
-  defp parse_jsonl_line(line) do
-    case Jason.decode(line, keys: :atoms) do
-      {:ok, data} -> data
-      {:error, _} -> nil
+  # String keys, like every other response Claudio returns (and no atoms created from
+  # API data). A malformed line is reported, never silently dropped.
+  defp parse_jsonl(body) do
+    body
+    |> String.split("\n", trim: true)
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, []}, fn {line, number}, {:ok, acc} ->
+      case Jason.decode(line) do
+        {:ok, result} -> {:cont, {:ok, [result | acc]}}
+        {:error, _} -> {:halt, {:error, {:invalid_result_line, number, line}}}
+      end
+    end)
+    |> case do
+      {:ok, results} -> {:ok, Enum.reverse(results)}
+      error -> error
     end
   end
 end
