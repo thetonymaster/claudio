@@ -244,7 +244,7 @@ Add at the end of the module (before the final `end`):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/response_test.exs`
-Expected: FAIL — the two updated exact assertions (missing `caller`/`raw`), the `toolset_name` replay test (re-emitted map lacks `"toolset_name"`/`"caller"`), each result-type test (block stays a raw string-keyed map), `container_upload`, `UndefinedFunctionError` for `get_server_tool_results/1`, `KeyError` for `:container`. "absent: … byte-identical" and "hand-built typed blocks" may already pass — they guard the change.
+Expected: FAIL — the two updated exact assertions (missing `caller`/`raw`), the `toolset_name` replay test (re-emitted map lacks `"toolset_name"`/`"caller"`), each result-type test (block stays a raw string-keyed map), `container_upload`, `UndefinedFunctionError` for `get_server_tool_results/1`, `KeyError` for `:container`. "hand-built typed blocks" passes already (regression pin); "absent: … byte-identical" fails (the old parser produces no `toolset_name`/`caller` keys).
 
 - [ ] **Step 3: Implement**
 
@@ -447,6 +447,8 @@ In `lib/claudio/messages/response.ex`:
 Run: `mix format && mix compile --warnings-as-errors && mix test`
 Expected: PASS, 0 failures (full suite: `tools_test`, `agent_test`, `mcp/result_mapper_test` read tool-use blocks and must stay green).
 
+Also update the now-stale comment in `test/response_test.exs` (~line 563, test "tolerates raw/untyped blocks"): replace "Claudio does not type — they pass through as raw string-keyed maps with no atom :type key" with "are typed shallowly since S14; getters must still not crash on mixed content".
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -560,10 +562,15 @@ Inside `describe "add_computer_tool/4 (S6)"`, add:
       assert Request.required_betas(request) == ["computer-use-2025-11-24"]
     end
 
-    test "an unknown version raises" do
+    test "an unknown version or option raises; the default may be passed explicitly" do
       assert_raise ArgumentError, ~r/add_computer_tool\/4 :version/, fn ->
         Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20260801")
       end
+
+      assert_raise ArgumentError, fn -> Request.add_computer_tool(Request.new("m"), 1, 1, versoin: 1) end
+
+      assert [%{"type" => "computer_20250124"}] =
+               Request.to_map(Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20250124"))["tools"]
     end
 ```
 
@@ -679,7 +686,7 @@ After that describe, add:
       request =
         Request.new("m")
         |> Request.add_browser_toolset(
-          configs: %{javascript_exec: %{enabled: true}, "zoom" => %{"defer_loading" => false}},
+          configs: %{"zoom" => %{"defer_loading" => false}, javascript_exec: %{enabled: true}},
           cache_control: %{"type" => "ephemeral"}
         )
 
@@ -899,13 +906,15 @@ Expected: FAIL — `UndefinedFunctionError` for `add_tool/3`, `add_tool_search_t
 3. `add_computer_tool/4` — replace the body with:
 
 ```elixir
+    opts = Keyword.validate!(opts, [:display_number, :version])
+
     {type, beta} =
       case Keyword.get(opts, :version) do
-        nil -> {"computer_20250124", "computer-use-2025-01-24"}
+        v when v in [nil, :"20250124"] -> {"computer_20250124", "computer-use-2025-01-24"}
         :"20251124" -> {"computer_20251124", "computer-use-2025-11-24"}
         other ->
           raise ArgumentError,
-                "Request.add_computer_tool/4 :version must be :\"20251124\" or omitted; " <>
+                "Request.add_computer_tool/4 :version must be :\"20250124\" or :\"20251124\"; " <>
                   "got #{inspect(other)} (use add_computer_toolset/2 for computer_toolset_20260801)"
       end
 
@@ -982,7 +991,7 @@ git commit -m "feat(s14): add_tool/3 options, tool search, advisor, client tools
 
 **Interfaces:**
 - Consumes: Task 1's parsed `tool_use` with `caller`/`toolset_name`.
-- Produces: `extract_tool_uses/1 :: [%{id, name, input, toolset_name, caller}]`; `create_tool_result(String.t(), term(), boolean(), keyword()) :: tool_result()` (`toolset_name:`); `halt_result(%{id: String.t(), toolset_name: "computer" | "browser"}) :: tool_result()`. Task 5 uses all three.
+- Produces: `extract_tool_uses/1 :: [%{id, name, input, toolset_name, caller}]`; `create_tool_result(String.t(), term(), boolean(), keyword()) :: tool_result()` (`toolset_name:`); `halt_result(%{id: String.t(), toolset_name: "computer" | "browser"}) :: tool_result()`; `halt_text(String.t() | nil) :: String.t() | nil`. Task 5 uses all four.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1056,10 +1065,16 @@ Add a new describe:
                "Not executed: an earlier action in this turn failed."
     end
 
-    test "a plain tool use raises" do
-      assert_raise ArgumentError, ~r/halt_result\/1/, fn ->
-        Tools.halt_result(%{id: "toolu_1", toolset_name: nil})
+    test "a plain tool use, or a map without toolset_name, raises ArgumentError" do
+      for bad <- [%{id: "toolu_1", toolset_name: nil}, %{id: "toolu_1"}, "x"] do
+        assert_raise ArgumentError, ~r/halt_result\/1/, fn -> Tools.halt_result(bad) end
       end
+    end
+
+    test "halt_text/1: text for known toolsets, nil otherwise" do
+      assert Tools.halt_text("browser") == "Not executed: an earlier action in this turn failed."
+      assert Tools.halt_text("terminal") == nil
+      assert Tools.halt_text(nil) == nil
     end
   end
 ```
@@ -1137,15 +1152,24 @@ In `lib/claudio/tools.ex`:
   """
   @spec halt_result(tool_use()) :: tool_result()
   def halt_result(%{id: id, toolset_name: toolset_name} = tool_use) do
-    case Map.fetch(@halt_texts, toolset_name) do
-      {:ok, text} ->
-        create_tool_result(id, text, true, toolset_name: toolset_name)
-
-      :error ->
-        raise ArgumentError,
-              "Tools.halt_result/1 needs a computer or browser toolset tool use; " <>
-                "got #{inspect(tool_use)}"
+    case halt_text(toolset_name) do
+      nil -> raise_halt_argument(tool_use)
+      text -> create_tool_result(id, text, true, toolset_name: toolset_name)
     end
+  end
+
+  def halt_result(other), do: raise_halt_argument(other)
+
+  @doc """
+  The halt text a client toolset prescribes for actions skipped after a failure
+  (`"computer"`, `"browser"`), or `nil` for any other toolset name.
+  """
+  @spec halt_text(String.t() | nil) :: String.t() | nil
+  def halt_text(toolset_name), do: Map.get(@halt_texts, toolset_name)
+
+  defp raise_halt_argument(value) do
+    raise ArgumentError,
+          "Tools.halt_result/1 needs a computer or browser toolset tool use; got #{inspect(value)}"
   end
 ```
 
@@ -1278,7 +1302,8 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
             member("c2", "type"),
             plain("p1", "lookup"),
             member("b1", "navigate", "browser"),
-            member("c3", "key")
+            member("c3", "key"),
+            member("c4", "screenshot")
           ],
           "tool_use"
         ),
@@ -1297,7 +1322,9 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
         "lookup" => fn _ -> {:ok, "found"} end
       }
 
-      assert {:ok, _, _} = Agent.run(client, base_request(), handlers)
+      on_tool_call = fn tool_use, _result -> send(test_pid, {:observed, tool_use.id}) end
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), handlers, on_tool_call: on_tool_call)
       assert_received {:request_body, _}
       assert_received {:request_body, second}
 
@@ -1311,10 +1338,20 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
                  "is_error" => true,
                  "content" => "Not executed: an earlier computer action in this turn failed.",
                  "toolset_name" => "computer"
+               },
+               %{
+                 "tool_use_id" => "c4",
+                 "is_error" => true,
+                 "content" => "Not executed: an earlier computer action in this turn failed."
                }
              ] = tool_results(second)
 
       refute_received {:ran, "key"}
+      refute_received {:ran, "screenshot"}
+      # on_tool_call sees executed calls only.
+      for id <- ["c1", "c2", "p1", "b1"], do: assert_received({:observed, ^id})
+      refute_received {:observed, "c3"}
+      refute_received {:observed, "c4"}
     end
 
     test "the response container is carried to the next request", %{client: client, bypass: bypass} do
@@ -1331,6 +1368,69 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
 
       refute Map.has_key?(first, "container")
       assert second["container"] == "container_01"
+    end
+
+    test "a map container (e.g. with skills) keeps its keys and gains the id", %{
+      client: client,
+      bypass: bypass
+    } do
+      serve(bypass, [
+        message([plain("t1", "lookup")], "tool_use", %{"container" => %{"id" => "container_01"}}),
+        message([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      skills = [%{"type" => "anthropic", "skill_id" => "xlsx"}]
+      request = Request.set_container(base_request(), %{"skills" => skills})
+
+      assert {:ok, _, _} = Agent.run(client, request, %{"lookup" => fn _ -> {:ok, "x"} end})
+      assert_received {:request_body, _}
+      assert_received {:request_body, second}
+
+      assert second["container"] == %{"id" => "container_01", "skills" => skills}
+    end
+
+    test "an unknown toolset's failures don't halt it (no halt contract) and don't crash", %{
+      client: client,
+      bypass: bypass
+    } do
+      serve(bypass, [
+        message([member("x1", "run", "terminal"), member("x2", "run", "terminal")], "tool_use"),
+        message([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      handlers = %{"terminal" => fn _, _ -> {:error, "boom"} end}
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), handlers)
+      assert_received {:request_body, _}
+      assert_received {:request_body, second}
+
+      assert [
+               %{"tool_use_id" => "x1", "content" => "boom", "is_error" => true},
+               %{"tool_use_id" => "x2", "content" => "boom", "is_error" => true}
+             ] = tool_results(second)
+    end
+
+    test "wrong arity is an error result; list content is passed through", %{
+      client: client,
+      bypass: bypass
+    } do
+      image = [%{"type" => "text", "text" => "screen"}]
+
+      serve(bypass, [
+        message([member("c1", "screenshot"), plain("p1", "lookup")], "tool_use"),
+        message([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      handlers = %{"computer" => fn _, _ -> {:ok, image} end, "lookup" => fn _, _ -> {:ok, "x"} end}
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), handlers)
+      assert_received {:request_body, _}
+      assert_received {:request_body, second}
+
+      assert [
+               %{"tool_use_id" => "c1", "content" => ^image},
+               %{"tool_use_id" => "p1", "is_error" => true, "content" => "Handler for lookup must take (input)"}
+             ] = tool_results(second)
     end
 
     test "pause_turn resumes with the assistant content and no user message", %{
@@ -1364,7 +1464,7 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `mix test test/agent_test.exs`
-Expected: FAIL — toolset calls are looked up by `name` (the custom `screenshot` handler answers `t1`, no `toolset_name` on results); `Unknown tool: navigate` instead of `Unknown toolset: browser`; no halt text; no `container` in the second body; `pause_turn` returns `{:ok, _, _}` after one call (so `assert_received` for the second body fails) and the max-turns test gets `{:ok, …}`.
+Expected: FAIL — toolset calls are looked up by `name` (the custom `screenshot` handler answers `t1`, no `toolset_name` on results); `Unknown tool: navigate` instead of `Unknown toolset: browser`; no halt text; no `container` in the second body; `pause_turn` returns `{:ok, _, _}` after one call (so `assert_received` for the second body fails) and the max-turns test gets `{:ok, …}`; the map-container test gets no `container` key; the unknown-toolset test gets "Unknown tool: run"; the wrong-arity test raises `CaseClauseError` inside the loop (today's `case` has no clause for a non-arity-1 function) — that crash is the failure.
 
 - [ ] **Step 3: Implement**
 
@@ -1426,14 +1526,19 @@ In `lib/claudio/agent.ex`:
     end
   end
 
-  # Programmatic tool calling: continuing needs the container the calls run in.
-  defp carry_container(request, %Response{container: %{"id" => id}}),
-    do: Request.set_container(request, id)
-
-  defp carry_container(request, %Response{container: %{id: id}}),
-    do: Request.set_container(request, id)
+  # Programmatic tool calling: continuing needs the container the calls run in. A map
+  # container set by the caller (e.g. with "skills") keeps its other keys and gains the id.
+  defp carry_container(request, %Response{container: container}) when is_map(container) do
+    case Map.get(container, "id") || Map.get(container, :id) do
+      nil -> request
+      id -> Request.set_container(request, merge_container_id(request.container, id))
+    end
+  end
 
   defp carry_container(request, _response), do: request
+
+  defp merge_container_id(current, id) when is_map(current), do: Map.put(current, "id", id)
+  defp merge_container_id(_current, id), do: id
 ```
 
 3. Replace `execute_tools/3` with:
@@ -1459,7 +1564,9 @@ In `lib/claudio/agent.ex`:
               {:error, reason} -> {reason, true}
             end
 
-          failed = if is_error and toolset, do: MapSet.put(failed, toolset), else: failed
+          # Only toolsets with a documented halt contract halt; an unknown toolset keeps running.
+          failed =
+            if is_error and Tools.halt_text(toolset), do: MapSet.put(failed, toolset), else: failed
           opts = if toolset, do: [toolset_name: toolset], else: []
           {Tools.create_tool_result(tool_use.id, content, is_error, opts), failed}
         end
@@ -1489,15 +1596,19 @@ In `lib/claudio/agent.ex`:
   defp safely(fun) do
     fun.()
   catch
-    :error, e -> {:error, "Tool error: #{Exception.message(e)}"}
+    :error, e ->
+      {:error, "Tool error: #{Exception.message(Exception.normalize(:error, e, __STACKTRACE__))}"}
+
     :throw, value -> {:error, "Tool threw: #{inspect(value)}"}
     :exit, reason -> {:error, "Tool exited: #{inspect(reason)}"}
   end
 ```
 
-   (`Exception.message/1` of a non-exception `:error` reason: the existing code already calls it on whatever `e` is; keep that behavior — `catch :error, e` normalizes raised exceptions to structs.)
+   (`Exception.normalize/3` turns Erlang error terms such as `:badarith` into exception structs; the old `Exception.message(e)` crashed on them.)
 
-4. Moduledoc — after the handlers example, add:
+4. `run/4` `@doc` — after the `max_turns` paragraph, add: `A \`pause_turn\` resume counts as a round trip too.` While there, check the paragraph's claim ("With \`max_turns: 2\`, the model is called up to 3 times") against `loop/6` (`turn + 1 >= max_turns` stops on the 2nd call): if they disagree, fix the doc to match the code and ledger it — do not change the loop's counting.
+
+5. Moduledoc — after the handlers example, add:
 
 ```
   ## Client toolsets
@@ -1612,8 +1723,9 @@ defmodule Claudio.ToolExtensionsIntegrationTest do
     assert [%{type: :tool_search_tool_result} | _] =
              Response.get_server_tool_results(response, :tool_search_tool_result)
 
-    results =
-      for tu <- Tools.extract_tool_uses(response), do: Tools.create_tool_result(tu.id, "18C, cloudy")
+    # If the model answered without calling the found tool, there is nothing to replay.
+    assert [_ | _] = tool_uses = Tools.extract_tool_uses(response)
+    results = for tu <- tool_uses, do: Tools.create_tool_result(tu.id, "18C, cloudy")
 
     next =
       request

@@ -87,6 +87,7 @@ dispatches by name only, never echoes `toolset_name`, never carries the containe
 - `halt_result(tool_use) :: tool_result()` — for a tool use with `toolset_name` `"computer"` or
   `"browser"`: `is_error: true`, `toolset_name` echoed, content the exact F12 text. Any other
   input raises `ArgumentError` (the halt contract exists only for toolsets).
+  `halt_text(toolset_name) :: String.t() | nil` exposes the text (nil for other toolsets).
 
 ### 3. Response parsing and round-trip
 
@@ -123,16 +124,18 @@ and overwrites it with a non-nil `message_delta.delta.container` (F5). Result bl
   `screenshot`); `@type handler` is widened accordingly.
 - **Dispatch (pair rule, F11; Q, 2026-09-26):** a `tool_use` with `toolset_name` goes **only** to
   `handlers[toolset_name]` as arity 2; without it, to `handlers[name]` as arity 1. Missing
-  handler / wrong arity → error result ("Unknown tool: …" / "Unknown toolset: …"); raises,
+  handler → error result ("Unknown tool: …" / "Unknown toolset: …"); wrong arity → error
+  result ("Handler for … must take (input)" / "(member, input)"); raises,
   throws and exits → error result as today. Toolset results echo `toolset_name`.
 - **Batch halt (F12):** a turn's calls run in content order. After the first failed call of a
-  toolset, that toolset's later calls in the turn are not executed; each gets
-  `Tools.halt_result/1`. Other tools and the other toolset keep running. `on_tool_call` is not
+  toolset **with a halt contract** (`Tools.halt_text/1` non-nil: computer, browser), that
+  toolset's later calls in the turn are not executed; each gets `Tools.halt_result/1`. Other tools and the other toolset keep running. `on_tool_call` is not
   invoked for skipped calls.
 - **Programmatic calls** dispatch the same way (their `caller` is ignored for dispatch); the
   follow-up user turn already holds only `tool_result` blocks (F6).
-- **Container:** when a response has `container`, the next request gets
-  `Request.set_container(req, container["id"])` (F5).
+- **Container:** when a response has `container`, the next request gets its id (F5): a map
+  container the caller set (e.g. `%{"skills" => …}`) keeps its keys and gains `"id"`;
+  otherwise `set_container(req, id)`. (Plan review, 2026-09-26: a bare id would drop skills.)
 - **`pause_turn`:** append the assistant content and call again (no user message); counts as a
   turn toward `max_turns`, so endless pausing ends in `:max_turns_exceeded`.
 - Return shapes, `max_turns` meaning for tool round trips, and `on_tool_call`'s signature are
