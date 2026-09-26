@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name is already on the request (the connector requires unique server names).
 - `Request.add_code_execution_tool/2` defaults to `code_execution_20260521`
   (same runtime as `20260120`).
+- `Response.usage` keeps every field the API returns: documented fields are atom keys
+  (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`); any other field is kept
+  under the key it arrived with instead of being dropped. Documented fields the API did not
+  send now appear as `nil`, so exact `usage == %{...}` comparisons need the new keys.
+- `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo` and `diagnostics`,
+  which the count endpoint rejects.
 
 ### Added
 
@@ -56,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Response.get_thinking/1`, `Response.thinking_interrupted?/1`, `Stream.accumulate_thinking/1`.
 - Telemetry: `:thinking_tokens` in `[:claudio, :messages, :create, :stop]` and
   `[:claudio, :messages, :stream, :usage]` metadata, when the API reports it.
+- **5.x request surface** (`Claudio.Messages.Request`), no per-model or placement validation:
+  - `add_system_message/3` — mid-conversation `role: "system"` messages (GA); `clear_at:`
+    declares `mid-conversation-system-clear-at-2026-08-21`, `effort:` (per-message effort)
+    declares `mid-conversation-output-config-2026-07-01`.
+  - `set_speed/2` (`:fast` / `:standard`, always declares `fast-mode-2026-02-01`),
+    `set_inference_geo/2` (`:global` / `:us`, GA), `enable_cache_diagnostics/2` (GA).
+- `Response.diagnostics` (raw cache-diagnostics map).
 
 ### Docs
 

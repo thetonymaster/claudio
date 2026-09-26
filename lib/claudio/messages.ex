@@ -215,6 +215,9 @@ defmodule Claudio.Messages do
       |> Request.to_map()
       |> Map.delete("stream")
       |> Map.delete("max_tokens")
+      # The count endpoint rejects these (400 "Extra inputs are not permitted", probed 2026-09-25).
+      |> Map.delete("inference_geo")
+      |> Map.delete("diagnostics")
 
     count_tokens(client, payload)
   end

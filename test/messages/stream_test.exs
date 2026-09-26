@@ -383,4 +383,29 @@ defmodule Claudio.Messages.StreamTest do
       assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{0, "y"}]
     end
   end
+
+  describe "diagnostics through build_final_message/1 → Response.from_map/1" do
+    test "diagnostics on message_start survive into the parsed Response" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","diagnostics":{"cache_miss_reason":null},"usage":{"input_tokens":5,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert Claudio.Messages.Response.from_map(message).diagnostics == %{
+               "cache_miss_reason" => nil
+             }
+    end
+  end
 end

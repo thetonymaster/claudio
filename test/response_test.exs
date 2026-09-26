@@ -28,7 +28,11 @@ defmodule Claudio.Messages.ResponseTest do
                output_tokens: 5,
                cache_creation_input_tokens: nil,
                cache_read_input_tokens: nil,
-               output_tokens_details: nil
+               output_tokens_details: nil,
+               cache_creation: nil,
+               service_tier: nil,
+               inference_geo: nil,
+               speed: nil
              }
     end
 
@@ -704,6 +708,127 @@ defmodule Claudio.Messages.ResponseTest do
 
       refute Response.thinking_interrupted?(%{type: :text, text: @placeholder})
       refute Response.thinking_interrupted?(%{type: :redacted_thinking, data: "x"})
+    end
+  end
+
+  describe "from_map/1 usage keeps every field" do
+    test "new documented fields become atom keys (string-keyed input)" do
+      usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{
+            "input_tokens" => 10,
+            "output_tokens" => 5,
+            "cache_creation" => %{"ephemeral_5m_input_tokens" => 0},
+            "service_tier" => "standard",
+            "inference_geo" => "us",
+            "speed" => "fast"
+          }
+        }).usage
+
+      assert usage.cache_creation == %{"ephemeral_5m_input_tokens" => 0}
+      assert usage.service_tier == "standard"
+      assert usage.inference_geo == "us"
+      assert usage.speed == "fast"
+    end
+
+    test "atom-keyed input works too" do
+      usage =
+        Response.from_map(%{
+          content: [],
+          usage: %{input_tokens: 1, output_tokens: 2, inference_geo: "global"}
+        }).usage
+
+      assert usage.inference_geo == "global"
+      assert usage.speed == nil
+    end
+
+    test "unknown fields survive under their original key" do
+      string_keyed =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{
+            "input_tokens" => 1,
+            "output_tokens" => 2,
+            "iterations" => [%{"type" => "message"}]
+          }
+        }).usage
+
+      assert string_keyed["iterations"] == [%{"type" => "message"}]
+
+      atom_keyed =
+        Response.from_map(%{
+          content: [],
+          usage: %{input_tokens: 1, output_tokens: 2, future_field: 7}
+        }).usage
+
+      assert atom_keyed[:future_field] == 7
+    end
+
+    test "a documented field under both key styles yields one atom key, atom value wins" do
+      usage =
+        Response.from_map(%{
+          content: [],
+          usage: %{
+            :input_tokens => 1,
+            :output_tokens => 2,
+            :speed => "fast",
+            "speed" => "standard"
+          }
+        }).usage
+
+      assert usage.speed == "fast"
+      refute Map.has_key?(usage, "speed")
+    end
+
+    test "nil usage has the new keys as nil" do
+      usage = Response.from_map(%{"content" => []}).usage
+
+      assert usage.input_tokens == 0
+      assert usage.output_tokens == 0
+
+      for key <- [:cache_creation, :service_tier, :inference_geo, :speed] do
+        assert Map.fetch!(usage, key) == nil
+      end
+    end
+  end
+
+  describe "from_map/1 diagnostics" do
+    @miss %{
+      "cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => 41_850}
+    }
+
+    test "kept raw, string keys" do
+      assert Response.from_map(%{"content" => [], "diagnostics" => @miss}).diagnostics == @miss
+    end
+
+    test "atom keys" do
+      assert Response.from_map(%{content: [], diagnostics: @miss}).diagnostics == @miss
+    end
+
+    test "nil when absent or null" do
+      assert Response.from_map(%{"content" => []}).diagnostics == nil
+      assert Response.from_map(%{"content" => [], "diagnostics" => nil}).diagnostics == nil
+    end
+  end
+
+  describe "from_map/1 usage with mixed token-key styles" do
+    test "string input_tokens + atom output_tokens is normalised, not passed through raw" do
+      usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 4, :output_tokens => 9, "inference_geo" => "us"}
+        }).usage
+
+      assert usage.input_tokens == 4
+      assert usage.output_tokens == 9
+      assert usage.inference_geo == "us"
+      refute Map.has_key?(usage, "input_tokens")
+    end
+
+    test "a usage map missing a token count is still returned as-is" do
+      assert Response.from_map(%{"content" => [], "usage" => %{"output_tokens" => 3}}).usage ==
+               %{"output_tokens" => 3}
     end
   end
 end

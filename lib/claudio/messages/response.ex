@@ -6,6 +6,17 @@ defmodule Claudio.Messages.Response do
   when `stop_reason` is `:refusal`. For streamed responses it is read from
   `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
   Anthropic's streaming docs.
+
+  `diagnostics` is carried raw (see `Request.enable_cache_diagnostics/2`):
+  `nil` when diagnostics were not requested, there was nothing to compare, or the
+  comparison found no divergence; `%{"cache_miss_reason" => nil}` when the comparison
+  was still pending (inconclusive — check the next turn); otherwise a reason map such
+  as `%{"cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => n}}`.
+
+  `usage` keeps every field the API returns: documented fields are atom keys (`nil`
+  when absent); any other field keeps the key it arrived with (so it may be a string
+  key). This applies when both `input_tokens` and `output_tokens` are present (either
+  key style); a usage map missing one of them is returned as received.
   """
 
   @type stop_reason ::
@@ -87,12 +98,22 @@ defmodule Claudio.Messages.Response do
           content: term()
         }
 
+  @typedoc """
+  Token usage. Documented fields are atom keys (`nil` when the API did not send
+  them); any other field the API returns is kept under the key it arrived with.
+  A usage map missing `input_tokens` or `output_tokens` is returned as received.
+  """
   @type usage :: %{
+          optional(atom() | String.t()) => term(),
           input_tokens: integer(),
           output_tokens: integer(),
           cache_creation_input_tokens: integer() | nil,
           cache_read_input_tokens: integer() | nil,
-          output_tokens_details: map() | nil
+          output_tokens_details: map() | nil,
+          cache_creation: map() | nil,
+          service_tier: String.t() | nil,
+          inference_geo: String.t() | nil,
+          speed: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -104,6 +125,7 @@ defmodule Claudio.Messages.Response do
           stop_reason: stop_reason() | nil,
           stop_sequence: String.t() | nil,
           stop_details: map() | nil,
+          diagnostics: map() | nil,
           usage: usage()
         }
 
@@ -116,6 +138,7 @@ defmodule Claudio.Messages.Response do
     :stop_reason,
     :stop_sequence,
     :stop_details,
+    :diagnostics,
     :usage
   ]
 
@@ -133,6 +156,7 @@ defmodule Claudio.Messages.Response do
       stop_reason: parse_stop_reason(data[:stop_reason] || data["stop_reason"]),
       stop_sequence: data[:stop_sequence] || data["stop_sequence"],
       stop_details: data[:stop_details] || data["stop_details"],
+      diagnostics: data[:diagnostics] || data["diagnostics"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end
@@ -450,35 +474,49 @@ defmodule Claudio.Messages.Response do
   defp parse_stop_reason(nil), do: nil
   defp parse_stop_reason(other), do: other
 
-  defp parse_usage(%{input_tokens: input, output_tokens: output} = usage) do
-    %{
-      input_tokens: input,
-      output_tokens: output,
-      cache_creation_input_tokens: usage[:cache_creation_input_tokens],
-      cache_read_input_tokens: usage[:cache_read_input_tokens],
-      output_tokens_details: usage[:output_tokens_details]
-    }
-  end
+  # Documented usage fields become atom keys; every other field keeps the key it
+  # arrived with, so fields Claudio does not know about yet are not dropped.
+  @usage_keys [
+    :input_tokens,
+    :output_tokens,
+    :cache_creation_input_tokens,
+    :cache_read_input_tokens,
+    :output_tokens_details,
+    :cache_creation,
+    :service_tier,
+    :inference_geo,
+    :speed
+  ]
+  @usage_string_keys Enum.map(@usage_keys, &Atom.to_string/1)
 
-  defp parse_usage(%{"input_tokens" => input, "output_tokens" => output} = usage) do
-    %{
-      input_tokens: input,
-      output_tokens: output,
-      cache_creation_input_tokens: usage["cache_creation_input_tokens"],
-      cache_read_input_tokens: usage["cache_read_input_tokens"],
-      output_tokens_details: usage["output_tokens_details"]
-    }
-  end
+  # Both token counts must be present, each under either key style.
+  defp parse_usage(usage)
+       when is_map(usage) and
+              (is_map_key(usage, :input_tokens) or is_map_key(usage, "input_tokens")) and
+              (is_map_key(usage, :output_tokens) or is_map_key(usage, "output_tokens")),
+       do: normalize_usage(usage)
 
   defp parse_usage(nil) do
-    %{
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_input_tokens: nil,
-      cache_read_input_tokens: nil,
-      output_tokens_details: nil
-    }
+    @usage_keys
+    |> Map.new(&{&1, nil})
+    |> Map.merge(%{input_tokens: 0, output_tokens: 0})
   end
 
   defp parse_usage(other), do: other
+
+  defp normalize_usage(usage) do
+    known = Map.new(@usage_keys, &{&1, usage_value(usage, &1)})
+
+    usage
+    |> Map.drop(@usage_keys ++ @usage_string_keys)
+    |> Map.merge(known)
+  end
+
+  # Atom key wins when a field is present under both key styles.
+  defp usage_value(usage, key) do
+    case Map.fetch(usage, key) do
+      {:ok, value} -> value
+      :error -> Map.get(usage, Atom.to_string(key))
+    end
+  end
 end

@@ -969,4 +969,182 @@ defmodule Claudio.Messages.RequestTest do
              |> length() == 2
     end
   end
+
+  describe "add_system_message/3" do
+    @clear_at_beta "mid-conversation-system-clear-at-2026-08-21"
+    @msg_effort_beta "mid-conversation-output-config-2026-07-01"
+
+    test "string content appends a system message, no beta" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_message(:user, "Hi")
+        |> Request.add_message(:assistant, "Hello")
+        |> Request.add_message(:user, "Continue")
+        |> Request.add_system_message("Reply in French.")
+
+      assert Request.to_map(request)["messages"] == [
+               %{"role" => "user", "content" => "Hi"},
+               %{"role" => "assistant", "content" => "Hello"},
+               %{"role" => "user", "content" => "Continue"},
+               %{"role" => "system", "content" => "Reply in French."}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "block content is passed through unchanged" do
+      blocks = [%{"type" => "text", "text" => "Be brief."}]
+      request = Request.new("m") |> Request.add_system_message(blocks)
+
+      assert [%{"role" => "system", "content" => ^blocks}] = Request.to_map(request)["messages"]
+    end
+
+    test "clear_at emits the field and declares its beta once" do
+      for clear_at <- [:next_user_message, :never] do
+        request =
+          Request.new("m")
+          |> Request.add_system_message("a", clear_at: clear_at)
+          |> Request.add_system_message("b", clear_at: clear_at)
+
+        [first, _] = Request.to_map(request)["messages"]
+        assert first["clear_at"] == Atom.to_string(clear_at)
+        assert Request.required_betas(request) == [@clear_at_beta]
+      end
+    end
+
+    test "effort emits output_config and declares its beta" do
+      for level <- [:low, :medium, :high, :xhigh, :max] do
+        request = Request.new("m") |> Request.add_system_message([], effort: level)
+
+        assert Request.to_map(request)["messages"] == [
+                 %{
+                   "role" => "system",
+                   "content" => [],
+                   "output_config" => %{"effort" => Atom.to_string(level)}
+                 }
+               ]
+
+        assert Request.required_betas(request) == [@msg_effort_beta]
+      end
+    end
+
+    test "content plus effort is allowed (not turn-scoped)" do
+      request = Request.new("m") |> Request.add_system_message("Be brief.", effort: :low)
+
+      assert [%{"content" => "Be brief.", "output_config" => %{"effort" => "low"}}] =
+               Request.to_map(request)["messages"]
+    end
+
+    test "nil options behave as if absent" do
+      request =
+        Request.new("m") |> Request.add_system_message("a", clear_at: nil, effort: nil)
+
+      assert Request.to_map(request)["messages"] == [%{"role" => "system", "content" => "a"}]
+      assert Request.required_betas(request) == []
+    end
+
+    test "unknown clear_at and effort values raise" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 :clear_at must be one of :next_user_message, :never; got/,
+                   fn -> Request.new("m") |> Request.add_system_message("a", clear_at: :later) end
+
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 :effort must be one of :low, :medium, :high, :xhigh, :max; got/,
+                   fn -> Request.new("m") |> Request.add_system_message("a", effort: "low") end
+    end
+
+    test "a turn-scoped message cannot carry effort" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 clear_at: :next_user_message cannot be combined with :effort/,
+                   fn ->
+                     Request.new("m")
+                     |> Request.add_system_message("a",
+                       clear_at: :next_user_message,
+                       effort: :low
+                     )
+                   end
+    end
+
+    test "empty content needs effort" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 empty content \[\] requires :effort/,
+                   fn -> Request.new("m") |> Request.add_system_message([]) end
+    end
+
+    test "unknown option keys raise" do
+      assert_raise ArgumentError, ~r/unknown keys/, fn ->
+        Request.new("m") |> Request.add_system_message("a", cache_control: %{})
+      end
+    end
+  end
+
+  describe "set_speed/2" do
+    test "each value is emitted and always declares the fast-mode beta" do
+      for speed <- [:fast, :standard] do
+        request = Request.new("claude-opus-5-5") |> Request.set_speed(speed)
+
+        assert Request.to_map(request)["speed"] == Atom.to_string(speed)
+        assert Request.required_betas(request) == ["fast-mode-2026-02-01"]
+      end
+    end
+
+    test "unknown values raise" do
+      for bad <- [:turbo, "fast", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_speed\/2 speed must be one of :fast, :standard; got/,
+                     fn ->
+                       Request.new("m") |> Request.set_speed(bad)
+                     end
+      end
+    end
+  end
+
+  describe "set_inference_geo/2" do
+    test "each value is emitted, no beta" do
+      for geo <- [:global, :us] do
+        request = Request.new("claude-opus-5-5") |> Request.set_inference_geo(geo)
+
+        assert Request.to_map(request)["inference_geo"] == Atom.to_string(geo)
+        assert Request.required_betas(request) == []
+      end
+    end
+
+    test "unknown values raise" do
+      for bad <- [:eu, "us", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_inference_geo\/2 geo must be one of :global, :us; got/,
+                     fn -> Request.new("m") |> Request.set_inference_geo(bad) end
+      end
+    end
+  end
+
+  describe "enable_cache_diagnostics/2" do
+    test "defaults previous_message_id to nil, no beta" do
+      request = Request.new("m") |> Request.enable_cache_diagnostics()
+
+      assert Request.to_map(request)["diagnostics"] == %{"previous_message_id" => nil}
+      assert Request.required_betas(request) == []
+    end
+
+    test "carries a previous message id" do
+      request = Request.new("m") |> Request.enable_cache_diagnostics("msg_01")
+      assert Request.to_map(request)["diagnostics"] == %{"previous_message_id" => "msg_01"}
+    end
+
+    test "a non-string id raises" do
+      for bad <- [123, :msg, %{}] do
+        assert_raise ArgumentError,
+                     ~r/enable_cache_diagnostics\/2 previous_message_id must be a string or nil; got/,
+                     fn -> Request.new("m") |> Request.enable_cache_diagnostics(bad) end
+      end
+    end
+  end
+
+  describe "to_map/1 without the S12a setters" do
+    test "emits no speed, inference_geo or diagnostics keys" do
+      map = Request.new("m") |> Request.add_message(:user, "hi") |> Request.to_map()
+
+      assert map == %{"model" => "m", "messages" => [%{"role" => "user", "content" => "hi"}]}
+    end
+  end
 end
