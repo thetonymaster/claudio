@@ -11,17 +11,19 @@ Legend: ✅ verified in Claudio's source · 📖 per official Anthropic docs (re
 
 ## Status summary
 
+> Statuses updated 2026-09-25: S1–S9 shipped in v0.6.0 (see CHANGELOG). Scope gaps kept below: Bedrock/Vertex (S8) and prompt-tools (S9) were deferred, not built. New work is tracked in "2026-09 refresh" at the end of this file.
+
 | Spec | Title | Beads | Priority | Status |
 |------|-------|-------|----------|--------|
-| **S1** | Extended-thinking round-trip correctness | `claudio-hms` | P1 | **DONE** (this branch) |
-| S2 | Per-feature beta-header management | `claudio-7mj` | P2 | open |
-| S3 | Request-builder additions (structured outputs, eager streaming, msg-level caching) | `claudio-9lj` | P2 | open |
-| S4 | Models API module | `claudio-5h7` | P2 | open |
-| S5 | Citations + content-block parsing (search_result, server-tool results) | `claudio-0vx` | P2 | open (blocked by S1 ✓) |
-| S6 | Server-side tool helpers (web_search, web_fetch, code_execution, text_editor, computer_use, memory) | `claudio-euz` | P2 | open (blocked by S2, S5) |
-| S7 | Admin API module | `claudio-nwf` | P3 | open (blocked by S2) |
-| S8 | Auth (Bearer/OAuth) + alt deployments (Bedrock/Vertex) | `claudio-c7t` | P3 | open |
-| S9 | Niche beta endpoints (Agent Skills API, prompt-tools) | `claudio-zrq` | P4 | open (blocked by S2) |
+| **S1** | Extended-thinking round-trip correctness | `claudio-hms` | P1 | shipped v0.6.0 |
+| S2 | Per-feature beta-header management | `claudio-7mj` | P2 | shipped v0.6.0 |
+| S3 | Request-builder additions (structured outputs, eager streaming, msg-level caching) | `claudio-9lj` | P2 | shipped v0.6.0 |
+| S4 | Models API module | `claudio-5h7` | P2 | shipped v0.6.0 |
+| S5 | Citations + content-block parsing (search_result, server-tool results) | `claudio-0vx` | P2 | shipped v0.6.0 |
+| S6 | Server-side tool helpers (web_search, web_fetch, code_execution, text_editor, computer_use, memory) | `claudio-euz` | P2 | shipped v0.6.0 |
+| S7 | Admin API module | `claudio-nwf` | P3 | shipped v0.6.0 |
+| S8 | Auth (Bearer/OAuth) + alt deployments (Bedrock/Vertex) | `claudio-c7t` | P3 | shipped v0.6.0 (Bearer/OAuth only; Bedrock/Vertex deferred) |
+| S9 | Niche beta endpoints (Agent Skills API, prompt-tools) | `claudio-zrq` | P4 | shipped v0.6.0 (Skills API; prompt-tools not built) |
 
 **Recommended build order:** S1 → S2 → S4 → S3 → S5 → S6 → S7 → S8 → S9.
 Rationale: bugs first (S1); beta-header plumbing (S2) is foundational for S6/S7/S9; Models (S4) is a ~1-file freebie; S6 is heaviest and sits after its dependencies (may split into web-tools / code-exec / computer+memory).
