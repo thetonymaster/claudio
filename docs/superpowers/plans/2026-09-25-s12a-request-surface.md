@@ -55,10 +55,14 @@ Implementation branch `feat/s12a-request-surface`, cut from `docs/s12-specs` (sp
       request =
         Request.new("claude-opus-5-5")
         |> Request.add_message(:user, "Hi")
+        |> Request.add_message(:assistant, "Hello")
+        |> Request.add_message(:user, "Continue")
         |> Request.add_system_message("Reply in French.")
 
       assert Request.to_map(request)["messages"] == [
                %{"role" => "user", "content" => "Hi"},
+               %{"role" => "assistant", "content" => "Hello"},
+               %{"role" => "user", "content" => "Continue"},
                %{"role" => "system", "content" => "Reply in French."}
              ]
 
@@ -142,7 +146,7 @@ Implementation branch `feat/s12a-request-surface`, cut from `docs/s12-specs` (sp
     end
 
     test "unknown option keys raise" do
-      assert_raise ArgumentError, fn ->
+      assert_raise ArgumentError, ~r/unknown keys/, fn ->
         Request.new("m") |> Request.add_system_message("a", cache_control: %{})
       end
     end
@@ -249,8 +253,9 @@ git commit -m "feat(request): add_system_message/3 with clear_at and per-message
 ### Task 2: `set_speed/2`, `set_inference_geo/2`, `enable_cache_diagnostics/2`
 
 **Files:**
+- Modify: `lib/claudio/messages.ex` — `count_tokens/2` Request clause (~209-219), Steps 6-8
 - Modify: `lib/claudio/messages/request.ex` — `@type t` (~21-43), `defstruct` (~44-65), `to_map/1` (~1073-1095), new functions directly after `add_system_message/3` (Task 1)
-- Test: `test/request_test.exs`
+- Test: `test/request_test.exs`, `test/messages_test.exs` (Steps 6-8)
 
 **Interfaces:**
 - Consumes: `add_beta/2`, `to_map/1`, private `maybe_put/3`.
@@ -323,9 +328,7 @@ git commit -m "feat(request): add_system_message/3 with clear_at and per-message
     test "emits no speed, inference_geo or diagnostics keys" do
       map = Request.new("m") |> Request.add_message(:user, "hi") |> Request.to_map()
 
-      refute Map.has_key?(map, "speed")
-      refute Map.has_key?(map, "inference_geo")
-      refute Map.has_key?(map, "diagnostics")
+      assert map == %{"model" => "m", "messages" => [%{"role" => "user", "content" => "hi"}]}
     end
   end
 ```
@@ -418,7 +421,8 @@ with
 
   @doc """
   Sets `inference_geo` — where the request is processed (`:global` or `:us`; GA, no
-  beta). Without it the workspace default applies. `:us` is billed at a premium.
+  beta). Without it the workspace default applies. `:us` is billed at 1.1× standard
+  pricing. Not sent by `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
   The response's `usage.inference_geo` reports where it ran.
   """
   @spec set_inference_geo(t(), :global | :us) :: t()
@@ -434,7 +438,8 @@ with
   @doc """
   Asks for cache diagnostics (GA, no beta): the response's `diagnostics` explains a
   prompt-cache miss against `previous_message_id` (the `id` of an earlier response in
-  the same conversation), or is `nil` when there is nothing to compare.
+  the same conversation), or is `nil` when there is nothing to compare. Not sent by
+  `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
   """
   @spec enable_cache_diagnostics(t(), String.t() | nil) :: t()
   def enable_cache_diagnostics(%__MODULE__{} = request, previous_message_id \\ nil) do
@@ -462,12 +467,91 @@ git add test/request_test.exs
 git commit -m "feat(request): set_speed/2, set_inference_geo/2, enable_cache_diagnostics/2"
 ```
 
+- [ ] **Step 6: Failing test — `count_tokens/2` must strip `inference_geo` / `diagnostics`.** Live probe 2026-09-25: `/v1/messages/count_tokens` returns 400 `inference_geo: Extra inputs are not permitted` and the same for `diagnostics` (`speed` + its beta and system messages → 200). `count_tokens/2` already drops `"stream"` / `"max_tokens"` from a `Request`. In `test/messages_test.exs`, insert directly after the test "count_tokens/2 merges a request's declared betas" (i.e. replace the unique text
+
+```elixir
+      assert {:ok, %{"input_tokens" => 5}} = Claudio.Messages.count_tokens(client, request)
+    end
+  end
+
+  defp unique_model(suffix) do
+```
+
+with)
+
+```elixir
+      assert {:ok, %{"input_tokens" => 5}} = Claudio.Messages.count_tokens(client, request)
+    end
+
+    test "count_tokens/2 strips fields the count endpoint rejects (inference_geo, diagnostics)",
+         %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        payload = Jason.decode!(body)
+
+        status =
+          if Map.has_key?(payload, "inference_geo") or Map.has_key?(payload, "diagnostics"),
+            do: 400,
+            else: 200
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(status, Jason.encode!(%{"input_tokens" => 5, "speed" => payload["speed"]}))
+      end)
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_speed(:fast)
+        |> Request.set_inference_geo(:us)
+        |> Request.enable_cache_diagnostics()
+
+      assert {:ok, %{"input_tokens" => 5, "speed" => "fast"}} =
+               Claudio.Messages.count_tokens(client, request)
+    end
+  end
+
+  defp unique_model(suffix) do
+```
+
+Run: `mix test test/messages_test.exs 2>&1 | tail -15`
+Expected: FAIL — the new test gets `{:error, %Claudio.APIError{...}}` (the handler answers 400 because both keys are present), not `{:ok, ...}`.
+
+- [ ] **Step 7: Implement** — in `lib/claudio/messages.ex` `count_tokens/2` (Request clause), replace
+
+```elixir
+      |> Map.delete("stream")
+      |> Map.delete("max_tokens")
+```
+
+with
+
+```elixir
+      |> Map.delete("stream")
+      |> Map.delete("max_tokens")
+      # The count endpoint rejects these (400 "Extra inputs are not permitted", probed 2026-09-25).
+      |> Map.delete("inference_geo")
+      |> Map.delete("diagnostics")
+```
+
+Run: `mix test test/messages_test.exs 2>&1 | tail -3`
+Expected: PASS — `0 failures`.
+
+- [ ] **Step 8: Gates + commit**
+
+```bash
+mix format && mix compile --warnings-as-errors
+git add lib/claudio/messages.ex
+git add test/messages_test.exs
+git commit -m "fix(messages): count_tokens drops inference_geo and diagnostics"
+```
+
 ---
 
 ### Task 3: `Response.usage` keeps every field
 
 **Files:**
-- Modify: `lib/claudio/messages/response.ex` — `@type usage` (~90-96), the three concrete `parse_usage/1` clauses (~437-458; the fallthrough `parse_usage(other)` stays)
+- Modify: `lib/claudio/messages/response.ex` — `@type usage` (~90-96), the three concrete `parse_usage/1` clauses (~453-483; the fallthrough `parse_usage(other)` stays)
 - Test: `test/response_test.exs`
 
 **Interfaces:**
@@ -786,9 +870,13 @@ with
   `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
   Anthropic's streaming docs.
 
-  `diagnostics` is the raw cache-diagnostics map (`%{"cache_miss_reason" => ...}`);
-  the API sends `null` unless there is a cache miss to explain (see
+  `diagnostics` is carried raw: `nil`, or a map whose `"cache_miss_reason"` is `nil`
+  (no miss, or the comparison is still pending) or a reason map such as
+  `%{"type" => "system_changed", "cache_missed_input_tokens" => n}` (see
   `Request.enable_cache_diagnostics/2`).
+
+  `usage` keeps every field the API returns: documented fields are atom keys; any
+  other field keeps the key it arrived with (so it may be a string key).
   """
 ```
 
@@ -875,6 +963,8 @@ Append to the end of the `[Unreleased]` `### Changed` section (the first `### Ch
 - `Response.usage` keeps every field the API returns: documented fields are atom keys
   (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`); any other field is kept
   under the key it arrived with instead of being dropped.
+- `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo` and `diagnostics`,
+  which the count endpoint rejects.
 ```
 
 Append to the end of the `[Unreleased]` `### Added` section (the first `### Added`; it ends just before `### Docs`):

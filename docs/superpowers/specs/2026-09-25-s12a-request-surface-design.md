@@ -24,7 +24,7 @@ drops response data those requests return:
 2. No helper for `clear_at`, per-message effort, `speed` or `inference_geo`, and no way to set
    the top-level `diagnostics` request field. Nothing declares the betas that `clear_at`,
    per-message effort and `speed` require.
-3. `Response.parse_usage/1` keeps a fixed set of keys (`response.ex:428-458`), so
+3. `Response.parse_usage/1` keeps a fixed set of keys (`response.ex:453-483`), so
    `usage.inference_geo`, `usage.service_tier` and `usage.cache_creation` (present on **every**
    response, P1), `usage.speed` (P8) and any future field are dropped.
 4. `Response` has no `diagnostics` field, although every response carries a top-level
@@ -44,6 +44,7 @@ drops response data those requests return:
 | F8 | Cache diagnostics is **GA** ("The `cache-diagnosis-2026-04-07` beta header is no longer required"). Request `diagnostics: {"previous_message_id": null \| "<id>"}`; response top-level `diagnostics` is `null`, `{"cache_miss_reason": null}` or `{"cache_miss_reason": {"type": ..., "cache_missed_input_tokens": n}}`; streaming: on `message_start`. Responses always include `diagnostics`. | CD, RN; P11 → 200 |
 | F9 | Every probed response's `usage` held `cache_creation`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `inference_geo`, `input_tokens`, `output_tokens`, `output_tokens_details`, `service_tier` (+ `speed` when set, `iterations` when `fallbacks` set). Top-level keys: `container`, `diagnostics`, `model`, `stop_details`, `stop_reason`, `stop_sequence`, `usage`. | P1–P11 |
 | F10 | `Stream.build_final_message/1` stores the whole `message_start` message map, so a `diagnostics` key there survives into the final message. | repo (probe, 2026-09-25) |
+| F12 | `/v1/messages/count_tokens` rejects `inference_geo` and `diagnostics` (400 `Extra inputs are not permitted`); accepts `speed` (with its beta) and mid-conversation system messages. `Messages.count_tokens/2` (Request form) already drops `stream` / `max_tokens`, so it also drops these two. | probe 2026-09-25; `messages.ex:209-219` |
 | F11 | Unknown content blocks pass through `Response` untouched in both directions (`parse_content_block(block) -> block`, `block_to_api(block) -> block`). | repo `response.ex:378`, `:441` |
 
 ## Goals / non-goals
@@ -122,6 +123,7 @@ Request.enable_cache_diagnostics(req)            # "diagnostics" => %{"previous_
 Request.enable_cache_diagnostics(req, "msg_01")  # %{"previous_message_id" => "msg_01"}; GA (F8)
 ```
 
+- `Claudio.Messages.count_tokens/2` (Request form) drops `"inference_geo"` and `"diagnostics"` before posting (F12).
 - `set_speed/2` / `set_inference_geo/2` raise on unknown values. `enable_cache_diagnostics/2`
   raises when the id is neither a string nor `nil`.
 - Docs note: fast mode is an access-gated research preview; `inference_geo: "us"` is billed
