@@ -327,9 +327,10 @@ defmodule Claudio.Messages do
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
       result =
         case Req.post(client, url: "messages", json: payload) do
-          {:ok, %Req.Response{status: 200, body: body}} ->
+          {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
             {:ok, Response.from_map(body)}
 
+          # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
           {:ok, %Req.Response{status: status, body: body}} ->
             {:error, APIError.from_response(status, body)}
 

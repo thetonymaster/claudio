@@ -18,7 +18,7 @@ defmodule Claudio.APIError do
           type: error_type() | String.t(),
           message: String.t(),
           status_code: integer(),
-          raw_body: map() | nil
+          raw_body: map() | String.t() | nil
         }
 
   @doc """
@@ -27,7 +27,7 @@ defmodule Claudio.APIError do
   Handles both plain maps (non-streaming responses) and structs like
   `Req.Response.Async` (streaming error responses).
   """
-  @spec from_response(integer(), map() | struct()) :: t()
+  @spec from_response(integer(), map() | struct() | String.t() | nil) :: t()
   def from_response(status_code, %_{}) do
     # Handle streaming error responses (e.g., Req.Response.Async)
     # These don't have a decoded error body, so we provide a generic error
@@ -64,6 +64,30 @@ defmodule Claudio.APIError do
       raw_body: body
     }
   end
+
+  # A body that isn't a JSON object — an empty 5xx, a proxy's HTML page, plain text — still
+  # becomes an APIError, typed from the HTTP status.
+  def from_response(status_code, body) do
+    snippet =
+      case body do
+        text when is_binary(text) and text != "" -> ": " <> String.slice(text, 0, 200)
+        _ -> ""
+      end
+
+    %__MODULE__{
+      type: type_for_status(status_code),
+      message: "HTTP #{status_code} with a non-JSON body#{snippet}",
+      status_code: status_code,
+      raw_body: body
+    }
+  end
+
+  defp type_for_status(401), do: :authentication_error
+  defp type_for_status(403), do: :permission_error
+  defp type_for_status(404), do: :not_found_error
+  defp type_for_status(429), do: :rate_limit_error
+  defp type_for_status(529), do: :overloaded_error
+  defp type_for_status(_status), do: :api_error
 
   @impl true
   def message(%__MODULE__{type: type, message: msg, status_code: status}) do

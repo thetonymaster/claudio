@@ -78,7 +78,7 @@ defmodule Claudio.Agent do
   @type run_result ::
           {:ok, Response.t(), [map()]}
           | {:error, :max_turns_exceeded, Response.t(), [map()]}
-          | {:error, term()}
+          | {:error, term(), Response.t() | nil, [map()]}
 
   @default_max_turns 10
 
@@ -95,9 +95,15 @@ defmodule Claudio.Agent do
   full conversation history including all tool calls and results.
 
   Returns `{:error, :max_turns_exceeded, last_response, messages}` if the loop
-  doesn't converge within `max_turns` tool round-trips.
+  doesn't converge within `max_turns` model calls. When `last_response` stopped on
+  `:tool_use`, the last message in `messages` is that assistant turn with its tool calls
+  **not yet executed**: get them with `Claudio.Tools.extract_tool_uses(last_response)`,
+  add their results as a user turn, and resume.
 
-  Returns `{:error, reason}` if the API call fails.
+  Returns `{:error, reason, last_response, messages}` if an API call fails — `messages` is
+  the history up to the failed call (tool results already executed included) and
+  `last_response` the previous successful response (`nil` on the first call), so the run
+  can be resumed.
 
   Raises `ArgumentError` if a handler returns anything other than `{:ok, content}` or
   `{:error, reason}` — a programming error, reported with the handler's name.
@@ -107,71 +113,99 @@ defmodule Claudio.Agent do
     max_turns = Keyword.get(opts, :max_turns, @default_max_turns)
     on_tool_call = Keyword.get(opts, :on_tool_call)
 
-    loop(client, request, tool_handlers, max_turns, on_tool_call, 0)
+    unless is_integer(max_turns) and max_turns > 0 do
+      raise ArgumentError,
+            "Claudio.Agent.run/4 :max_turns must be a positive integer; got #{inspect(max_turns)}"
+    end
+
+    if request.stream do
+      raise ArgumentError,
+            "Claudio.Agent.run/4 does not support streaming requests (stream: true); " <>
+              "the loop needs complete responses"
+    end
+
+    loop(client, request, tool_handlers, max_turns, on_tool_call, 0, nil)
   end
 
   # --- Private ---
 
-  defp loop(client, request, handlers, max_turns, on_tool_call, turn) do
+  defp loop(client, request, handlers, max_turns, on_tool_call, turn, last) do
     case Messages.create(client, request) do
-      {:ok, %Response{stop_reason: reason} = response}
-      when reason in [:tool_use, :pause_turn, :compaction] and turn + 1 >= max_turns ->
-        messages =
-          extract_messages(request) ++
-            [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
+      {:ok, %Response{} = response} ->
+        cond do
+          not continues?(request, response) ->
+            {:ok, response, history_with(request, response)}
 
-        {:error, :max_turns_exceeded, response, messages}
+          # Checked before anything runs: no handler executes past the call budget.
+          turn + 1 >= max_turns ->
+            {:error, :max_turns_exceeded, response, history_with(request, response)}
 
-      {:ok, %Response{stop_reason: :tool_use} = response} ->
+          true ->
+            next = next_request(request, response, handlers, on_tool_call)
+            loop(client, next, handlers, max_turns, on_tool_call, turn + 1, response)
+        end
+
+      {:error, reason} ->
+        {:error, reason, last, extract_messages(request)}
+    end
+  end
+
+  defp continues?(request, %Response{stop_reason: reason} = response) do
+    reason in [:tool_use, :pause_turn, :compaction] or
+      failed_on_demand_compaction?(request, response)
+  end
+
+  # An on-demand compaction that produced no summary comes back as a normal stop with
+  # empty content (compaction-on-demand docs, "Handle a missing summary").
+  defp failed_on_demand_compaction?(%Request{compaction: nil}, _response), do: false
+  defp failed_on_demand_compaction?(_request, %Response{stop_reason: :compaction}), do: false
+  defp failed_on_demand_compaction?(_request, _response), do: true
+
+  defp history_with(request, %Response{content: []}), do: extract_messages(request)
+
+  defp history_with(request, response) do
+    extract_messages(request) ++
+      [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
+  end
+
+  defp next_request(request, response, handlers, on_tool_call) do
+    cond do
+      # No summary: continue without one (the docs' advice) — drop the compaction request
+      # so the next call is a normal turn instead of another summarization.
+      failed_on_demand_compaction?(request, response) ->
+        %{request | compaction: nil}
+
+      response.stop_reason == :tool_use ->
         tool_uses = Tools.extract_tool_uses(response)
         tool_results = execute_tools(tool_uses, handlers, on_tool_call)
 
-        updated_request =
-          request
-          |> carry_container(response)
-          |> Request.add_message(:assistant, Response.to_assistant_content(response))
-          # tool_results is a list of tool_result maps — add_message accepts lists as content
-          |> Request.add_message(:user, tool_results)
+        request
+        |> carry_container(response)
+        |> Request.add_message(:assistant, Response.to_assistant_content(response))
+        # tool_results is a list of tool_result maps — add_message accepts lists as content
+        |> Request.add_message(:user, tool_results)
 
-        loop(client, updated_request, handlers, max_turns, on_tool_call, turn + 1)
-
-      {:ok, %Response{stop_reason: :pause_turn} = response} ->
+      response.stop_reason == :pause_turn ->
         # A server tool (e.g. the advisor) paused a long turn: resend it unchanged so the
         # API continues it. Counts toward max_turns like a tool round trip.
-        updated_request =
-          request
-          |> carry_container(response)
-          |> Request.add_message(:assistant, Response.to_assistant_content(response))
+        request
+        |> carry_container(response)
+        |> Request.add_message(:assistant, Response.to_assistant_content(response))
 
-        loop(client, updated_request, handlers, max_turns, on_tool_call, turn + 1)
-
-      {:ok, %Response{stop_reason: :compaction} = response} ->
+      response.stop_reason == :compaction ->
         # A compaction summary (on-demand, or threshold with pause_after_compaction) is not
         # the answer: continue from it with no user turn — the model answers the pending
-        # request from the summary (probed 2026-09-26). A failed compaction (content: nil)
-        # is a no-op on replay, so keep the history and resend it instead.
+        # request from the summary (probed 2026-09-26). A failed threshold compaction
+        # (content: nil) is a no-op on replay, so keep the history and resend it instead.
         request = carry_container(request, response)
 
-        updated_request =
-          case Response.compaction_block(response) do
-            %{content: content} when is_binary(content) ->
-              Request.apply_compaction(request, response)
+        case Response.compaction_block(response) do
+          %{content: content} when is_binary(content) ->
+            Request.apply_compaction(request, response)
 
-            _failed ->
-              Request.add_message(request, :assistant, Response.to_assistant_content(response))
-          end
-
-        loop(client, updated_request, handlers, max_turns, on_tool_call, turn + 1)
-
-      {:ok, %Response{} = response} ->
-        messages =
-          extract_messages(request) ++
-            [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
-
-        {:ok, response, messages}
-
-      {:error, _} = error ->
-        error
+          _failed ->
+            Request.add_message(request, :assistant, Response.to_assistant_content(response))
+        end
     end
   end
 
@@ -207,12 +241,7 @@ defmodule Claudio.Agent do
           result = run_handler(tool_use, handlers)
           if on_tool_call, do: on_tool_call.(tool_use, result)
 
-          {content, is_error} =
-            case result do
-              {:ok, value} -> {value, false}
-              {:error, reason} -> {reason, true}
-              other -> raise_bad_return!(tool_use, other)
-            end
+          {content, is_error} = result_content!(tool_use, result)
 
           # Only toolsets with a documented halt contract halt; an unknown toolset keeps running.
           failed =
@@ -251,6 +280,32 @@ defmodule Claudio.Agent do
     end
   end
 
+  # Content the API accepts in a tool_result: text, JSON-encodable data, or content blocks.
+  defp result_content!(tool_use, {:ok, value} = result) do
+    if valid_content?(value), do: {value, false}, else: raise_bad_return!(tool_use, result)
+  end
+
+  # Error reasons become text the model can read; an empty one is rejected by the API
+  # when is_error is true (probed 2026-09-26).
+  defp result_content!(tool_use, {:error, reason} = result) do
+    cond do
+      reason == "" -> raise_bad_return!(tool_use, result)
+      is_binary(reason) -> {reason, true}
+      is_exception(reason) -> {Exception.message(reason), true}
+      true -> {inspect(reason), true}
+    end
+  end
+
+  defp result_content!(tool_use, other), do: raise_bad_return!(tool_use, other)
+
+  defp valid_content?(value) when is_binary(value) or is_nil(value) or is_number(value), do: true
+
+  defp valid_content?(value) when is_list(value),
+    do: Enum.all?(value, &(is_map(&1) and not is_struct(&1)))
+
+  defp valid_content?(value) when is_map(value), do: not is_struct(value)
+  defp valid_content?(_value), do: false
+
   # A handler returning anything else is a programming error: fail loudly with the
   # handler's name instead of a CaseClauseError deep in the loop.
   defp raise_bad_return!(tool_use, other) do
@@ -260,8 +315,9 @@ defmodule Claudio.Agent do
         else: "tool #{inspect(tool_use.name)}"
 
     raise ArgumentError,
-          "Claudio.Agent handler for #{label} must return {:ok, content} or " <>
-            "{:error, reason}; got #{inspect(other)}"
+          "Claudio.Agent handler for #{label} must return {:ok, content} (a string, a " <>
+            "map, or a list of content-block maps) or {:error, reason} (non-empty); " <>
+            "got #{inspect(other)}"
   end
 
   defp safely(fun) do

@@ -497,7 +497,7 @@ defmodule Claudio.AgentTest do
         )
       end)
 
-      assert {:error, %Claudio.APIError{type: :authentication_error}} =
+      assert {:error, %Claudio.APIError{type: :authentication_error}, nil, [%{"role" => "user"}]} =
                Agent.run(client, base_request(), %{})
     end
   end
@@ -792,7 +792,7 @@ defmodule Claudio.AgentTest do
       serve(bypass, [message([plain("t1", "lookup"), member("c1", "screenshot")], "tool_use")])
 
       assert_raise ArgumentError,
-                   ~r/handler for tool "lookup" must return \{:ok, content\} or \{:error, reason\}; got :ok/,
+                   ~r/handler for tool "lookup" must return \{:ok, content\}.*got :ok/,
                    fn ->
                      Agent.run(client, base_request(), %{"lookup" => fn _ -> :ok end})
                    end
@@ -957,6 +957,137 @@ defmodule Claudio.AgentTest do
 
       assert {:error, :max_turns_exceeded, %{stop_reason: :pause_turn}, _messages} =
                Agent.run(client, base_request(), %{}, max_turns: 2)
+    end
+  end
+
+  describe "run/4 pre-release audit fixes" do
+    defp msg(content, stop_reason) do
+      %{
+        "id" => "msg_#{System.unique_integer([:positive])}",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-opus-5-5",
+        "content" => content,
+        "stop_reason" => stop_reason,
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+    end
+
+    defp use_block(id, name),
+      do: %{"type" => "tool_use", "id" => id, "name" => name, "input" => %{}}
+
+    defp serve_seq(bypass, responses) do
+      test_pid = self()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:body, Jason.decode!(body)})
+        :counters.add(count, 1, 1)
+
+        case Enum.at(responses, :counters.get(count, 1) - 1) do
+          {:status, status, body} ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(status, Jason.encode!(body))
+
+          body ->
+            json_response(conn, body)
+        end
+      end)
+    end
+
+    test "an API error mid-loop keeps the history: {:error, reason, last_response, messages}", %{
+      client: client,
+      bypass: bypass
+    } do
+      overloaded = %{
+        "type" => "error",
+        "error" => %{"type" => "overloaded_error", "message" => "busy"}
+      }
+
+      # Plug can't emit 529; 503 exercises the same mid-loop error path.
+      serve_seq(bypass, [msg([use_block("t1", "lookup")], "tool_use"), {:status, 503, overloaded}])
+
+      assert {:error, %Claudio.APIError{type: :overloaded_error}, %{stop_reason: :tool_use},
+              messages} =
+               Agent.run(client, base_request(), %{"lookup" => fn _ -> {:ok, "x"} end})
+
+      assert Enum.map(messages, & &1["role"]) == ["user", "assistant", "user"]
+      assert [%{"type" => "tool_result", "tool_use_id" => "t1"}] = List.last(messages)["content"]
+    end
+
+    test "{:error, non-string} reasons become text; exceptions use their message", %{
+      client: client,
+      bypass: bypass
+    } do
+      serve_seq(bypass, [
+        msg([use_block("t1", "a"), use_block("t2", "b")], "tool_use"),
+        msg([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      handlers = %{
+        "a" => fn _ -> {:error, %RuntimeError{message: "boom"}} end,
+        "b" => fn _ -> {:error, {:http, 500}} end
+      }
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), handlers)
+      assert_received {:body, _}
+      assert_received {:body, second}
+
+      assert [
+               %{"tool_use_id" => "t1", "is_error" => true, "content" => "boom"},
+               %{"tool_use_id" => "t2", "is_error" => true, "content" => "{:http, 500}"}
+             ] = List.last(second["messages"])["content"]
+    end
+
+    test "{:ok, struct|tuple} and {:error, \"\"} raise a clear ArgumentError", %{
+      client: client,
+      bypass: bypass
+    } do
+      serve_seq(bypass, List.duplicate(msg([use_block("t1", "a")], "tool_use"), 4))
+
+      for bad <- [{:ok, %URI{}}, {:ok, {:a, 1}}, {:error, ""}, {:ok, ["plain string"]}] do
+        assert_raise ArgumentError, ~r/handler for tool "a" must return/, fn ->
+          Agent.run(client, base_request(), %{"a" => fn _ -> bad end})
+        end
+      end
+    end
+
+    test "a failed on-demand compaction clears the request and continues once", %{
+      client: client,
+      bypass: bypass
+    } do
+      # On-demand failure: empty content with a normal stop reason (compaction-on-demand docs).
+      serve_seq(bypass, [
+        msg([], "max_tokens"),
+        msg([%{"type" => "text", "text" => "4"}], "end_turn")
+      ])
+
+      request = base_request() |> Request.request_compaction()
+
+      assert {:ok, %{stop_reason: :end_turn}, messages} = Agent.run(client, request, %{})
+      assert_received {:body, first}
+      assert_received {:body, second}
+
+      assert first["compaction"] == %{"type" => "summarize"}
+      refute Map.has_key?(second, "compaction")
+      assert second["messages"] == first["messages"]
+      assert List.last(messages)["content"] == [%{"type" => "text", "text" => "4"}]
+    end
+
+    test "stream: true is rejected up front", %{client: client} do
+      assert_raise ArgumentError, ~r/does not support streaming/, fn ->
+        Agent.run(client, Request.enable_streaming(base_request()), %{})
+      end
+    end
+
+    test "max_turns must be a positive integer", %{client: client} do
+      for bad <- [0, -1, "3"] do
+        assert_raise ArgumentError, ~r/max_turns must be a positive integer/, fn ->
+          Agent.run(client, base_request(), %{}, max_turns: bad)
+        end
+      end
     end
   end
 end

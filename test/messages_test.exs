@@ -20,6 +20,36 @@ defmodule Claudio.MessagesTest do
     {:ok, %{client: client, bypass: bypass}}
   end
 
+  test "an HTML error page from a proxy is an APIError, not a crash", %{
+    client: client,
+    bypass: bypass
+  } do
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/html")
+      |> Plug.Conn.resp(502, "<html>Bad Gateway</html>")
+    end)
+
+    request = Request.new("m") |> Request.add_message(:user, "hi") |> Request.set_max_tokens(8)
+
+    assert {:error, %Claudio.APIError{status_code: 502, type: :api_error}} =
+             Claudio.Messages.create(client, request)
+  end
+
+  test "a 200 whose body is not a JSON object is an APIError, not a crash", %{
+    client: client,
+    bypass: bypass
+  } do
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn |> Plug.Conn.put_resp_content_type("text/plain") |> Plug.Conn.resp(200, "ok")
+    end)
+
+    request = Request.new("m") |> Request.add_message(:user, "hi") |> Request.set_max_tokens(8)
+
+    assert {:error, %Claudio.APIError{status_code: 200}} =
+             Claudio.Messages.create(client, request)
+  end
+
   test "messages success", %{client: client, bypass: bypass} do
     Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
       conn
