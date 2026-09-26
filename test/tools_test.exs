@@ -297,5 +297,11 @@ defmodule Claudio.ToolsTest do
                    "Tools.create_tool_result/4: unknown option :toolset; allowed: :toolset_name",
                    fn -> Tools.create_tool_result("id", "ok", false, toolset: "computer") end
     end
+
+    test "non-keyword opts name the function" do
+      assert_raise ArgumentError,
+                   "Tools.create_tool_result/4: options must be a keyword list; got %{}",
+                   fn -> Tools.create_tool_result("id", "ok", false, %{}) end
+    end
   end
 end

@@ -2175,6 +2175,14 @@ defmodule Claudio.Messages.RequestTest do
 
         assert String.starts_with?(error.message, "#{@name}: unknown option :bogus; allowed: :")
       end
+
+      test "#{@name} with non-keyword opts" do
+        assert_raise ArgumentError,
+                     "#{@name}: options must be a keyword list; got %{bogus: true}",
+                     fn ->
+                       apply(Request, @fun, [Request.new("m")] ++ @args ++ [%{bogus: true}])
+                     end
+      end
     end
   end
 end

@@ -537,7 +537,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool(t(), map(), keyword()) :: t()
   def add_tool(%__MODULE__{tools: tools} = request, tool, opts \\ [])
-      when is_map(tool) and is_list(opts) do
+      when is_map(tool) do
     opts =
       Claudio.Options.validate!(opts, [:defer_loading, :allowed_callers], "Request.add_tool/3")
 
@@ -696,7 +696,7 @@ defmodule Claudio.Messages.Request do
       |> Request.set_effort(:high)
   """
   @spec enable_adaptive_thinking(t(), keyword()) :: t()
-  def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+  def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) do
     opts =
       Claudio.Options.validate!(
         opts,
@@ -908,7 +908,7 @@ defmodule Claudio.Messages.Request do
       |> Request.add_clear_tool_uses(trigger: {:input_tokens, 100_000}, keep: 3)
   """
   @spec add_clear_tool_uses(t(), keyword()) :: t()
-  def add_clear_tool_uses(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+  def add_clear_tool_uses(%__MODULE__{} = request, opts \\ []) do
     opts =
       Claudio.Options.validate!(
         opts,
@@ -954,7 +954,7 @@ defmodule Claudio.Messages.Request do
     Omitted: the model's default.
   """
   @spec add_clear_thinking(t(), keyword()) :: t()
-  def add_clear_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+  def add_clear_thinking(%__MODULE__{} = request, opts \\ []) do
     opts = Claudio.Options.validate!(opts, [:keep], "Request.add_clear_thinking/2")
 
     keep =
@@ -993,7 +993,7 @@ defmodule Claudio.Messages.Request do
   - `:instructions` — summarization instructions
   """
   @spec add_compaction(t(), keyword()) :: t()
-  def add_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+  def add_compaction(%__MODULE__{} = request, opts \\ []) do
     opts =
       Claudio.Options.validate!(
         opts,
@@ -1037,7 +1037,7 @@ defmodule Claudio.Messages.Request do
         |> Request.add_message(:user, "Continue")
   """
   @spec request_compaction(t(), keyword()) :: t()
-  def request_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+  def request_compaction(%__MODULE__{} = request, opts \\ []) do
     opts = Claudio.Options.validate!(opts, [:instructions], "Request.request_compaction/2")
     compaction = maybe_put(%{"type" => "summarize"}, "instructions", opts[:instructions])
     add_beta(%{request | compaction: compaction}, @on_demand_compaction_beta)
@@ -1331,7 +1331,7 @@ defmodule Claudio.Messages.Request do
       |> Request.set_task_budget(64_000, remaining: 40_000)
   """
   @spec set_task_budget(t(), pos_integer(), keyword()) :: t()
-  def set_task_budget(%__MODULE__{} = request, total, opts \\ []) when is_list(opts) do
+  def set_task_budget(%__MODULE__{} = request, total, opts \\ []) do
     opts = Claudio.Options.validate!(opts, [:remaining], "Request.set_task_budget/3")
 
     unless is_integer(total) and total > 0 do
@@ -1398,7 +1398,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_system_message(t(), String.t() | [map()], keyword()) :: t()
   def add_system_message(%__MODULE__{messages: messages} = request, content, opts \\ [])
-      when (is_binary(content) or is_list(content)) and is_list(opts) do
+      when is_binary(content) or is_list(content) do
     opts = Claudio.Options.validate!(opts, [:clear_at, :effort], "Request.add_system_message/3")
     clear_at = Keyword.get(opts, :clear_at)
     effort = Keyword.get(opts, :effort)
@@ -1589,7 +1589,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_advisor_tool(t(), String.t(), keyword()) :: t()
   def add_advisor_tool(%__MODULE__{} = request, model, opts \\ [])
-      when is_binary(model) and is_list(opts) do
+      when is_binary(model) do
     opts =
       Claudio.Options.validate!(
         opts,
@@ -1643,7 +1643,7 @@ defmodule Claudio.Messages.Request do
   def add_browser_toolset(%__MODULE__{} = request, opts \\ []),
     do: add_toolset(request, "browser_toolset_20260801", opts, "Request.add_browser_toolset/2")
 
-  defp add_toolset(request, type, opts, fun) when is_list(opts) do
+  defp add_toolset(request, type, opts, fun) do
     opts = Claudio.Options.validate!(opts, [:configs, :cache_control], fun)
 
     configs =

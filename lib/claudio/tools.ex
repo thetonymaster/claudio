@@ -185,7 +185,7 @@ defmodule Claudio.Tools do
   @spec create_tool_result(String.t(), String.t() | list() | map(), boolean(), keyword()) ::
           tool_result()
   def create_tool_result(tool_use_id, result, is_error \\ false, opts \\ [])
-      when is_binary(tool_use_id) and is_list(opts) do
+      when is_binary(tool_use_id) do
     opts = Claudio.Options.validate!(opts, [:toolset_name], "Tools.create_tool_result/4")
 
     base = %{
