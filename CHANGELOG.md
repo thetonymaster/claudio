@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Stream.build_final_message/1` merges `message_delta` usage over `message_start` usage
   instead of replacing it, so `input_tokens` (and cache counters) survive when the delta
   omits them; previously the parsed `Response.usage` came back as a raw, incomplete map.
+- `Stream.build_final_message/1` keeps a streamed threshold-compaction summary
+  (`compaction_delta`); it was dropped, leaving `"content": null`.
+- `Request.set_context_management/2` also declares `compact-2026-01-12` when its edits hold a
+  `compact_20260112` edit; with only `context-management-2025-06-27` the API rejects it. Its
+  doc example (`"strategy" => "auto"`) was not a real API shape and is replaced.
 
 ### Changed
 
@@ -57,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they came from the model that declined.
 - `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its content holds a
   `fallback` block; the API rejects a replayed `fallback` block without it.
+- `Response.stop_reason` is `:compaction` (was the string `"compaction"`).
 
 ### Added
 
@@ -83,6 +89,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maps; declares `server-side-fallback-2026-07-01`); typed `:fallback` content blocks (original
   kept under `raw:` and replayed verbatim); `Response.fallbacks/1`, `Response.served_by/1`;
   `usage.iterations`.
+- **Context management** (`Claudio.Messages.Request`), no local limits (the API's 400 is
+  authoritative):
+  - `add_clear_tool_uses/2`, `add_clear_thinking/2` (always placed first) — declare
+    `context-management-2025-06-27`; `add_compaction/2` (threshold, `compact_20260112`) —
+    declares `compact-2026-01-12`.
+  - `request_compaction/2` — on-demand `compaction: {"type": "summarize"}`, declares
+    `compact-2026-09-04`; `apply_compaction/2` continues from a compaction summary (either
+    kind) by replacing the history with the block onward.
+  - `add_message/3` declares the replay beta for a `compaction` block (signed →
+    `compact-2026-09-04`, unsigned → `compact-2026-01-12`).
+- Typed `:compaction` content blocks (original under `raw:`, replayed verbatim),
+  `Response.compaction_block/1`, `Response.context_management` (raw `applied_edits`; also
+  read from the streamed `message_delta`).
 
 ### Docs
 
