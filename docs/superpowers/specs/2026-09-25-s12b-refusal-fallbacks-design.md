@@ -64,8 +64,12 @@ fails with a 400.
   original block. `block_to_api/1` re-emits `raw` unchanged, so unknown sub-fields survive.
 - `Response.fallbacks/1 :: [fallback_block()]` — every `fallback` block, in content order; `[]`
   when none.
-- `Response.served_by/1 :: String.t() | nil` — the top-level `model` (F4). Kept as a named reader
-  so callers don't have to know that `model` changes meaning under fallbacks.
+- `Response.served_by/1 :: String.t() | nil` — the last `fallback` block's `to.model` (string or
+  atom key), else the top-level `model`. Not simply `model`: on a streamed mid-output decline,
+  `message_start` already named the requested model and `Stream.build_final_message/1` takes
+  `model` only from `message_start`, so `model` names the declining model (F9; RF: "read the
+  serving model from the `fallback` block's `to.model`"). Non-streaming: both agree (F4). Sticky
+  routing: no block, `model` is already the fallback model.
 - `:iterations` joins `@usage_keys` — a list of raw (string-keyed) maps, or `nil`. By the S12a
   rule, documented keys always appear, so `usage.iterations` is `nil` on responses without it;
   the existing CHANGELOG "absent documented fields appear as `nil`" line covers this.
@@ -100,8 +104,8 @@ wrong in a rare, hard-to-test case).
 
 No new stream code: the no-delta `fallback` block goes through `build_final_message/1`'s generic
 `content_block_start`/`_stop` handling. A test pins it: SSE events → `build_final_message/1` →
-`Response.from_map/1` → a typed `:fallback` block at the right index, and `to.model` names the
-serving model.
+`Response.from_map/1` → a typed `:fallback` block at the right index, `model` still names the
+requested (declining) model, and `served_by/1` names the serving model from `to.model`.
 
 ## Testing
 
