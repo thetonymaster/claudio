@@ -222,6 +222,11 @@ defmodule Claudio.Messages.Stream do
   @doc """
   Accumulates all events and returns the final complete message.
 
+  Streamed tool input (`input_json_delta` chunks on `tool_use`, `server_tool_use` and
+  `mcp_tool_use` blocks) is decoded into the block's `"input"`. If a block's accumulated
+  JSON is invalid — typically output cut off by `max_tokens` mid-call — the result is
+  `{:error, {:invalid_tool_input_json, index, partial_json}}`.
+
   ## Example
 
       {:ok, final_message} =
@@ -256,12 +261,18 @@ defmodule Claudio.Messages.Stream do
 
         {:ok, %{event: "content_block_stop"}}, state ->
           case state.current_block do
-            {_index, block} ->
-              %{
-                state
-                | content_blocks: state.content_blocks ++ [block],
-                  current_block: nil
-              }
+            {index, block} ->
+              case finalize_block(block) do
+                {:ok, block} ->
+                  %{state | content_blocks: state.content_blocks ++ [block], current_block: nil}
+
+                {:error, partial_json} ->
+                  %{
+                    state
+                    | error: {:invalid_tool_input_json, index, partial_json},
+                      current_block: nil
+                  }
+              end
 
             nil ->
               state
@@ -466,6 +477,31 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp apply_delta(block, _delta), do: block
+
+  # Streamed tool input (tool_use, server_tool_use, mcp_tool_use) arrives as
+  # input_json_delta string chunks; decode them into "input" once the block is complete.
+  # Invalid JSON (output cut off by max_tokens, or eager input streaming) is an error
+  # rather than a block with half its input.
+  defp finalize_block(%{"partial_json" => json} = block) do
+    with {:ok, input} <- decode_tool_input(json),
+         do: {:ok, block |> Map.delete("partial_json") |> Map.put("input", input)}
+  end
+
+  defp finalize_block(%{partial_json: json} = block) do
+    with {:ok, input} <- decode_tool_input(json),
+         do: {:ok, block |> Map.delete(:partial_json) |> Map.put(:input, input)}
+  end
+
+  defp finalize_block(block), do: {:ok, block}
+
+  defp decode_tool_input(""), do: {:ok, %{}}
+
+  defp decode_tool_input(json) do
+    case Jason.decode(json) do
+      {:ok, %{} = input} -> {:ok, input}
+      _ -> {:error, json}
+    end
+  end
 
   defp maybe_update(map, delta, key) do
     case Map.get(delta, key) || Map.get(delta, String.to_atom(key)) do

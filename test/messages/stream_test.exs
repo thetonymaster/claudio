@@ -676,4 +676,92 @@ defmodule Claudio.Messages.StreamTest do
       assert [%{"type" => "thinking_dropped"}] = message["input_transformations"]
     end
   end
+
+  describe "build_final_message/1 streamed tool input" do
+    defp tool_stream(start_block, partials) do
+      deltas =
+        Enum.flat_map(partials, fn json ->
+          [
+            ~s(event: content_block_delta),
+            "data: " <>
+              Jason.encode!(%{
+                "type" => "content_block_delta",
+                "index" => 0,
+                "delta" => %{"type" => "input_json_delta", "partial_json" => json}
+              }),
+            ""
+          ]
+        end)
+
+      ([
+         ~s(event: message_start),
+         ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":1,"output_tokens":0}}}),
+         "",
+         ~s(event: content_block_start),
+         "data: " <>
+           Jason.encode!(%{
+             "type" => "content_block_start",
+             "index" => 0,
+             "content_block" => start_block
+           }),
+         ""
+       ] ++
+         deltas ++
+         [
+           ~s(event: content_block_stop),
+           ~s(data: {"type":"content_block_stop","index":0}),
+           "",
+           ~s(event: message_delta),
+           ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+           ""
+         ])
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    @tool_use %{"type" => "tool_use", "id" => "toolu_1", "name" => "get_weather", "input" => %{}}
+
+    test "input_json_delta chunks are decoded into input; partial_json is removed" do
+      {:ok, message} = tool_stream(@tool_use, [~s({"city":), ~s( "Paris"})])
+
+      assert message["content"] == [Map.put(@tool_use, "input", %{"city" => "Paris"})]
+
+      response = Claudio.Messages.Response.from_map(message)
+      assert [%{input: %{"city" => "Paris"}}] = Claudio.Messages.Response.get_tool_uses(response)
+
+      assert Claudio.Messages.Response.to_assistant_content(response) ==
+               [Map.put(@tool_use, "input", %{"city" => "Paris"})]
+    end
+
+    test "server_tool_use input is decoded the same way" do
+      srv = %{
+        "type" => "server_tool_use",
+        "id" => "srvtoolu_1",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      {:ok, message} = tool_stream(srv, [~s({"query": "elixir"})])
+
+      assert message["content"] == [Map.put(srv, "input", %{"query" => "elixir"})]
+    end
+
+    test "a tool call with no input deltas keeps its start input" do
+      {:ok, message} = tool_stream(@tool_use, [])
+      assert message["content"] == [@tool_use]
+    end
+
+    test "an empty partial_json decodes to an empty input" do
+      {:ok, message} = tool_stream(@tool_use, [""])
+      assert message["content"] == [@tool_use]
+    end
+
+    test "invalid JSON (e.g. cut off by max_tokens) is an error, not a silent partial block" do
+      assert {:error, {:invalid_tool_input_json, 0, ~s({"city":)}} =
+               tool_stream(@tool_use, [~s({"city":)])
+    end
+  end
 end
