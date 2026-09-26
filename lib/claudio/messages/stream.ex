@@ -4,14 +4,16 @@ defmodule Claudio.Messages.Stream do
 
   Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
   when `parse_events/1` reaches the terminal `message_stop` event and final usage
-  is available from `message_delta` frames.
+  is available from `message_delta` frames. Metadata carries `:input_tokens`,
+  `:output_tokens`, the cache counters and `:thinking_tokens` when present.
 
   ## Event Types
 
   The Messages API streaming responses include the following event types:
   - `message_start` - Initial message with empty content
   - `content_block_start` - Beginning of a content block
-  - `content_block_delta` - Incremental content updates (text, JSON, thinking)
+  - `content_block_delta` - Incremental content updates (text, JSON, thinking);
+    read them with `accumulate_text/1` / `accumulate_thinking/1`
   - `content_block_stop` - End of a content block
   - `message_delta` - Top-level message changes (usage updates)
   - `message_stop` - Stream completion
@@ -109,6 +111,21 @@ defmodule Claudio.Messages.Stream do
     |> maybe_put_usage_key(:output_tokens, usage)
     |> maybe_put_usage_key(:cache_creation_input_tokens, usage)
     |> maybe_put_usage_key(:cache_read_input_tokens, usage)
+    |> maybe_put_thinking_tokens(usage)
+  end
+
+  # The final message_delta carries usage.output_tokens_details.thinking_tokens.
+  defp maybe_put_thinking_tokens(metadata, usage) do
+    case usage["output_tokens_details"] || usage[:output_tokens_details] do
+      %{} = details ->
+        case details["thinking_tokens"] || details[:thinking_tokens] do
+          nil -> metadata
+          tokens -> Map.put(metadata, :thinking_tokens, tokens)
+        end
+
+      _ ->
+        metadata
+    end
   end
 
   defp maybe_put_usage_key(metadata, key, usage) do
@@ -146,6 +163,43 @@ defmodule Claudio.Messages.Stream do
         data[:delta][:text]
     end)
     |> Stream.reject(&is_nil/1)
+  end
+
+  @doc ~S"""
+  Emits `{block_index, text}` for every `thinking_delta` with non-empty text.
+
+  The index tells one `thinking` block from the next: with `display: :updates` each
+  block is a separate progress note, and a block's first emission is the point the
+  API docs say to treat it as an update. Empty deltas (`display: :omitted`),
+  other deltas, other events and `{:error, _}` items emit nothing.
+
+  The index is `nil` only for a malformed frame with no `"index"` (the API always
+  sends one); its text is still emitted rather than dropped.
+
+  ## Example
+
+      response
+      |> Stream.parse_events()
+      |> Stream.accumulate_thinking()
+      |> Enum.each(fn {index, text} -> IO.puts("[#{index}] #{text}") end)
+  """
+  @spec accumulate_thinking(Enumerable.t()) :: Enumerable.t()
+  def accumulate_thinking(event_stream) do
+    Stream.flat_map(event_stream, fn
+      {:ok, %{event: "content_block_delta", data: data}} when is_map(data) ->
+        delta = data["delta"] || data[:delta] || %{}
+        type = delta["type"] || delta[:type]
+        text = delta["thinking"] || delta[:thinking]
+
+        if type == "thinking_delta" and is_binary(text) and text != "" do
+          [{data["index"] || data[:index], text}]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end)
   end
 
   @doc """
@@ -403,9 +457,20 @@ defmodule Claudio.Messages.Stream do
 
   defp maybe_put_usage(map, nil), do: map
 
+  # message_delta usage is cumulative but may omit fields message_start carried
+  # (e.g. input_tokens): merge, delta wins. Top-level keys are stringified first so
+  # an atom-keyed start and a string-keyed delta cannot keep both copies of a field.
   defp maybe_put_usage(map, usage) do
-    Map.put(map, "usage", usage)
+    case Map.get(map, "usage") do
+      %{} = current ->
+        Map.put(map, "usage", Map.merge(stringify_keys(current), stringify_keys(usage)))
+
+      _ ->
+        Map.put(map, "usage", usage)
+    end
   end
+
+  defp stringify_keys(%{} = map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
   # Convert a map with atom keys to string keys (shallow conversion for top level only)
   defp atomize_to_stringify(map) when is_map(map) do

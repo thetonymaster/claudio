@@ -494,12 +494,66 @@ defmodule Claudio.Messages.Request do
       |> Request.enable_thinking(%{"type" => "adaptive"})
 
   `%{"type" => "enabled", "budget_tokens" => n}` returns 400 on Claude Opus 4.7+,
-  Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. Dedicated
-  thinking/effort helpers are planned (roadmap S11).
+  Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. This is the raw
+  setter (replaces `thinking`); prefer `enable_adaptive_thinking/2` /
+  `disable_thinking/1`, and `set_effort/2` to steer how much the model thinks.
   """
   @spec enable_thinking(t(), map()) :: t()
   def enable_thinking(%__MODULE__{} = request, config) when is_map(config) do
     %{request | thinking: config}
+  end
+
+  @thinking_displays [:summarized, :omitted, :updates]
+  @thinking_display_updates_beta "thinking-display-updates-2026-08-18"
+
+  @doc """
+  Enables adaptive thinking (`thinking: %{"type" => "adaptive"}`), replacing any
+  previous `thinking` config. The model decides how much to think; steer it with
+  `set_effort/2`.
+
+  ## Options
+
+  - `:display` — `:summarized`, `:omitted` or `:updates`. Omit it (or pass `nil`)
+    to use the model's default. `:updates` (progress notes as separate `thinking` blocks)
+    also declares the `thinking-display-updates-2026-08-18` beta. A beta declared
+    here stays declared if `thinking` is later replaced.
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.enable_adaptive_thinking(display: :summarized)
+      |> Request.set_effort(:high)
+  """
+  @spec enable_adaptive_thinking(t(), keyword()) :: t()
+  def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:display])
+
+    case Keyword.fetch(opts, :display) do
+      missing when missing in [:error, {:ok, nil}] ->
+        %{request | thinking: %{"type" => "adaptive"}}
+
+      {:ok, display} when display in @thinking_displays ->
+        thinking = %{"type" => "adaptive", "display" => Atom.to_string(display)}
+        request = %{request | thinking: thinking}
+
+        if display == :updates,
+          do: add_beta(request, @thinking_display_updates_beta),
+          else: request
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "Request.enable_adaptive_thinking/2 :display must be one of " <>
+                ":summarized, :omitted, :updates; got #{inspect(other)}"
+    end
+  end
+
+  @doc """
+  Turns thinking off (`thinking: %{"type" => "disabled"}`), replacing any previous
+  `thinking` config. Models that always think reject this with a 400.
+  """
+  @spec disable_thinking(t()) :: t()
+  def disable_thinking(%__MODULE__{} = request) do
+    %{request | thinking: %{"type" => "disabled"}}
   end
 
   @doc """
@@ -666,8 +720,9 @@ defmodule Claudio.Messages.Request do
   Sets the raw `output_config` map.
 
   `output_config` is the API container for output controls (`format`, and on
-  supported models `effort` / `task_budget`). This replaces the whole map; for
-  structured JSON output prefer `set_output_format/2`, which merges.
+  supported models `effort` / `task_budget`). This **replaces the whole map** —
+  calling it after `set_effort/2`, `set_task_budget/3` or `set_output_format/2`
+  discards what they set. Prefer those helpers; they merge.
 
   ## Example
 
@@ -698,10 +753,88 @@ defmodule Claudio.Messages.Request do
       })
   """
   @spec set_output_format(t(), map()) :: t()
-  def set_output_format(%__MODULE__{output_config: existing} = request, schema)
+  def set_output_format(%__MODULE__{} = request, schema)
       when is_map(schema) do
-    format = %{"type" => "json_schema", "schema" => schema}
-    %{request | output_config: Map.put(existing || %{}, "format", format)}
+    put_output_config(request, "format", %{"type" => "json_schema", "schema" => schema})
+  end
+
+  @effort_levels [:low, :medium, :high, :xhigh, :max]
+  @task_budgets_beta "task-budgets-2026-03-13"
+
+  @doc """
+  Sets `output_config.effort` — how much the model thinks and spends overall.
+  GA, no beta header. Merges into `output_config`.
+
+  `level` is `:low`, `:medium`, `:high`, `:xhigh` or `:max`. Which levels a model
+  accepts (and its default) varies; the API rejects unsupported ones.
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.enable_adaptive_thinking()
+      |> Request.set_effort(:xhigh)
+  """
+  @spec set_effort(t(), :low | :medium | :high | :xhigh | :max) :: t()
+  def set_effort(%__MODULE__{} = request, level) when level in @effort_levels do
+    put_output_config(request, "effort", Atom.to_string(level))
+  end
+
+  def set_effort(%__MODULE__{}, level) do
+    raise ArgumentError,
+          "Request.set_effort/2 level must be one of :low, :medium, :high, :xhigh, :max; " <>
+            "got #{inspect(level)}"
+  end
+
+  @doc """
+  Sets an advisory token budget for the whole task
+  (`output_config.task_budget = %{"type" => "tokens", "total" => total}`) and
+  declares the `task-budgets-2026-03-13` beta. Merges into `output_config`;
+  calling it again replaces the budget. `max_tokens` stays the hard cap.
+
+  `total` must be a positive integer (the API enforces its own minimum, 20,000 as
+  of 2026-09). Options:
+
+  - `:remaining` — tokens left when carrying a budget across requests
+    (non-negative integer; the API defaults it to `total`).
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.set_task_budget(64_000, remaining: 40_000)
+  """
+  @spec set_task_budget(t(), pos_integer(), keyword()) :: t()
+  def set_task_budget(%__MODULE__{} = request, total, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:remaining])
+
+    unless is_integer(total) and total > 0 do
+      raise ArgumentError,
+            "Request.set_task_budget/3 total must be a positive integer; got #{inspect(total)}"
+    end
+
+    budget =
+      case Keyword.fetch(opts, :remaining) do
+        :error ->
+          %{"type" => "tokens", "total" => total}
+
+        {:ok, remaining} when is_integer(remaining) and remaining >= 0 ->
+          %{"type" => "tokens", "total" => total, "remaining" => remaining}
+
+        {:ok, other} ->
+          raise ArgumentError,
+                "Request.set_task_budget/3 :remaining must be a non-negative integer; " <>
+                  "got #{inspect(other)}"
+      end
+
+    request
+    |> put_output_config("task_budget", budget)
+    |> add_beta(@task_budgets_beta)
+  end
+
+  # Stringifies top-level keys first: a raw `set_output_config(%{effort: ...})`
+  # plus a helper would otherwise encode both `effort` keys into one JSON object.
+  defp put_output_config(%__MODULE__{output_config: existing} = request, key, value) do
+    base = Map.new(existing || %{}, fn {k, v} -> {to_string(k), v} end)
+    %{request | output_config: Map.put(base, key, value)}
   end
 
   @doc """

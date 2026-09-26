@@ -298,6 +298,7 @@ defmodule Claudio.MessagesTest do
     assert metadata.output_tokens == 45
     assert metadata.cache_creation_input_tokens == 10
     assert metadata.cache_read_input_tokens == 5
+    refute Map.has_key?(metadata, :thinking_tokens)
   end
 
   test "telemetry stop metadata omits token usage for non-streaming error", %{
@@ -370,7 +371,10 @@ defmodule Claudio.MessagesTest do
       conn
     end)
 
-    attach_telemetry_handler([:claudio, :messages, :stream, :usage])
+    attach_telemetry_handler(
+      [:claudio, :messages, :stream, :usage],
+      fn metadata -> metadata[:input_tokens] == 123 end
+    )
 
     request =
       Request.new(model)
@@ -391,6 +395,96 @@ defmodule Claudio.MessagesTest do
     assert metadata.output_tokens == 45
     assert metadata.cache_creation_input_tokens == 10
     assert metadata.cache_read_input_tokens == 5
+    refute Map.has_key?(metadata, :thinking_tokens)
+  end
+
+  test "telemetry stop metadata includes thinking_tokens when usage reports them", %{
+    client: client,
+    bypass: bypass
+  } do
+    model = unique_model("thinking-tokens")
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(
+        200,
+        Jason.encode!(%{
+          "content" => [%{"type" => "text", "text" => "ok"}],
+          "id" => "msg_thinking_tokens",
+          "model" => model,
+          "role" => "assistant",
+          "stop_reason" => "end_turn",
+          "stop_sequence" => nil,
+          "type" => "message",
+          "usage" => %{
+            "input_tokens" => 12,
+            "output_tokens" => 80,
+            "output_tokens_details" => %{"thinking_tokens" => 64}
+          }
+        })
+      )
+    end)
+
+    attach_telemetry_handler(
+      [:claudio, :messages, :create, :stop],
+      fn metadata -> metadata.model == model end
+    )
+
+    request =
+      Request.new(model)
+      |> Request.add_message(:user, "hello")
+      |> Request.set_max_tokens(64)
+
+    assert {:ok, _response} = Claudio.Messages.create(client, request)
+    assert_receive {:telemetry_event, [:claudio, :messages, :create, :stop], metadata}
+    assert metadata.thinking_tokens == 64
+    assert metadata.output_tokens == 80
+  end
+
+  test "stream usage telemetry includes thinking_tokens from the final message_delta", %{
+    client: client,
+    bypass: bypass
+  } do
+    model = unique_model("stream-thinking-tokens")
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn =
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_chunked(200)
+
+      sse =
+        [
+          "event: message_start\n",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_st\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"#{model}\",\"content\":[]}}\n\n",
+          "event: message_delta\n",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":12,\"output_tokens\":80,\"output_tokens_details\":{\"thinking_tokens\":64}}}\n\n",
+          "event: message_stop\n",
+          "data: {\"type\":\"message_stop\"}\n\n"
+        ]
+        |> IO.iodata_to_binary()
+
+      {:ok, conn} = Plug.Conn.chunk(conn, sse)
+      conn
+    end)
+
+    attach_telemetry_handler(
+      [:claudio, :messages, :stream, :usage],
+      fn metadata -> metadata[:output_tokens] == 80 end
+    )
+
+    request =
+      Request.new(model)
+      |> Request.add_message(:user, "hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
+
+    assert {:ok, stream_response} = Claudio.Messages.create(client, request)
+    _events = stream_response.body |> Claudio.Messages.Stream.parse_events() |> Enum.to_list()
+
+    assert_receive {:telemetry_event, [:claudio, :messages, :stream, :usage], metadata}
+    assert metadata.thinking_tokens == 64
   end
 
   defp attach_telemetry_handler(event_name, filter_fn \\ fn _metadata -> true end) do

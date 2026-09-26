@@ -220,4 +220,167 @@ defmodule Claudio.Messages.StreamTest do
       refute Map.has_key?(message, "stop_details")
     end
   end
+
+  describe "build_final_message/1 usage merge" do
+    test "message_delta usage merges over message_start usage (input_tokens survive)" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":5,"cache_read_input_tokens":2,"output_tokens":1}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"output_tokens_details":{"thinking_tokens":2}}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["usage"] == %{
+               "input_tokens" => 5,
+               "cache_read_input_tokens" => 2,
+               "output_tokens" => 3,
+               "output_tokens_details" => %{"thinking_tokens" => 2}
+             }
+
+      usage = Claudio.Messages.Response.from_map(message).usage
+      assert usage.input_tokens == 5
+      assert usage.output_tokens == 3
+      assert usage.output_tokens_details == %{"thinking_tokens" => 2}
+    end
+  end
+
+  describe "build_final_message/1 usage merge with mixed key styles" do
+    test "delta wins when message_start usage is atom-keyed and delta usage string-keyed" do
+      events = [
+        {:ok,
+         %{
+           event: "message_start",
+           data: %{
+             "message" => %{
+               "id" => "m",
+               "content" => [],
+               "usage" => %{input_tokens: 5, output_tokens: 1}
+             }
+           }
+         }},
+        {:ok,
+         %{
+           event: "message_delta",
+           data: %{"delta" => %{"stop_reason" => "end_turn"}, "usage" => %{"output_tokens" => 3}}
+         }},
+        {:ok, %{event: "message_stop", data: %{}}}
+      ]
+
+      {:ok, message} = ClaudioStream.build_final_message(events)
+
+      assert message["usage"] == %{"input_tokens" => 5, "output_tokens" => 3}
+      assert Claudio.Messages.Response.from_map(message).usage.output_tokens == 3
+    end
+  end
+
+  describe "output_tokens_details through build_final_message/1 → Response.from_map/1" do
+    test "final message_delta usage details survive into the parsed Response" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      response = Claudio.Messages.Response.from_map(message)
+      assert response.usage.output_tokens_details == %{"thinking_tokens" => 25}
+    end
+  end
+
+  describe "accumulate_thinking/1" do
+    test "emits {index, text} for non-empty thinking deltas only" do
+      sse = [
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"a"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"b"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"s0"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hello"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":3,"delta":{"type":"thinking_delta","thinking":"c"}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      result =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.accumulate_thinking()
+        |> Enum.to_list()
+
+      assert result == [{0, "a"}, {0, "b"}, {3, "c"}]
+    end
+
+    test "atom-keyed event data works too" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{index: 4, delta: %{type: "thinking_delta", thinking: "x"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{4, "x"}]
+    end
+
+    test "a thinking delta without an index keeps its text, as {nil, text}" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{"delta" => %{"type" => "thinking_delta", "thinking" => "z"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{nil, "z"}]
+    end
+
+    test "error items and other events are skipped, not raised on" do
+      events = [
+        {:error, :boom},
+        {:ok, %{event: "ping", data: %{}}},
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{"index" => 0, "delta" => %{"type" => "thinking_delta", "thinking" => "y"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{0, "y"}]
+    end
+  end
 end

@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP connector** now emits a valid `mcp-client-2025-11-20` request:
   `Request.add_mcp_server/2` adds the `mcp_toolset` entry to `tools` and declares
   the beta. Previously the request had no toolset and no beta header and was rejected.
+- `Response.usage` keeps `output_tokens_details` (raw map, e.g. `thinking_tokens`);
+  it was dropped by the usage parser.
+- `set_output_format/2` (and the new output-config helpers) no longer emit a duplicate
+  key when `set_output_config/2` was given atom keys — existing keys are stringified first.
+- `Stream.build_final_message/1` merges `message_delta` usage over `message_start` usage
+  instead of replacing it, so `input_tokens` (and cache counters) survive when the delta
+  omits them; previously the parsed `Response.usage` came back as a raw, incomplete map.
 
 ### Changed
 
@@ -41,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Files.list/2` GA pagination options `:page` and `:ids`.
 - `add_code_execution_tool/2` `:version` option.
 - `Response.stop_details` (also accumulated by `Stream.build_final_message/1`).
+- **Thinking & effort helpers** (`Claudio.Messages.Request`), no per-model validation:
+  - `enable_adaptive_thinking/2` (`display:` `:summarized` / `:omitted` / `:updates`;
+    `:updates` declares `thinking-display-updates-2026-08-18`) and `disable_thinking/1`.
+  - `set_effort/2` (`:low` … `:max`, GA) and `set_task_budget/3` (`output_config.task_budget`,
+    declares `task-budgets-2026-03-13`) — both merge into `output_config`.
+- `Response.get_thinking/1`, `Response.thinking_interrupted?/1`, `Stream.accumulate_thinking/1`.
+- Telemetry: `:thinking_tokens` in `[:claudio, :messages, :create, :stop]` and
+  `[:claudio, :messages, :stream, :usage]` metadata, when the API reports it.
 
 ### Docs
 

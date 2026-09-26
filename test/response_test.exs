@@ -27,7 +27,8 @@ defmodule Claudio.Messages.ResponseTest do
                input_tokens: 10,
                output_tokens: 5,
                cache_creation_input_tokens: nil,
-               cache_read_input_tokens: nil
+               cache_read_input_tokens: nil,
+               output_tokens_details: nil
              }
     end
 
@@ -597,6 +598,112 @@ defmodule Claudio.Messages.ResponseTest do
     test "atom-keyed stop_details" do
       response = Response.from_map(%{content: [], stop_reason: "refusal", stop_details: @details})
       assert response.stop_details == @details
+    end
+  end
+
+  describe "from_map/1 usage.output_tokens_details" do
+    test "string keys: carried raw" do
+      response =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{
+            "input_tokens" => 10,
+            "output_tokens" => 50,
+            "output_tokens_details" => %{"thinking_tokens" => 30}
+          }
+        })
+
+      assert response.usage.output_tokens_details == %{"thinking_tokens" => 30}
+    end
+
+    test "atom keys: carried raw" do
+      response =
+        Response.from_map(%{
+          content: [],
+          usage: %{
+            input_tokens: 10,
+            output_tokens: 50,
+            output_tokens_details: %{thinking_tokens: 30}
+          }
+        })
+
+      assert response.usage.output_tokens_details == %{thinking_tokens: 30}
+    end
+
+    test "nil when absent, and when usage itself is absent" do
+      with_usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 2}
+        })
+
+      assert with_usage.usage.output_tokens_details == nil
+      assert Response.from_map(%{"content" => []}).usage.output_tokens_details == nil
+    end
+  end
+
+  describe "get_thinking/1" do
+    test "returns non-empty thinking texts in content order" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{"type" => "thinking", "thinking" => "", "signature" => "s0"},
+            %{"type" => "thinking", "thinking" => "Checking the config", "signature" => "s1"},
+            %{"type" => "tool_use", "id" => "t1", "name" => "read", "input" => %{}},
+            %{"type" => "redacted_thinking", "data" => "opaque"},
+            %{"type" => "text", "text" => "not thinking"},
+            %{"type" => "thinking", "thinking" => "Now writing the fix", "signature" => "s2"}
+          ]
+        })
+
+      assert Response.get_thinking(response) == ["Checking the config", "Now writing the fix"]
+    end
+
+    test "skips a thinking block with no thinking text instead of crashing" do
+      response =
+        Response.from_map(%{"content" => [%{"type" => "thinking", "signature" => "s"}]})
+
+      assert Response.get_thinking(response) == []
+    end
+
+    test "keeps the interrupted placeholder (filter with thinking_interrupted?/1)" do
+      placeholder = "This part of the response was interrupted before it finished."
+
+      response =
+        Response.from_map(%{
+          "content" => [%{"type" => "thinking", "thinking" => placeholder, "signature" => "s"}]
+        })
+
+      assert Response.get_thinking(response) == [placeholder]
+    end
+  end
+
+  describe "thinking_interrupted?/1" do
+    @placeholder "This part of the response was interrupted before it finished."
+
+    test "true only for a thinking block whose text is exactly the placeholder" do
+      assert Response.thinking_interrupted?(%{
+               type: :thinking,
+               thinking: @placeholder,
+               signature: "s"
+             })
+    end
+
+    test "false for other thinking text, a text block with the same string, and redacted_thinking" do
+      refute Response.thinking_interrupted?(%{
+               type: :thinking,
+               thinking: "working",
+               signature: "s"
+             })
+
+      refute Response.thinking_interrupted?(%{
+               type: :thinking,
+               thinking: @placeholder <> " ",
+               signature: "s"
+             })
+
+      refute Response.thinking_interrupted?(%{type: :text, text: @placeholder})
+      refute Response.thinking_interrupted?(%{type: :redacted_thinking, data: "x"})
     end
   end
 end

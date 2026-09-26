@@ -743,4 +743,230 @@ defmodule Claudio.Messages.RequestTest do
       assert tool["display_number"] == 1
     end
   end
+
+  describe "enable_adaptive_thinking/2" do
+    test "no opts emits type adaptive only, no betas" do
+      request = Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
+    end
+
+    test "each display value is emitted as a string" do
+      for display <- [:summarized, :omitted, :updates] do
+        request =
+          Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: display)
+
+        assert Request.to_map(request)["thinking"] == %{
+                 "type" => "adaptive",
+                 "display" => Atom.to_string(display)
+               }
+      end
+    end
+
+    test "only display: :updates declares the updates beta, once" do
+      updates =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates)
+        |> Request.enable_adaptive_thinking(display: :updates)
+
+      assert Request.required_betas(updates) == ["thinking-display-updates-2026-08-18"]
+
+      omitted =
+        Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: :omitted)
+
+      assert Request.required_betas(omitted) == []
+    end
+
+    test "re-calling without display replaces thinking; the beta stays declared" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates)
+        |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == ["thinking-display-updates-2026-08-18"]
+    end
+
+    test "unknown display values raise" do
+      for bad <- [:full, "omitted"] do
+        assert_raise ArgumentError,
+                     ~r/enable_adaptive_thinking\/2 :display must be one of :summarized, :omitted, :updates; got/,
+                     fn ->
+                       Request.new("claude-opus-5-5")
+                       |> Request.enable_adaptive_thinking(display: bad)
+                     end
+      end
+    end
+
+    test "display: nil means the model default (supports display: opts[:display] passthrough)" do
+      request = Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: nil)
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
+    end
+
+    test "unknown option keys raise" do
+      assert_raise ArgumentError, fn ->
+        Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(budget_tokens: 1024)
+      end
+    end
+  end
+
+  describe "disable_thinking/1" do
+    test "emits type disabled" do
+      request = Request.new("claude-opus-5") |> Request.disable_thinking()
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "replaces a prior adaptive config (no display survives)" do
+      request =
+        Request.new("claude-opus-5")
+        |> Request.enable_adaptive_thinking(display: :summarized)
+        |> Request.disable_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+  end
+
+  describe "set_effort/2" do
+    test "each level is emitted as a string under output_config.effort, no beta" do
+      for level <- [:low, :medium, :high, :xhigh, :max] do
+        request = Request.new("claude-opus-5-5") |> Request.set_effort(level)
+
+        assert Request.to_map(request)["output_config"] == %{"effort" => Atom.to_string(level)}
+        assert Request.required_betas(request) == []
+      end
+    end
+
+    test "unknown levels raise" do
+      for bad <- [:ultra, "high", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_effort\/2 level must be one of :low, :medium, :high, :xhigh, :max; got/,
+                     fn -> Request.new("claude-opus-5-5") |> Request.set_effort(bad) end
+      end
+    end
+  end
+
+  describe "set_task_budget/3" do
+    @beta "task-budgets-2026-03-13"
+
+    test "emits a tokens budget and declares the beta" do
+      request = Request.new("claude-opus-5-5") |> Request.set_task_budget(64_000)
+
+      assert Request.to_map(request)["output_config"] == %{
+               "task_budget" => %{"type" => "tokens", "total" => 64_000}
+             }
+
+      assert Request.required_betas(request) == [@beta]
+    end
+
+    test "remaining is included when given; 0 is accepted" do
+      for remaining <- [20_000, 0] do
+        request =
+          Request.new("claude-opus-5-5")
+          |> Request.set_task_budget(64_000, remaining: remaining)
+
+        assert Request.to_map(request)["output_config"]["task_budget"] == %{
+                 "type" => "tokens",
+                 "total" => 64_000,
+                 "remaining" => remaining
+               }
+      end
+    end
+
+    test "calling twice replaces the budget and declares the beta once" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_task_budget(64_000, remaining: 10_000)
+        |> Request.set_task_budget(30_000)
+
+      assert Request.to_map(request)["output_config"]["task_budget"] == %{
+               "type" => "tokens",
+               "total" => 30_000
+             }
+
+      assert Request.required_betas(request) == [@beta]
+    end
+
+    test "total must be a positive integer (no local 20k floor)" do
+      assert Request.new("m") |> Request.set_task_budget(1) |> Request.to_map()
+
+      for bad <- [0, -1, 1.5, "64000", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_task_budget\/3 total must be a positive integer; got/,
+                     fn -> Request.new("m") |> Request.set_task_budget(bad) end
+      end
+    end
+
+    test "remaining must be a non-negative integer" do
+      for bad <- [-1, 2.5, "10", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_task_budget\/3 :remaining must be a non-negative integer; got/,
+                     fn -> Request.new("m") |> Request.set_task_budget(64_000, remaining: bad) end
+      end
+    end
+
+    test "unknown option keys raise" do
+      assert_raise ArgumentError, fn ->
+        Request.new("m") |> Request.set_task_budget(64_000, max: 1)
+      end
+    end
+  end
+
+  describe "output_config composition" do
+    @schema %{
+      "type" => "object",
+      "properties" => %{"a" => %{"type" => "string"}},
+      "required" => ["a"],
+      "additionalProperties" => false
+    }
+
+    test "effort, task budget and format merge in any order" do
+      a =
+        Request.new("m")
+        |> Request.set_effort(:high)
+        |> Request.set_task_budget(64_000)
+        |> Request.set_output_format(@schema)
+
+      b =
+        Request.new("m")
+        |> Request.set_output_format(@schema)
+        |> Request.set_task_budget(64_000)
+        |> Request.set_effort(:high)
+
+      assert Request.to_map(a)["output_config"] == Request.to_map(b)["output_config"]
+
+      assert Map.keys(Request.to_map(a)["output_config"]) |> Enum.sort() ==
+               ["effort", "format", "task_budget"]
+    end
+
+    test "set_output_config/2 afterwards replaces the whole map" do
+      request =
+        Request.new("m")
+        |> Request.set_effort(:high)
+        |> Request.set_task_budget(64_000)
+        |> Request.set_output_config(%{"effort" => "low"})
+
+      assert Request.to_map(request)["output_config"] == %{"effort" => "low"}
+    end
+  end
+
+  describe "output_config helpers over an atom-keyed raw map" do
+    test "merge without leaving duplicate atom/string keys" do
+      request =
+        Request.new("m")
+        |> Request.set_output_config(%{effort: "low", format: %{"type" => "json_schema"}})
+        |> Request.set_effort(:high)
+
+      assert Request.to_map(request)["output_config"] == %{
+               "effort" => "high",
+               "format" => %{"type" => "json_schema"}
+             }
+
+      assert Jason.encode!(Request.to_map(request)["output_config"])
+             |> String.split("effort")
+             |> length() == 2
+    end
+  end
 end
