@@ -65,6 +65,77 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with a compaction block" do
+    test "a signed block declares compact-2026-09-04" do
+      for block <- [
+            %{"type" => "compaction", "content" => "s", "signature" => "sig"},
+            %{type: "compaction", content: "s", signature: "sig"},
+            %{
+              type: :compaction,
+              content: "s",
+              raw: %{"type" => "compaction", "signature" => "sig"}
+            }
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["compact-2026-09-04"]
+      end
+    end
+
+    test "an unsigned block declares compact-2026-01-12" do
+      for block <- [
+            %{"type" => "compaction", "content" => "s"},
+            %{type: :compaction, content: "s", raw: %{"type" => "compaction", "content" => "s"}}
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["compact-2026-01-12"]
+      end
+    end
+
+    test "content without a compaction block declares nothing (Review Focus 4)" do
+      for content <- ["hi", [%{"type" => "text", "text" => "hi"}], ["stray", 42]] do
+        request = Request.new("m") |> Request.add_message(:user, content)
+        assert Request.required_betas(request) == []
+      end
+    end
+  end
+
+  describe "add_message/3 with typed blocks (S13 review)" do
+    test "a typed block carrying raw is sent as its original map" do
+      raw = %{"type" => "compaction", "content" => "s", "signature" => "sig"}
+
+      typed =
+        Claudio.Messages.Response.compaction_block(
+          Claudio.Messages.Response.from_map(%{"content" => [raw]})
+        )
+
+      request = Request.new("m") |> Request.add_message(:assistant, [typed])
+
+      assert request.messages == [%{"role" => "assistant", "content" => [raw]}]
+      assert Request.required_betas(request) == ["compact-2026-09-04"]
+    end
+  end
+
+  describe "add_message/3 with advisor blocks (S14)" do
+    test "an advisor result or advisor server_tool_use declares the advisor beta" do
+      for block <- [
+            %{"type" => "advisor_tool_result", "tool_use_id" => "s", "content" => %{}},
+            %{"type" => "server_tool_use", "id" => "s", "name" => "advisor", "input" => %{}},
+            %{type: :server_tool_use, id: "s", name: "advisor", input: %{}},
+            %{type: :advisor_tool_result, tool_use_id: "s", content: %{}, caller: nil, raw: %{}}
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["advisor-tool-2026-03-01"]
+      end
+    end
+
+    test "other server tools declare nothing" do
+      block = %{"type" => "server_tool_use", "id" => "s", "name" => "web_search", "input" => %{}}
+
+      assert Request.required_betas(Request.add_message(Request.new("m"), :assistant, [block])) ==
+               []
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =
@@ -286,6 +357,335 @@ defmodule Claudio.Messages.RequestTest do
       assert map["context_management"] == %{"edits" => [%{"type" => "clear_tool_uses_20250919"}]}
       refute Map.has_key?(map, "betas")
       refute Map.has_key?(map, "anthropic-beta")
+    end
+
+    test "a raw compact_20260112 edit also declares compact-2026-01-12" do
+      for config <- [
+            %{"edits" => [%{"type" => "compact_20260112"}]},
+            %{edits: [%{type: "compact_20260112"}]}
+          ] do
+        request = Request.new("claude-opus-5-5") |> Request.set_context_management(config)
+
+        assert Request.required_betas(request) == [
+                 "context-management-2025-06-27",
+                 "compact-2026-01-12"
+               ]
+      end
+    end
+
+    test "without a compact edit only the context-management beta is declared" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert Request.required_betas(request) == ["context-management-2025-06-27"]
+    end
+  end
+
+  describe "context-editing builders" do
+    defp edits(request), do: Request.to_map(request)["context_management"]["edits"]
+
+    test "add_clear_tool_uses/2 with no options sends only the type" do
+      request = Request.new("claude-opus-5-5") |> Request.add_clear_tool_uses()
+
+      assert edits(request) == [%{"type" => "clear_tool_uses_20250919"}]
+      assert Request.required_betas(request) == ["context-management-2025-06-27"]
+    end
+
+    test "add_clear_tool_uses/2 maps every option" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses(
+          trigger: {:tool_uses, 5},
+          keep: 2,
+          clear_at_least: 1000,
+          exclude_tools: ["web_search"],
+          clear_tool_inputs: false
+        )
+
+      assert edits(request) == [
+               %{
+                 "type" => "clear_tool_uses_20250919",
+                 "trigger" => %{"type" => "tool_uses", "value" => 5},
+                 "keep" => %{"type" => "tool_uses", "value" => 2},
+                 "clear_at_least" => %{"type" => "input_tokens", "value" => 1000},
+                 "exclude_tools" => ["web_search"],
+                 "clear_tool_inputs" => false
+               }
+             ]
+    end
+
+    test "add_clear_tool_uses/2 input_tokens trigger" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses(trigger: {:input_tokens, 100_000})
+
+      assert [%{"trigger" => %{"type" => "input_tokens", "value" => 100_000}}] = edits(request)
+    end
+
+    test "add_clear_thinking/2 maps keep: :all and keep: n" do
+      assert edits(Request.new("m") |> Request.add_clear_thinking(keep: :all)) ==
+               [%{"type" => "clear_thinking_20251015", "keep" => "all"}]
+
+      assert edits(Request.new("m") |> Request.add_clear_thinking(keep: 2)) ==
+               [
+                 %{
+                   "type" => "clear_thinking_20251015",
+                   "keep" => %{"type" => "thinking_turns", "value" => 2}
+                 }
+               ]
+
+      assert edits(Request.new("m") |> Request.add_clear_thinking()) ==
+               [%{"type" => "clear_thinking_20251015"}]
+    end
+
+    test "add_compaction/2 with no options sends only the type" do
+      assert edits(Request.new("m") |> Request.add_compaction()) == [
+               %{"type" => "compact_20260112"}
+             ]
+    end
+
+    test "add_compaction/2 maps its options and declares compact-2026-01-12" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction(
+          trigger: 150_000,
+          pause_after_compaction: true,
+          instructions: "Keep file paths."
+        )
+
+      assert edits(request) == [
+               %{
+                 "type" => "compact_20260112",
+                 "trigger" => %{"type" => "input_tokens", "value" => 150_000},
+                 "pause_after_compaction" => true,
+                 "instructions" => "Keep file paths."
+               }
+             ]
+
+      assert Request.required_betas(request) == ["compact-2026-01-12"]
+    end
+
+    test "clear_thinking is placed first whatever the call order; others keep their order" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_clear_tool_uses()
+        |> Request.add_compaction()
+        |> Request.add_clear_thinking(keep: :all)
+
+      assert Enum.map(edits(request), & &1["type"]) ==
+               ["clear_thinking_20251015", "clear_tool_uses_20250919", "compact_20260112"]
+
+      assert Request.required_betas(request) == [
+               "context-management-2025-06-27",
+               "compact-2026-01-12"
+             ]
+    end
+
+    test "builders keep other keys a raw set_context_management/2 put there" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{"edits" => [], "future_key" => 1})
+        |> Request.add_clear_tool_uses()
+
+      assert Request.to_map(request)["context_management"] == %{
+               "edits" => [%{"type" => "clear_tool_uses_20250919"}],
+               "future_key" => 1
+             }
+    end
+
+    test "an atom-keyed raw config keeps a single :edits key" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.set_context_management(%{edits: [%{type: "clear_tool_uses_20250919"}]})
+        |> Request.add_compaction()
+
+      cm = Request.to_map(request)["context_management"]
+
+      refute Map.has_key?(cm, "edits")
+      assert [%{type: "clear_tool_uses_20250919"}, %{"type" => "compact_20260112"}] = cm.edits
+    end
+
+    test "set_context_management/2 after builders replaces the edits; betas stay" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction()
+        |> Request.set_context_management(%{"edits" => [%{"type" => "clear_tool_uses_20250919"}]})
+
+      assert edits(request) == [%{"type" => "clear_tool_uses_20250919"}]
+      assert "compact-2026-01-12" in Request.required_betas(request)
+    end
+
+    test "invalid shapes raise ArgumentError" do
+      r = Request.new("claude-opus-5-5")
+
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :trigger/, fn ->
+        Request.add_clear_tool_uses(r, trigger: {:turns, 3})
+      end
+
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
+        Request.add_clear_tool_uses(r, keep: "3")
+      end
+
+      assert_raise ArgumentError, ~r/add_clear_thinking\/2 :keep/, fn ->
+        Request.add_clear_thinking(r, keep: 0)
+      end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
+        Request.add_compaction(r, trigger: {:input_tokens, 50_000})
+      end
+
+      assert_raise ArgumentError, fn -> Request.add_compaction(r, bogus: 1) end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :pause_after_compaction/, fn ->
+        Request.add_compaction(r, pause_after_compaction: "yes")
+      end
+
+      # false is not "absent": it must be rejected, not sent.
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
+        Request.add_clear_tool_uses(r, keep: false)
+      end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
+        Request.add_compaction(r, trigger: false)
+      end
+    end
+  end
+
+  describe "request_compaction/2" do
+    test "sets compaction: summarize and declares compact-2026-09-04" do
+      request = Request.new("claude-opus-5-5") |> Request.request_compaction()
+
+      assert Request.to_map(request)["compaction"] == %{"type" => "summarize"}
+      assert Request.required_betas(request) == ["compact-2026-09-04"]
+    end
+
+    test "instructions are passed through" do
+      request =
+        Request.new("claude-opus-5-5") |> Request.request_compaction(instructions: "Keep paths.")
+
+      assert Request.to_map(request)["compaction"] == %{
+               "type" => "summarize",
+               "instructions" => "Keep paths."
+             }
+    end
+
+    test "unset: to_map/1 has no compaction key" do
+      refute Map.has_key?(Request.to_map(Request.new("m")), "compaction")
+    end
+
+    test "unknown options raise" do
+      assert_raise ArgumentError, fn -> Request.request_compaction(Request.new("m"), foo: 1) end
+    end
+  end
+
+  describe "apply_compaction/2" do
+    alias Claudio.Messages.Response
+
+    @signed %{"type" => "compaction", "content" => "Summary.", "signature" => "sig"}
+
+    test "on-demand: history becomes one assistant message holding the block; compaction cleared" do
+      summary = Response.from_map(%{"stop_reason" => "compaction", "content" => [@signed]})
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_message(:user, "a")
+        |> Request.add_message(:assistant, "b")
+        |> Request.request_compaction()
+        |> Request.apply_compaction(summary)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [@signed]}]
+      assert request.compaction == nil
+      refute Map.has_key?(Request.to_map(request), "compaction")
+      assert "compact-2026-09-04" in Request.required_betas(request)
+    end
+
+    test "threshold: keeps content from the block onward, keeps context_management" do
+      thinking = %{"type" => "thinking", "thinking" => "", "signature" => "tsig"}
+      text = %{"type" => "text", "text" => "Answer"}
+      block = %{"type" => "compaction", "content" => "Summary."}
+
+      response =
+        Response.from_map(%{"stop_reason" => "end_turn", "content" => [block, thinking, text]})
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction(trigger: 50_000)
+        |> Request.add_message(:user, "long history")
+        |> Request.apply_compaction(response)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [block, thinking, text]}]
+
+      assert Request.to_map(request)["context_management"] == %{
+               "edits" => [
+                 %{
+                   "type" => "compact_20260112",
+                   "trigger" => %{"type" => "input_tokens", "value" => 50_000}
+                 }
+               ]
+             }
+
+      assert Request.required_betas(request) == ["compact-2026-01-12"]
+    end
+
+    test "two compaction blocks: content from the last one" do
+      first = %{"type" => "compaction", "content" => "old"}
+      last = %{"type" => "compaction", "content" => "new"}
+
+      response =
+        Response.from_map(%{"content" => [first, %{"type" => "text", "text" => "x"}, last]})
+
+      request = Request.new("m") |> Request.apply_compaction(response)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [last]}]
+    end
+
+    test "keeps system, tools, thinking, max_tokens and betas (Review Focus 1)" do
+      summary = Response.from_map(%{"stop_reason" => "compaction", "content" => [@signed]})
+      tool = %{"name" => "t", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+      before =
+        Request.new("claude-opus-5-5")
+        |> Request.set_system("sys")
+        |> Request.add_tool(tool)
+        |> Request.enable_adaptive_thinking()
+        |> Request.set_max_tokens(512)
+        |> Request.add_beta("x-2026-01-01")
+        |> Request.add_message(:user, "a")
+
+      after_ = Request.apply_compaction(before, summary)
+
+      assert after_.system == "sys"
+      assert after_.tools == [tool]
+      assert after_.thinking == %{"type" => "adaptive"}
+      assert after_.max_tokens == 512
+      assert Request.required_betas(after_) == ["x-2026-01-01", "compact-2026-09-04"]
+    end
+
+    test "a failed compaction (content: nil) raises instead of erasing the history" do
+      response =
+        Response.from_map(%{
+          "stop_reason" => "compaction",
+          "content" => [%{"type" => "compaction", "content" => nil}]
+        })
+
+      assert_raise ArgumentError, ~r/apply_compaction\/2 .*compaction failed/, fn ->
+        Request.new("m")
+        |> Request.add_message(:user, "important long history")
+        |> Request.apply_compaction(response)
+      end
+    end
+
+    test "a response without a compaction block raises" do
+      response =
+        Response.from_map(%{
+          "stop_reason" => "end_turn",
+          "content" => [%{"type" => "text", "text" => "x"}]
+        })
+
+      assert_raise ArgumentError, ~r/apply_compaction\/2 .*no compaction block.*:end_turn/, fn ->
+        Request.apply_compaction(Request.new("m"), response)
+      end
     end
   end
 
@@ -765,6 +1165,186 @@ defmodule Claudio.Messages.RequestTest do
       [tool] = Request.to_map(request)["tools"]
       assert tool["display_number"] == 1
     end
+
+    test "version: :\"20251124\" emits computer_20251124 with its beta" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_computer_tool(1280, 800, version: :"20251124")
+
+      assert [%{"type" => "computer_20251124", "name" => "computer"}] =
+               Request.to_map(request)["tools"]
+
+      assert Request.required_betas(request) == ["computer-use-2025-11-24"]
+    end
+
+    test "an unknown version or option raises; the default may be passed explicitly" do
+      assert_raise ArgumentError, ~r/add_computer_tool\/4 :version/, fn ->
+        Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20260801")
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_computer_tool(Request.new("m"), 1, 1, versoin: 1)
+      end
+
+      assert [%{"type" => "computer_20250124"}] =
+               Request.to_map(
+                 Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20250124")
+               )["tools"]
+    end
+  end
+
+  describe "add_tool/3 (S14)" do
+    @tool %{"name" => "t", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+    test "defer_loading and allowed_callers" do
+      request =
+        Request.new("m")
+        |> Request.add_tool(@tool,
+          defer_loading: true,
+          allowed_callers: [:direct, :code_execution, "code_execution_20260521"]
+        )
+
+      assert Request.to_map(request)["tools"] == [
+               Map.merge(@tool, %{
+                 "defer_loading" => true,
+                 "allowed_callers" => [
+                   "direct",
+                   "code_execution_20260120",
+                   "code_execution_20260521"
+                 ]
+               })
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "add_tool/2 and add_tool/3 with [] leave the tool unchanged" do
+      assert Request.to_map(Request.add_tool(Request.new("m"), @tool))["tools"] == [@tool]
+      assert Request.to_map(Request.add_tool(Request.new("m"), @tool, []))["tools"] == [@tool]
+    end
+
+    test "invalid options raise" do
+      r = Request.new("m")
+      assert_raise ArgumentError, fn -> Request.add_tool(r, @tool, bogus: 1) end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :defer_loading/, fn ->
+        Request.add_tool(r, @tool, defer_loading: "yes")
+      end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :allowed_callers/, fn ->
+        Request.add_tool(r, @tool, allowed_callers: :direct)
+      end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :allowed_callers/, fn ->
+        Request.add_tool(r, @tool, allowed_callers: [:sandbox])
+      end
+    end
+  end
+
+  describe "add_tool_search_tool/2 (S14)" do
+    test "regex and bm25 variants, no beta" do
+      for {variant, type, name} <- [
+            {:regex, "tool_search_tool_regex_20251119", "tool_search_tool_regex"},
+            {:bm25, "tool_search_tool_bm25_20251119", "tool_search_tool_bm25"}
+          ] do
+        request = Request.new("m") |> Request.add_tool_search_tool(variant)
+        assert Request.to_map(request)["tools"] == [%{"type" => type, "name" => name}]
+        assert Request.required_betas(request) == []
+      end
+    end
+
+    test "other variants raise" do
+      assert_raise ArgumentError, ~r/add_tool_search_tool\/2/, fn ->
+        Request.add_tool_search_tool(Request.new("m"), :fuzzy)
+      end
+    end
+  end
+
+  describe "add_advisor_tool/3 (S14)" do
+    test "minimal: type, name, model, beta" do
+      request = Request.new("claude-sonnet-5") |> Request.add_advisor_tool("claude-opus-5-5")
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "advisor_20260301", "name" => "advisor", "model" => "claude-opus-5-5"}
+             ]
+
+      assert Request.required_betas(request) == ["advisor-tool-2026-03-01"]
+    end
+
+    test "all options" do
+      request =
+        Request.new("m")
+        |> Request.add_advisor_tool("claude-opus-5-5",
+          max_uses: 3,
+          max_tokens: 2048,
+          caching: "1h"
+        )
+
+      assert [
+               %{
+                 "max_uses" => 3,
+                 "max_tokens" => 2048,
+                 "caching" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ] = Request.to_map(request)["tools"]
+    end
+
+    test "bad caching and unknown options raise" do
+      assert_raise ArgumentError, ~r/add_advisor_tool\/3 :caching/, fn ->
+        Request.add_advisor_tool(Request.new("m"), "x", caching: "2h")
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_advisor_tool(Request.new("m"), "x", foo: 1)
+      end
+    end
+  end
+
+  describe "client toolsets (S14)" do
+    test "add_computer_toolset/1: bare entry, no name, no beta" do
+      request = Request.new("claude-opus-5-5") |> Request.add_computer_toolset()
+
+      assert Request.to_map(request)["tools"] == [%{"type" => "computer_toolset_20260801"}]
+      assert Request.required_betas(request) == []
+    end
+
+    test "configs keys are stringified; cache_control passes through" do
+      request =
+        Request.new("m")
+        |> Request.add_browser_toolset(
+          configs: %{"zoom" => %{"defer_loading" => false}, javascript_exec: %{enabled: true}},
+          cache_control: %{"type" => "ephemeral"}
+        )
+
+      assert Request.to_map(request)["tools"] == [
+               %{
+                 "type" => "browser_toolset_20260801",
+                 "configs" => %{
+                   "javascript_exec" => %{"enabled" => true},
+                   "zoom" => %{"defer_loading" => false}
+                 },
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "member configs may be keyword lists; other shapes raise naming :configs" do
+      request =
+        Request.new("m") |> Request.add_computer_toolset(configs: %{zoom: [enabled: false]})
+
+      assert [%{"configs" => %{"zoom" => %{"enabled" => false}}}] =
+               Request.to_map(request)["tools"]
+
+      assert_raise ArgumentError, ~r/add_computer_toolset\/2 :configs/, fn ->
+        Request.add_computer_toolset(Request.new("m"), configs: %{zoom: :off})
+      end
+    end
+
+    test "unknown options raise" do
+      assert_raise ArgumentError, fn ->
+        Request.add_computer_toolset(Request.new("m"), name: "x")
+      end
+    end
   end
 
   describe "enable_adaptive_thinking/2" do
@@ -833,6 +1413,160 @@ defmodule Claudio.Messages.RequestTest do
       assert_raise ArgumentError, fn ->
         Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(budget_tokens: 1024)
       end
+    end
+
+    test "block_binding: puts prefix_mismatch_behavior in thinking and declares the beta" do
+      for behavior <- [:error, :drop_block] do
+        request =
+          Request.new("claude-opus-5-5")
+          |> Request.enable_adaptive_thinking(block_binding: behavior)
+
+        assert Request.to_map(request)["thinking"] == %{
+                 "type" => "adaptive",
+                 "block_binding" => %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+               }
+
+        assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+      end
+    end
+
+    test "block_binding composes with display: :summarized (spec Testing)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :summarized, block_binding: :drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "summarized",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "block_binding composes with display: :updates — both betas (Review Focus 2)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates, block_binding: :drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "updates",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert Request.required_betas(request) == [
+               "thinking-display-updates-2026-08-18",
+               "thinking-binding-controls-2026-08-01"
+             ]
+    end
+
+    test "re-calling without block_binding drops it; the beta stays (Review Focus 3)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(block_binding: :error)
+        |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "block_binding: nil is the same as omitting it" do
+      request = Request.new("m") |> Request.enable_adaptive_thinking(block_binding: nil)
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
+    end
+
+    test "unknown block_binding values raise" do
+      for bad <- [:strict, "drop_block"] do
+        assert_raise ArgumentError,
+                     ~r/enable_adaptive_thinking\/2 :block_binding must be :error or :drop_block; got/,
+                     fn ->
+                       Request.enable_adaptive_thinking(Request.new("m"), block_binding: bad)
+                     end
+      end
+    end
+  end
+
+  describe "set_thinking_block_binding/2" do
+    @binding %{"prefix_mismatch_behavior" => "drop_block"}
+
+    test "merges into adaptive thinking set earlier, keeping display" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :summarized)
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "summarized",
+               "block_binding" => @binding
+             }
+
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "merges into a raw enabled thinking map" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 2048})
+        |> Request.set_thinking_block_binding(:error)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "enabled",
+               "budget_tokens" => 2048,
+               "block_binding" => %{"prefix_mismatch_behavior" => "error"}
+             }
+    end
+
+    test "an atom-keyed raw map gains the string key only (Review Focus 1)" do
+      request =
+        Request.new("m")
+        |> Request.enable_thinking(%{type: "enabled", budget_tokens: 2048})
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert request.thinking == %{
+               "block_binding" => @binding,
+               type: "enabled",
+               budget_tokens: 2048
+             }
+    end
+
+    test "an atom :block_binding key is replaced, not duplicated" do
+      request =
+        Request.new("m")
+        |> Request.enable_thinking(%{
+          type: "adaptive",
+          block_binding: %{prefix_mismatch_behavior: "error"}
+        })
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert request.thinking == %{"block_binding" => @binding, type: "adaptive"}
+    end
+
+    test "a later disable_thinking/1 replaces it" do
+      request =
+        Request.new("m")
+        |> Request.enable_adaptive_thinking()
+        |> Request.set_thinking_block_binding(:error)
+        |> Request.disable_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "no thinking set, or a bad value, raises" do
+      assert_raise ArgumentError, ~r/set_thinking_block_binding\/2 needs thinking/, fn ->
+        Request.set_thinking_block_binding(Request.new("m"), :error)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/set_thinking_block_binding\/2 behavior must be :error or :drop_block; got/,
+                   fn ->
+                     Request.new("m")
+                     |> Request.enable_adaptive_thinking()
+                     |> Request.set_thinking_block_binding(:strict)
+                   end
     end
   end
 
@@ -1230,6 +1964,181 @@ defmodule Claudio.Messages.RequestTest do
       map = Request.new("m") |> Request.add_message(:user, "hi") |> Request.to_map()
 
       assert map == %{"model" => "m", "messages" => [%{"role" => "user", "content" => "hi"}]}
+    end
+  end
+
+  describe "add_message/3 with parsed Response content (pre-release audit)" do
+    # Live probe G2 (2026-09-26): "caller": null is rejected ("Input should be an object").
+    test "typed blocks are sent in API shape, without nil fields" do
+      raw = [
+        %{"type" => "text", "text" => "Checking"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => %{"a" => 1}},
+        %{"type" => "server_tool_use", "id" => "srv_1", "name" => "web_search", "input" => %{}}
+      ]
+
+      response = Claudio.Messages.Response.from_map(%{"content" => raw})
+      request = Request.new("m") |> Request.add_message(:assistant, response.content)
+
+      assert request.messages == [%{"role" => "assistant", "content" => raw}]
+      assert Jason.encode!(request.messages) =~ ~s("toolu_1")
+      refute Jason.encode!(request.messages) =~ "null"
+    end
+  end
+
+  describe "tool helper robustness (pre-release audit)" do
+    test "atom-keyed tool maps don't get duplicate JSON keys" do
+      base = %{name: "x", description: "d", input_schema: %{type: "object"}}
+
+      for request <- [
+            Request.add_strict_tool(Request.new("m"), Map.put(base, :strict, false)),
+            Request.add_tool_with_eager_streaming(
+              Request.new("m"),
+              Map.put(base, :eager_input_streaming, false)
+            ),
+            Request.add_tool_with_cache(
+              Request.new("m"),
+              Map.put(base, :cache_control, %{type: "ephemeral"}),
+              ttl: "1h"
+            ),
+            Request.add_tool(Request.new("m"), Map.put(base, :defer_loading, false),
+              defer_loading: true
+            )
+          ] do
+        [tool] = request.tools
+        # An atom key and its string twin would encode as the same JSON key twice.
+        names = tool |> Map.keys() |> Enum.map(&to_string/1)
+        assert names == Enum.uniq(names), "duplicate key in #{inspect(tool)}"
+      end
+    end
+
+    test "add_tool_with_cache/3 validates options and passes allowed_callers on" do
+      tool = %{"name" => "x", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.add_tool_with_cache(Request.new("m"), tool, allowed_callers: [:code_execution])
+
+      assert [%{"allowed_callers" => ["code_execution_20260120"], "cache_control" => _}] =
+               request.tools
+
+      # defer_loading + cache_control on one tool is an API 400 (spec F2); a typo must not vanish.
+      assert_raise ArgumentError, fn ->
+        Request.add_tool_with_cache(Request.new("m"), tool, defer_loading: true)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_tool_with_cache(Request.new("m"), tool, tll: "1h")
+      end
+    end
+
+    test "server tool helpers validate options and accept dated version atoms" do
+      assert_raise ArgumentError, fn ->
+        Request.add_web_search_tool(Request.new("m"), max_use: 3)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_web_fetch_tool(Request.new("m"), max_use: 3)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_text_editor_tool(Request.new("m"), max_chars: 3)
+      end
+
+      assert [%{"type" => "web_search_20260209"}] =
+               Request.add_web_search_tool(Request.new("m"), version: :"20260209").tools
+
+      assert [%{"type" => "web_fetch_20250910"}] =
+               Request.add_web_fetch_tool(Request.new("m"), version: :"20250910").tools
+    end
+
+    test "bad search_result cache_control and toolset configs raise ArgumentError" do
+      assert_raise ArgumentError, ~r/cache_control/, fn ->
+        Request.search_result_block("s", "t", ["x"], cache_control: :ephemeral)
+      end
+
+      assert_raise ArgumentError, ~r/:configs/, fn ->
+        Request.add_computer_toolset(Request.new("m"), configs: "bad")
+      end
+    end
+
+    test "context-edit option types are checked; a second clear_thinking replaces the first" do
+      r = Request.new("m")
+
+      assert_raise ArgumentError, ~r/:exclude_tools/, fn ->
+        Request.add_clear_tool_uses(r, exclude_tools: "bash")
+      end
+
+      assert_raise ArgumentError, ~r/:clear_tool_inputs/, fn ->
+        Request.add_clear_tool_uses(r, clear_tool_inputs: "yes")
+      end
+
+      request =
+        r
+        |> Request.add_clear_thinking(keep: 1)
+        |> Request.add_clear_tool_uses()
+        |> Request.add_clear_thinking(keep: :all)
+
+      assert [
+               %{"type" => "clear_thinking_20251015", "keep" => "all"},
+               %{"type" => "clear_tool_uses_20250919"}
+             ] =
+               request.context_management["edits"]
+    end
+  end
+
+  describe "add_message_with_image/5 media type (pre-release audit)" do
+    defp image_media_type(request) do
+      [%{"content" => [%{"source" => %{"media_type" => type}}, _]}] = request.messages
+      type
+    end
+
+    test "without a media type, PNG/GIF/WebP/JPEG are detected from the data" do
+      for {bytes, type} <- [
+            {<<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, 0, 0>>, "image/png"},
+            {"GIF89a" <> <<0, 0>>, "image/gif"},
+            {"RIFF" <> <<0, 0, 0, 0>> <> "WEBPVP8 ", "image/webp"},
+            {<<0xFF, 0xD8, 0xFF, 0xE0, 0, 0>>, "image/jpeg"}
+          ] do
+        request =
+          Request.new("m") |> Request.add_message_with_image(:user, "?", Base.encode64(bytes))
+
+        assert image_media_type(request) == type
+      end
+    end
+
+    test "unrecognized data keeps the documented image/jpeg default; an explicit type wins" do
+      assert Request.new("m")
+             |> Request.add_message_with_image(:user, "?", "abc")
+             |> image_media_type() ==
+               "image/jpeg"
+
+      png = Base.encode64(<<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A>>)
+
+      assert Request.new("m")
+             |> Request.add_message_with_image(:user, "?", png, "image/webp")
+             |> image_media_type() == "image/webp"
+    end
+  end
+
+  describe "re-audit: typed blocks keep cache_control" do
+    test "a typed block with cache_control keeps the breakpoint" do
+      request =
+        Request.new("m")
+        |> Request.add_message(:user, [
+          %{type: :text, text: "hi", cache_control: %{"type" => "ephemeral"}}
+        ])
+
+      assert [
+               %{
+                 "content" => [
+                   %{
+                     "type" => "text",
+                     "text" => "hi",
+                     "cache_control" => %{"type" => "ephemeral"}
+                   }
+                 ]
+               }
+             ] =
+               request.messages
     end
   end
 end

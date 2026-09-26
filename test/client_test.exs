@@ -1,5 +1,6 @@
 defmodule Claudio.ClientTest do
-  use ExUnit.Case, async: true
+  # Not async: these tests change global application env that every client reads.
+  use ExUnit.Case, async: false
 
   describe "timeout configuration" do
     setup do
@@ -198,6 +199,153 @@ defmodule Claudio.ClientTest do
       client = Claudio.Client.new(%{token: "t", version: "2023-06-01", beta: ["a-2025-01-01"]})
       merged = Claudio.Client.with_betas(client, [" b-2025-01-01 ", "", "   "])
       assert merged.headers["anthropic-beta"] == ["a-2025-01-01,b-2025-01-01"]
+    end
+  end
+
+  describe "documented app config (pre-release audit)" do
+    setup do
+      saved =
+        for key <- [:default_api_version, :default_beta_features],
+            do: {key, Application.get_env(:claudio, key)}
+
+      saved_client = Application.get_env(:claudio, Claudio.Client)
+
+      on_exit(fn ->
+        for {key, value} <- saved do
+          if value,
+            do: Application.put_env(:claudio, key, value),
+            else: Application.delete_env(:claudio, key)
+        end
+
+        if saved_client,
+          do: Application.put_env(:claudio, Claudio.Client, saved_client),
+          else: Application.delete_env(:claudio, Claudio.Client)
+      end)
+    end
+
+    test "config :claudio, default_api_version / default_beta_features (the README form) apply" do
+      Application.put_env(:claudio, :default_api_version, "2099-01-01")
+      Application.put_env(:claudio, :default_beta_features, ["x-2026-01-01"])
+
+      client = Claudio.Client.new(%{token: "t"})
+
+      assert client.headers["anthropic-version"] == ["2099-01-01"]
+      assert client.headers["anthropic-beta"] == ["x-2026-01-01"]
+    end
+
+    # Req logs each retry at :warning.
+    @tag :capture_log
+    test "retry: [...] retries a POST on a retryable status" do
+      bypass = Bypass.open()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        :counters.add(count, 1, 1)
+
+        if :counters.get(count, 1) == 1 do
+          Plug.Conn.resp(conn, 503, "")
+        else
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            200,
+            Jason.encode!(%{
+              "id" => "m",
+              "type" => "message",
+              "role" => "assistant",
+              "model" => "x",
+              "content" => [],
+              "stop_reason" => "end_turn",
+              "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+            })
+          )
+        end
+      end)
+
+      Application.put_env(:claudio, Claudio.Client,
+        retry: [max_retries: 2, delay: 1, max_delay: 5]
+      )
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      request =
+        Claudio.Messages.Request.new("x")
+        |> Claudio.Messages.Request.add_message(:user, "hi")
+        |> Claudio.Messages.Request.set_max_tokens(8)
+
+      assert {:ok, %Claudio.Messages.Response{}} = Claudio.Messages.create(client, request)
+      assert :counters.get(count, 1) == 2
+    end
+
+    test "retryable statuses include 429, 5xx and 529 (overloaded); 400 is not" do
+      for status <- [408, 429, 500, 502, 503, 504, 529] do
+        assert Claudio.Client.retryable?(nil, %Req.Response{status: status})
+      end
+
+      refute Claudio.Client.retryable?(nil, %Req.Response{status: 400})
+      assert Claudio.Client.retryable?(nil, %Req.TransportError{reason: :timeout})
+    end
+  end
+
+  describe "re-audit: retry and streaming" do
+    setup do
+      saved = Application.get_env(:claudio, Claudio.Client)
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:claudio, Claudio.Client, saved),
+          else: Application.delete_env(:claudio, Claudio.Client)
+      end)
+    end
+
+    test "streaming requests are not retried and leave no stray messages in the mailbox" do
+      bypass = Bypass.open()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        :counters.add(count, 1, 1)
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          503,
+          Jason.encode!(%{
+            "type" => "error",
+            "error" => %{"type" => "overloaded_error", "message" => "busy"}
+          })
+        )
+      end)
+
+      Application.put_env(:claudio, Claudio.Client, retry: [max_retries: 2, delay: 1])
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      request =
+        Claudio.Messages.Request.new("x")
+        |> Claudio.Messages.Request.add_message(:user, "hi")
+        |> Claudio.Messages.Request.set_max_tokens(8)
+        |> Claudio.Messages.Request.enable_streaming()
+
+      assert {:error, %Claudio.APIError{status_code: 503}} =
+               Claudio.Messages.create(client, request)
+
+      assert :counters.get(count, 1) == 1
+      refute_receive _, 100
+    end
+
+    test "retry: false disables retries entirely (Req's GET/HEAD default too)" do
+      Application.put_env(:claudio, Claudio.Client, retry: false)
+      client = Claudio.Client.new(%{token: "t", version: "2023-06-01"})
+
+      assert client.options[:retry] == false
     end
   end
 end

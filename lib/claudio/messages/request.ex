@@ -42,7 +42,8 @@ defmodule Claudio.Messages.Request do
           speed: String.t() | nil,
           inference_geo: String.t() | nil,
           diagnostics: map() | nil,
-          fallbacks: String.t() | [map()] | nil
+          fallbacks: String.t() | [map()] | nil,
+          compaction: map() | nil
         }
 
   defstruct [
@@ -69,11 +70,24 @@ defmodule Claudio.Messages.Request do
     speed: nil,
     inference_geo: nil,
     diagnostics: nil,
-    fallbacks: nil
+    fallbacks: nil,
+    compaction: nil
   ]
 
   # Server-side refusal fallbacks; also needed to replay a `fallback` block (probed 2026-09-25).
   @fallback_beta "server-side-fallback-2026-07-01"
+
+  # Context editing (clear_* edits) and threshold compaction (compact_20260112; also needed
+  # to replay an unsigned compaction block). Probed 2026-09-26.
+  @context_management_beta "context-management-2025-06-27"
+  @compaction_beta "compact-2026-01-12"
+
+  # On-demand compaction (top-level `compaction`); also needed on every later request that
+  # replays a signed compaction block (probed 2026-09-26).
+  @on_demand_compaction_beta "compact-2026-09-04"
+
+  # Advisor tool; also needed to replay advisor blocks (probed 2026-09-26).
+  @advisor_beta "advisor-tool-2026-03-01"
 
   @doc """
   Creates a new request builder with the specified model.
@@ -99,6 +113,13 @@ defmodule Claudio.Messages.Request do
 
   A list `content` holding a `fallback` block (from `Response.to_assistant_content/1`)
   declares `server-side-fallback-2026-07-01`, which the API requires to accept it.
+
+  A `compaction` block declares its replay beta: `compact-2026-09-04` when it carries a
+  `signature` (on-demand), else `compact-2026-01-12` (threshold — which also needs the
+  `compact_20260112` edit on the request; see `add_compaction/2`).
+
+  Advisor blocks (`advisor_tool_result`, or a `server_tool_use` named `"advisor"`) declare
+  `advisor-tool-2026-03-01`.
 
   ## Examples
 
@@ -129,7 +150,15 @@ defmodule Claudio.Messages.Request do
 
     # Replaying a `fallback` block (Response.to_assistant_content/1) needs the beta even
     # on a turn that does not set fallbacks (400 without it, probed 2026-09-25).
-    if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
+    request =
+      if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
+
+    # A replayed compaction block needs its beta: signed (on-demand) blocks need
+    # compact-2026-09-04, unsigned (threshold) blocks compact-2026-01-12 (probed 2026-09-26).
+    request = add_compaction_replay_betas(request, content)
+
+    # Replaying advisor blocks needs the advisor beta even without the tool (probed 2026-09-26).
+    if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
   end
 
   defp has_fallback_block?(content) when is_list(content) do
@@ -142,23 +171,81 @@ defmodule Claudio.Messages.Request do
 
   defp has_fallback_block?(_content), do: false
 
+  defp add_compaction_replay_betas(request, content) when is_list(content) do
+    Enum.reduce(content, request, fn block, acc ->
+      cond do
+        not compaction_block?(block) -> acc
+        compaction_signature(block) -> add_beta(acc, @on_demand_compaction_beta)
+        true -> add_beta(acc, @compaction_beta)
+      end
+    end)
+  end
+
+  defp add_compaction_replay_betas(request, _content), do: request
+
+  defp compaction_block?(%{"type" => type}), do: type in ["compaction", :compaction]
+  defp compaction_block?(%{type: type}), do: type in ["compaction", :compaction]
+  defp compaction_block?(_block), do: false
+
+  # A typed block (Response) keeps the original under :raw.
+  defp compaction_signature(%{raw: raw}) when is_map(raw), do: compaction_signature(raw)
+  defp compaction_signature(block), do: Map.get(block, "signature") || Map.get(block, :signature)
+
+  defp has_advisor_block?(content) when is_list(content),
+    do: Enum.any?(content, &advisor_block?/1)
+
+  defp has_advisor_block?(_content), do: false
+
+  defp advisor_block?(block) when is_map(block) do
+    type = Map.get(block, "type") || Map.get(block, :type)
+    name = Map.get(block, "name") || Map.get(block, :name)
+
+    type in ["advisor_tool_result", :advisor_tool_result] or
+      (type in ["server_tool_use", :server_tool_use] and name == "advisor")
+  end
+
+  defp advisor_block?(_block), do: false
+
+  defp edit_type(%{"type" => type}), do: to_string(type)
+  defp edit_type(%{type: type}), do: to_string(type)
+  defp edit_type(_edit), do: nil
+
+  defp has_compact_edit?(config) do
+    case Map.get(config, "edits") || Map.get(config, :edits) do
+      edits when is_list(edits) ->
+        Enum.any?(edits, fn
+          %{"type" => type} -> type in ["compact_20260112", :compact_20260112]
+          %{type: type} -> type in ["compact_20260112", :compact_20260112]
+          _ -> false
+        end)
+
+      _ ->
+        false
+    end
+  end
+
   @doc """
   Adds a text message with an image from a base64-encoded string.
+
+  Without `media_type`, PNG, GIF, WebP and JPEG are detected from the data's leading
+  bytes (a mismatched type is a 400); anything unrecognized is sent as `"image/jpeg"`.
 
   ## Example
 
       Request.new("claude-opus-5-5")
       |> Request.add_message_with_image(:user, "What's in this image?", base64_data, "image/jpeg")
   """
-  @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t()) :: t()
+  @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t() | nil) :: t()
   def add_message_with_image(
         %__MODULE__{} = request,
         role,
         text,
         base64_data,
-        media_type \\ "image/jpeg"
+        media_type \\ nil
       )
       when role in [:user, :assistant] do
+    media_type = media_type || detect_image_type(base64_data)
+
     content = [
       %{
         "type" => "image",
@@ -438,11 +525,53 @@ defmodule Claudio.Messages.Request do
 
       Request.new("claude-opus-5-5")
       |> Request.add_tool(tool)
+
+  ## Options
+
+  - `:defer_loading` — `true` keeps the tool out of the initial prompt until a tool search
+    tool (`add_tool_search_tool/2`) returns a reference to it. At least one tool must stay
+    non-deferred.
+  - `:allowed_callers` — who may call the tool: `:direct` (the model; the default when
+    omitted), `:code_execution` (code inside a `code_execution_20260120`+ sandbox —
+    programmatic tool calling), or a raw string.
   """
-  @spec add_tool(t(), map()) :: t()
-  def add_tool(%__MODULE__{tools: tools} = request, tool) when is_map(tool) do
-    current_tools = tools || []
-    %{request | tools: current_tools ++ [tool]}
+  @spec add_tool(t(), map(), keyword()) :: t()
+  def add_tool(%__MODULE__{tools: tools} = request, tool, opts \\ [])
+      when is_map(tool) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:defer_loading, :allowed_callers])
+
+    tool =
+      tool
+      |> put_tool_key("defer_loading", defer_loading!(Keyword.get(opts, :defer_loading)))
+      |> put_tool_key("allowed_callers", allowed_callers!(Keyword.get(opts, :allowed_callers)))
+
+    %{request | tools: (tools || []) ++ [tool]}
+  end
+
+  defp defer_loading!(value) when is_boolean(value) or is_nil(value), do: value
+
+  defp defer_loading!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :defer_loading must be a boolean; got #{inspect(other)}"
+  end
+
+  defp allowed_callers!(nil), do: nil
+  defp allowed_callers!(callers) when is_list(callers), do: Enum.map(callers, &allowed_caller!/1)
+
+  defp allowed_callers!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :allowed_callers must be a list; got #{inspect(other)}"
+  end
+
+  defp allowed_caller!(:direct), do: "direct"
+  # Responses always tag programmatic calls as code_execution_20260120 (tool-reference).
+  defp allowed_caller!(:code_execution), do: "code_execution_20260120"
+  defp allowed_caller!(caller) when is_binary(caller), do: caller
+
+  defp allowed_caller!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :allowed_callers entries must be :direct, :code_execution " <>
+            "or a string; got #{inspect(other)}"
   end
 
   @doc """
@@ -463,8 +592,10 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
   def add_tool_with_cache(%__MODULE__{} = request, tool, opts \\ []) when is_map(tool) do
-    tool_with_cache = Map.put(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
-    add_tool(request, tool_with_cache)
+    # defer_loading is left out on purpose: the API rejects it together with cache_control.
+    opts = Keyword.validate!(opts, [:ttl, :allowed_callers])
+    tool = put_tool_key(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
+    add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
 
   @doc """
@@ -533,6 +664,8 @@ defmodule Claudio.Messages.Request do
 
   @thinking_displays [:summarized, :omitted, :updates]
   @thinking_display_updates_beta "thinking-display-updates-2026-08-18"
+  @block_binding_behaviors [:error, :drop_block]
+  @block_binding_beta "thinking-binding-controls-2026-08-01"
 
   @doc """
   Enables adaptive thinking (`thinking: %{"type" => "adaptive"}`), replacing any
@@ -545,6 +678,13 @@ defmodule Claudio.Messages.Request do
     to use the model's default. `:updates` (progress notes as separate `thinking` blocks)
     also declares the `thinking-display-updates-2026-08-18` beta. A beta declared
     here stays declared if `thinking` is later replaced.
+  - `:block_binding` — `:error` or `:drop_block`: what the API does with a `thinking` block
+    whose conversation prefix changed since it was produced (an edited earlier message, a
+    block removed from the middle). `:error` rejects the request (400); `:drop_block` drops
+    that block and every later thinking block and reports it in
+    `Response.input_transformations`. Declares `thinking-binding-controls-2026-08-01`.
+    Unset: accounts created on/after 2026-08-31 behave as `:error`; older accounts are not
+    enforced. See `set_thinking_block_binding/2`.
 
   ## Example
 
@@ -554,25 +694,87 @@ defmodule Claudio.Messages.Request do
   """
   @spec enable_adaptive_thinking(t(), keyword()) :: t()
   def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:display])
+    opts = Keyword.validate!(opts, [:display, :block_binding])
 
-    case Keyword.fetch(opts, :display) do
-      missing when missing in [:error, {:ok, nil}] ->
-        %{request | thinking: %{"type" => "adaptive"}}
+    display =
+      case Keyword.get(opts, :display) do
+        nil ->
+          nil
 
-      {:ok, display} when display in @thinking_displays ->
-        thinking = %{"type" => "adaptive", "display" => Atom.to_string(display)}
-        request = %{request | thinking: thinking}
+        display when display in @thinking_displays ->
+          display
 
-        if display == :updates,
-          do: add_beta(request, @thinking_display_updates_beta),
-          else: request
+        other ->
+          raise ArgumentError,
+                "Request.enable_adaptive_thinking/2 :display must be one of " <>
+                  ":summarized, :omitted, :updates; got #{inspect(other)}"
+      end
 
-      {:ok, other} ->
+    binding = block_binding!("enable_adaptive_thinking/2", Keyword.get(opts, :block_binding))
+
+    thinking =
+      %{"type" => "adaptive"}
+      |> maybe_put("display", display && Atom.to_string(display))
+      |> maybe_put("block_binding", binding)
+
+    request = %{request | thinking: thinking}
+
+    request =
+      if display == :updates, do: add_beta(request, @thinking_display_updates_beta), else: request
+
+    if binding, do: add_beta(request, @block_binding_beta), else: request
+  end
+
+  @doc """
+  Sets `thinking.block_binding.prefix_mismatch_behavior` (`:error` or `:drop_block`) on the
+  thinking config already set — adaptive or a raw `enable_thinking/2` `"enabled"` map —
+  and declares `thinking-binding-controls-2026-08-01`. Raises if no thinking config is set.
+  A later thinking setter replaces the whole map (the beta stays declared). The API rejects
+  `block_binding` on `"disabled"` thinking.
+
+  `:error` rejects a request whose `thinking` block no longer matches the conversation
+  prefix it was produced under (400); `:drop_block` drops that block and every later
+  thinking block and reports it in `Response.input_transformations`. Unset, accounts
+  created on/after 2026-08-31 behave as `:error` and older accounts are not enforced — set
+  it explicitly to get the same behavior everywhere.
+
+  ## Example
+
+      Request.new("claude-sonnet-4-6")
+      |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 2048})
+      |> Request.set_thinking_block_binding(:drop_block)
+  """
+  @spec set_thinking_block_binding(t(), :error | :drop_block) :: t()
+  def set_thinking_block_binding(%__MODULE__{} = request, behavior)
+      when behavior in @block_binding_behaviors do
+    case request.thinking do
+      nil ->
         raise ArgumentError,
-              "Request.enable_adaptive_thinking/2 :display must be one of " <>
-                ":summarized, :omitted, :updates; got #{inspect(other)}"
+              "Request.set_thinking_block_binding/2 needs thinking set first " <>
+                "(enable_adaptive_thinking/2 or enable_thinking/2)"
+
+      thinking ->
+        binding = %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+        # Drop an atom :block_binding so an atom-keyed raw map can't emit the key twice.
+        thinking = thinking |> Map.delete(:block_binding) |> Map.put("block_binding", binding)
+        add_beta(%{request | thinking: thinking}, @block_binding_beta)
     end
+  end
+
+  def set_thinking_block_binding(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_thinking_block_binding/2 behavior must be :error or :drop_block; " <>
+            "got #{inspect(other)}"
+  end
+
+  defp block_binding!(_fun, nil), do: nil
+
+  defp block_binding!(_fun, behavior) when behavior in @block_binding_behaviors,
+    do: %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+
+  defp block_binding!(fun, other) do
+    raise ArgumentError,
+          "Request.#{fun} :block_binding must be :error or :drop_block; got #{inspect(other)}"
   end
 
   @doc """
@@ -656,22 +858,303 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
-  Sets context management configuration.
-
-  Controls how context is managed across requests.
+  Sets the raw `context_management` map, replacing any previous one (including edits added
+  by `add_clear_tool_uses/2`, `add_clear_thinking/2`, `add_compaction/2`; betas they
+  declared stay). Always declares `context-management-2025-06-27`; also declares
+  `compact-2026-01-12` when `edits` holds a `compact_20260112` edit (the API rejects it
+  otherwise). Prefer the builders.
 
   ## Example
 
       Request.new("claude-opus-5-5")
       |> Request.set_context_management(%{
-        "strategy" => "auto",
-        "max_context_tokens" => 100000
+        "edits" => [
+          %{"type" => "clear_thinking_20251015", "keep" => "all"},
+          %{"type" => "clear_tool_uses_20250919", "keep" => %{"type" => "tool_uses", "value" => 3}},
+          %{"type" => "compact_20260112", "trigger" => %{"type" => "input_tokens", "value" => 150_000}}
+        ]
       })
   """
   @spec set_context_management(t(), map()) :: t()
   def set_context_management(%__MODULE__{} = request, config) when is_map(config) do
-    %{request | context_management: config}
-    |> add_beta("context-management-2025-06-27")
+    request = add_beta(%{request | context_management: config}, @context_management_beta)
+    if has_compact_edit?(config), do: add_beta(request, @compaction_beta), else: request
+  end
+
+  @doc """
+  Adds a `clear_tool_uses_20250919` context edit (declares `context-management-2025-06-27`):
+  once the trigger is reached, the API clears older tool results from the prompt it sends
+  to the model. Your stored history is unchanged.
+
+  ## Options (each omitted option is left to the API default)
+
+  - `:trigger` — `{:input_tokens, n}` or `{:tool_uses, n}`
+  - `:keep` — number of most recent tool uses to keep
+  - `:clear_at_least` — minimum input tokens to clear (makes the cache invalidation worth it)
+  - `:exclude_tools` — tool names never cleared
+  - `:clear_tool_inputs` — `true`, `false`, or a list of tool names whose inputs are cleared too
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.add_clear_tool_uses(trigger: {:input_tokens, 100_000}, keep: 3)
+  """
+  @spec add_clear_tool_uses(t(), keyword()) :: t()
+  def add_clear_tool_uses(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts =
+      Keyword.validate!(opts, [
+        :trigger,
+        :keep,
+        :clear_at_least,
+        :exclude_tools,
+        :clear_tool_inputs
+      ])
+
+    fun = "add_clear_tool_uses/2"
+
+    edit =
+      %{"type" => "clear_tool_uses_20250919"}
+      |> maybe_put("trigger", map_opt(opts, :trigger, &clear_trigger!/1))
+      |> maybe_put("keep", map_opt(opts, :keep, &count_map!(fun, :keep, "tool_uses", &1)))
+      |> maybe_put(
+        "clear_at_least",
+        map_opt(opts, :clear_at_least, &count_map!(fun, :clear_at_least, "input_tokens", &1))
+      )
+      |> maybe_put(
+        "exclude_tools",
+        map_opt(opts, :exclude_tools, &string_list!(fun, :exclude_tools, &1))
+      )
+      |> maybe_put(
+        "clear_tool_inputs",
+        clear_tool_inputs!(fun, Keyword.get(opts, :clear_tool_inputs))
+      )
+
+    request |> put_edit(edit, :last) |> add_beta(@context_management_beta)
+  end
+
+  @doc """
+  Adds a `clear_thinking_20251015` context edit (declares `context-management-2025-06-27`).
+  It is always placed **first** in `edits` — the API rejects it anywhere else.
+
+  ## Options
+
+  - `:keep` — `:all`, or a positive number of recent assistant turns whose thinking is kept.
+    Omitted: the model's default.
+  """
+  @spec add_clear_thinking(t(), keyword()) :: t()
+  def add_clear_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:keep])
+
+    keep =
+      case Keyword.get(opts, :keep) do
+        nil ->
+          nil
+
+        :all ->
+          "all"
+
+        n when is_integer(n) and n > 0 ->
+          %{"type" => "thinking_turns", "value" => n}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_clear_thinking/2 :keep must be :all or a positive integer; " <>
+                  "got #{inspect(other)}"
+      end
+
+    edit = maybe_put(%{"type" => "clear_thinking_20251015"}, "keep", keep)
+    request |> put_edit(edit, :first) |> add_beta(@context_management_beta)
+  end
+
+  @doc """
+  Adds a `compact_20260112` edit — **threshold compaction** (declares `compact-2026-01-12`).
+  When the input passes the trigger, the API summarizes the conversation into a
+  `compaction` block at the start of the reply; everything before that block is ignored
+  on later turns. Keep this edit on every later request that replays the block (the API
+  rejects a replayed threshold block without it); see `apply_compaction/2`.
+
+  ## Options (each omitted option is left to the API default)
+
+  - `:trigger` — input tokens that trigger compaction (API default 150000, minimum 50000)
+  - `:pause_after_compaction` — `true` returns right after the summary
+    (`stop_reason: :compaction`)
+  - `:instructions` — summarization instructions
+  """
+  @spec add_compaction(t(), keyword()) :: t()
+  def add_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:trigger, :pause_after_compaction, :instructions])
+
+    edit =
+      %{"type" => "compact_20260112"}
+      |> maybe_put(
+        "trigger",
+        map_opt(opts, :trigger, &count_map!("add_compaction/2", :trigger, "input_tokens", &1))
+      )
+      |> maybe_put("pause_after_compaction", pause_after_compaction!(opts))
+      |> maybe_put("instructions", opts[:instructions])
+
+    request |> put_edit(edit, :last) |> add_beta(@compaction_beta)
+  end
+
+  @doc """
+  Asks for an **on-demand** summary of the conversation so far (top-level
+  `compaction: %{"type" => "summarize"}`; declares `compact-2026-09-04`). The reply is only
+  a signed `compaction` block with `stop_reason: :compaction`; continue with
+  `apply_compaction/2`. The API rejects this combined with `context_management`,
+  `stop_sequences`, `output_config.format`, a forced `tool_choice`, or a last assistant
+  turn ending in an unanswered `tool_use` — those are left to its 400. To drop
+  context-management edits set earlier, use `%{request | context_management: nil}`
+  (`set_context_management/2` takes a map, and `%{}` would still be sent).
+
+  ## Options
+
+  - `:instructions` — replaces the default summarization prompt (≤ 16384 characters)
+
+  ## Example
+
+      {:ok, summary} = Messages.create(client, Request.request_compaction(request))
+
+      request =
+        request
+        |> Request.apply_compaction(summary)
+        |> Request.add_message(:user, "Continue")
+  """
+  @spec request_compaction(t(), keyword()) :: t()
+  def request_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:instructions])
+    compaction = maybe_put(%{"type" => "summarize"}, "instructions", opts[:instructions])
+    add_beta(%{request | compaction: compaction}, @on_demand_compaction_beta)
+  end
+
+  @doc """
+  Continues a conversation from a compaction summary, for either kind of compaction.
+
+  Replaces `messages` with a single assistant message holding the response content from
+  its **last** `compaction` block onward (the block first, byte-exact, as the API
+  requires), and clears `compaction` so the next call is a normal turn. Everything else
+  — `system`, `tools`, `thinking`, `context_management` (a threshold replay needs its
+  `compact_20260112` edit), betas — is kept. The replay beta is declared by
+  `add_message/3`. Add the next user turn after it — also after a
+  `pause_after_compaction: true` reply, whose content is only the block (a
+  `[assistant: [block], user: …]` history is accepted, probe P8). A paused threshold
+  compaction summarized the user turn that triggered it too: re-add that turn after the
+  block if the next reply should still answer it.
+
+  Raises `ArgumentError` for a failed compaction (`content: nil`) — the current history
+  is still the only record of the conversation.
+
+  Editing the history yourself (rather than through this function) can invalidate the
+  signatures of kept `thinking` blocks; `set_thinking_block_binding(:drop_block)` makes the
+  API drop such blocks instead of rejecting the request.
+
+  Raises `ArgumentError` when the response has no `compaction` block.
+  """
+  @spec apply_compaction(t(), Claudio.Messages.Response.t()) :: t()
+  def apply_compaction(%__MODULE__{} = request, %Claudio.Messages.Response{} = response) do
+    content = Claudio.Messages.Response.to_assistant_content(response)
+
+    case last_compaction_index(content) do
+      nil ->
+        raise ArgumentError,
+              "Request.apply_compaction/2 response has no compaction block; " <>
+                "got stop_reason #{inspect(response.stop_reason)}"
+
+      index ->
+        block = Enum.at(content, index)
+
+        # A failed compaction returns a block with content: nil — nothing was summarized,
+        # so replacing the history with it would silently lose the conversation.
+        if is_nil(Map.get(block, "content") || Map.get(block, :content)) do
+          raise ArgumentError,
+                "Request.apply_compaction/2 compaction failed (content: nil); nothing was " <>
+                  "summarized — keep the current history"
+        end
+
+        %{request | messages: [], compaction: nil}
+        |> add_message(:assistant, Enum.drop(content, index))
+    end
+  end
+
+  defp last_compaction_index(content) do
+    content
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn {block, index}, last ->
+      if compaction_block?(block), do: index, else: last
+    end)
+  end
+
+  defp pause_after_compaction!(opts) do
+    case Keyword.get(opts, :pause_after_compaction) do
+      value when is_boolean(value) or is_nil(value) ->
+        value
+
+      other ->
+        raise ArgumentError,
+              "Request.add_compaction/2 :pause_after_compaction must be a boolean; " <>
+                "got #{inspect(other)}"
+    end
+  end
+
+  # nil means "not given"; any other value (including false) is validated by `fun`.
+  defp map_opt(opts, key, fun) do
+    case Keyword.get(opts, key) do
+      nil -> nil
+      value -> fun.(value)
+    end
+  end
+
+  defp string_list!(fun, opt, list) when is_list(list) do
+    if Enum.all?(list, &is_binary/1), do: list, else: string_list_error!(fun, opt, list)
+  end
+
+  defp string_list!(fun, opt, other), do: string_list_error!(fun, opt, other)
+
+  defp string_list_error!(fun, opt, value) do
+    raise ArgumentError,
+          "Request.#{fun} #{inspect(opt)} must be a list of tool names; got #{inspect(value)}"
+  end
+
+  defp clear_tool_inputs!(_fun, value) when is_boolean(value) or is_nil(value), do: value
+
+  defp clear_tool_inputs!(fun, value) when is_list(value),
+    do: string_list!(fun, :clear_tool_inputs, value)
+
+  defp clear_tool_inputs!(fun, other) do
+    raise ArgumentError,
+          "Request.#{fun} :clear_tool_inputs must be a boolean or a list of tool names; " <>
+            "got #{inspect(other)}"
+  end
+
+  defp clear_trigger!({kind, n}) when kind in [:input_tokens, :tool_uses] and is_integer(n),
+    do: %{"type" => Atom.to_string(kind), "value" => n}
+
+  defp clear_trigger!(other) do
+    raise ArgumentError,
+          "Request.add_clear_tool_uses/2 :trigger must be {:input_tokens, n} or " <>
+            "{:tool_uses, n}; got #{inspect(other)}"
+  end
+
+  defp count_map!(_fun, _opt, type, n) when is_integer(n), do: %{"type" => type, "value" => n}
+
+  defp count_map!(fun, opt, _type, other) do
+    raise ArgumentError,
+          "Request.#{fun} #{inspect(opt)} must be an integer; got #{inspect(other)}"
+  end
+
+  # Appends (or, for clear_thinking, prepends) an edit, keeping whichever key style
+  # (`"edits"` / `:edits`) a raw set_context_management/2 used and any other keys.
+  defp put_edit(%__MODULE__{context_management: cm} = request, edit, position) do
+    cm = cm || %{}
+    key = if Map.has_key?(cm, :edits) and not Map.has_key?(cm, "edits"), do: :edits, else: "edits"
+    current = Map.get(cm, key) || []
+
+    edits =
+      if position == :first,
+        # Only one clear_thinking edit is meaningful: a new one replaces the old.
+        do: [edit | Enum.reject(current, &(edit_type(&1) == edit["type"]))],
+        else: current ++ [edit]
+
+    %{request | context_management: Map.put(cm, key, edits)}
   end
 
   @doc """
@@ -1043,7 +1526,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_strict_tool(t(), map()) :: t()
   def add_strict_tool(%__MODULE__{} = request, tool) when is_map(tool) do
-    add_tool(request, Map.put(tool, "strict", true))
+    add_tool(request, put_tool_key(tool, "strict", true))
   end
 
   @doc """
@@ -1055,7 +1538,112 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_eager_streaming(t(), map()) :: t()
   def add_tool_with_eager_streaming(%__MODULE__{} = request, tool) when is_map(tool) do
-    add_tool(request, Map.put(tool, "eager_input_streaming", true))
+    add_tool(request, put_tool_key(tool, "eager_input_streaming", true))
+  end
+
+  @doc """
+  Adds a tool search tool (GA, no beta) so tools added with `defer_loading: true` are
+  found on demand: `:regex` (`tool_search_tool_regex_20251119`) or `:bm25`
+  (`tool_search_tool_bm25_20251119`).
+  """
+  @spec add_tool_search_tool(t(), :regex | :bm25) :: t()
+  def add_tool_search_tool(%__MODULE__{} = request, variant) when variant in [:regex, :bm25] do
+    name = "tool_search_tool_#{variant}"
+    add_tool(request, %{"type" => "#{name}_20251119", "name" => name})
+  end
+
+  def add_tool_search_tool(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.add_tool_search_tool/2 variant must be :regex or :bm25; got #{inspect(other)}"
+  end
+
+  @advisor_cache_ttls ["5m", "1h"]
+
+  @doc """
+  Adds the advisor tool (`advisor_20260301`; declares `advisor-tool-2026-03-01`): the model
+  can consult `model` mid-task. Replaying advisor blocks later also needs the beta —
+  `add_message/3` declares it.
+
+  ## Options
+
+  - `:max_uses` — advisor calls per request
+  - `:max_tokens` — advisor output cap (API minimum 1024)
+  - `:caching` — `"5m"` or `"1h"`: caches the advisor's context
+  """
+  @spec add_advisor_tool(t(), String.t(), keyword()) :: t()
+  def add_advisor_tool(%__MODULE__{} = request, model, opts \\ [])
+      when is_binary(model) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:max_uses, :max_tokens, :caching])
+
+    caching =
+      case Keyword.get(opts, :caching) do
+        nil ->
+          nil
+
+        ttl when ttl in @advisor_cache_ttls ->
+          %{"type" => "ephemeral", "ttl" => ttl}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_advisor_tool/3 :caching must be \"5m\" or \"1h\"; got #{inspect(other)}"
+      end
+
+    tool =
+      %{"type" => "advisor_20260301", "name" => "advisor", "model" => model}
+      |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
+      |> maybe_put("max_tokens", Keyword.get(opts, :max_tokens))
+      |> maybe_put("caching", caching)
+
+    request |> add_tool(tool) |> add_beta(@advisor_beta)
+  end
+
+  @doc """
+  Adds the computer use client toolset (`computer_toolset_20260801`, GA, no beta) — the
+  computer tool Claude Opus 5.5 accepts. Each action arrives as its own `tool_use` whose
+  `name` is the member (`"screenshot"`, `"left_click"`, …) and whose `toolset_name` is
+  `"computer"`; every `tool_result` must echo `toolset_name`
+  (`Claudio.Tools.create_tool_result/4`). See `Claudio.Agent` for a loop that does this.
+
+  ## Options
+
+  - `:configs` — `%{member => %{enabled: boolean, defer_loading: boolean}}`
+  - `:cache_control` — cache breakpoint on the entry
+  """
+  @spec add_computer_toolset(t(), keyword()) :: t()
+  def add_computer_toolset(%__MODULE__{} = request, opts \\ []),
+    do: add_toolset(request, "computer_toolset_20260801", opts)
+
+  @doc """
+  Adds the browser use client toolset (`browser_toolset_20260801`, GA, no beta). Same
+  mechanics and options as `add_computer_toolset/2`, with `toolset_name` `"browser"`.
+  """
+  @spec add_browser_toolset(t(), keyword()) :: t()
+  def add_browser_toolset(%__MODULE__{} = request, opts \\ []),
+    do: add_toolset(request, "browser_toolset_20260801", opts)
+
+  defp add_toolset(request, type, opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:configs, :cache_control])
+
+    configs =
+      case Keyword.get(opts, :configs) do
+        nil ->
+          nil
+
+        configs when not is_map(configs) ->
+          bad_member_config!(type, configs)
+
+        configs ->
+          Map.new(configs, fn {member, conf} ->
+            {to_string(member), member_config!(type, conf)}
+          end)
+      end
+
+    tool =
+      %{"type" => type}
+      |> maybe_put("configs", configs)
+      |> maybe_put("cache_control", Keyword.get(opts, :cache_control))
+
+    add_tool(request, tool)
   end
 
   @doc """
@@ -1075,6 +1663,15 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_web_search_tool(t(), keyword()) :: t()
   def add_web_search_tool(%__MODULE__{} = request, opts \\ []) do
+    opts =
+      Keyword.validate!(opts, [
+        :version,
+        :max_uses,
+        :allowed_domains,
+        :blocked_domains,
+        :user_location
+      ])
+
     tool =
       %{"type" => web_search_type(Keyword.get(opts, :version)), "name" => "web_search"}
       |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
@@ -1102,6 +1699,16 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_web_fetch_tool(t(), keyword()) :: t()
   def add_web_fetch_tool(%__MODULE__{} = request, opts \\ []) do
+    opts =
+      Keyword.validate!(opts, [
+        :version,
+        :max_uses,
+        :allowed_domains,
+        :blocked_domains,
+        :max_content_tokens,
+        :citations
+      ])
+
     tool =
       %{"type" => web_fetch_type(Keyword.get(opts, :version)), "name" => "web_fetch"}
       |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
@@ -1161,6 +1768,8 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_text_editor_tool(t(), keyword()) :: t()
   def add_text_editor_tool(%__MODULE__{} = request, opts \\ []) do
+    opts = Keyword.validate!(opts, [:max_characters])
+
     tool =
       %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
       |> maybe_put("max_characters", Keyword.get(opts, :max_characters))
@@ -1193,13 +1802,31 @@ defmodule Claudio.Messages.Request do
   ## Options
 
   - `:display_number` — X11 display number for the environment.
+  - `:version` — `:"20251124"` for `computer_20251124` (declares `computer-use-2025-11-24`).
+    Claude Opus 5.5 accepts only the toolset: use `add_computer_toolset/2`.
   """
   @spec add_computer_tool(t(), pos_integer(), pos_integer(), keyword()) :: t()
   def add_computer_tool(%__MODULE__{} = request, display_width_px, display_height_px, opts \\ [])
       when is_integer(display_width_px) and is_integer(display_height_px) do
+    opts = Keyword.validate!(opts, [:display_number, :version])
+
+    {type, beta} =
+      case Keyword.get(opts, :version) do
+        v when v in [nil, :"20250124"] ->
+          {"computer_20250124", "computer-use-2025-01-24"}
+
+        :"20251124" ->
+          {"computer_20251124", "computer-use-2025-11-24"}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_computer_tool/4 :version must be :\"20250124\" or :\"20251124\"; " <>
+                  "got #{inspect(other)} (use add_computer_toolset/2 for computer_toolset_20260801)"
+      end
+
     tool =
       %{
-        "type" => "computer_20250124",
+        "type" => type,
         "name" => "computer",
         "display_width_px" => display_width_px,
         "display_height_px" => display_height_px
@@ -1207,7 +1834,7 @@ defmodule Claudio.Messages.Request do
       |> maybe_put("display_number", Keyword.get(opts, :display_number))
 
     request
-    |> add_beta("computer-use-2025-01-24")
+    |> add_beta(beta)
     |> add_tool(tool)
   end
 
@@ -1292,17 +1919,74 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("inference_geo", request.inference_geo)
     |> maybe_put("diagnostics", request.diagnostics)
     |> maybe_put("fallbacks", request.fallbacks)
+    |> maybe_put("compaction", request.compaction)
   end
 
   defp cache_control_map(nil), do: %{"type" => "ephemeral"}
   defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
 
+  # Magic bytes of the image formats the API accepts; decodes only the first 16 bytes.
+  defp detect_image_type(base64_data) do
+    case Base.decode64(binary_part(base64_data, 0, min(byte_size(base64_data), 16)),
+           padding: false
+         ) do
+      {:ok, <<0x89, "PNG", _::binary>>} -> "image/png"
+      {:ok, <<"GIF8", _::binary>>} -> "image/gif"
+      {:ok, <<"RIFF", _::binary-size(4), "WEBP", _::binary>>} -> "image/webp"
+      _ -> "image/jpeg"
+    end
+  end
+
   defp normalize_content(content) when is_binary(content), do: content
-  defp normalize_content(content) when is_list(content), do: content
+  defp normalize_content(content) when is_list(content), do: Enum.map(content, &unwrap_typed/1)
   defp normalize_content(content), do: content
+
+  # Any atom-typed block came from Response parsing: send its API shape (the original map
+  # when kept under :raw), never the typed map with nil fields the API rejects.
+  # A cache_control the caller added to a typed block is kept (it is not a Response field).
+  defp unwrap_typed(%{type: type} = block) when is_atom(type) and not is_nil(type) do
+    api_block = Claudio.Messages.Response.to_api_block(block)
+
+    case Map.get(block, :cache_control) || Map.get(block, "cache_control") do
+      nil -> api_block
+      cache_control -> Map.put(api_block, "cache_control", cache_control)
+    end
+  end
+
+  defp unwrap_typed(block), do: block
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # Sets a string key on a caller's tool map, dropping an atom twin so the JSON never
+  # carries the key twice (atom-keyed tool maps are accepted everywhere).
+  defp put_tool_key(tool, _key, nil), do: tool
+
+  defp put_tool_key(tool, key, value),
+    do: tool |> Map.delete(String.to_atom(key)) |> Map.put(key, value)
+
+  defp stringify_keys(map) when is_map(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
+
+  defp member_config!(_type, conf) when is_map(conf), do: stringify_keys(conf)
+
+  defp member_config!(type, conf) when is_list(conf) do
+    if Keyword.keyword?(conf),
+      do: stringify_keys(Map.new(conf)),
+      else: bad_member_config!(type, conf)
+  end
+
+  defp member_config!(type, conf), do: bad_member_config!(type, conf)
+
+  defp bad_member_config!(type, conf) do
+    fun =
+      if type == "browser_toolset_20260801",
+        do: "add_browser_toolset/2",
+        else: "add_computer_toolset/2"
+
+    raise ArgumentError,
+          "Request.#{fun} :configs member values must be maps or keyword lists " <>
+            "(enabled:, defer_loading:); got #{inspect(conf)}"
+  end
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map
@@ -1310,10 +1994,12 @@ defmodule Claudio.Messages.Request do
   defp web_search_type(:basic), do: "web_search_20250305"
   defp web_search_type(nil), do: "web_search_20260209"
   defp web_search_type(version) when is_binary(version), do: version
+  defp web_search_type(version) when is_atom(version), do: "web_search_#{version}"
 
   defp web_fetch_type(:basic), do: "web_fetch_20250910"
   defp web_fetch_type(nil), do: "web_fetch_20260209"
   defp web_fetch_type(version) when is_binary(version), do: version
+  defp web_fetch_type(version) when is_atom(version), do: "web_fetch_#{version}"
 
   defp normalize_search_result_content(text) when is_binary(text),
     do: %{"type" => "text", "text" => text}
@@ -1324,4 +2010,10 @@ defmodule Claudio.Messages.Request do
   defp search_result_cache(false), do: nil
   defp search_result_cache(true), do: cache_control_map(nil)
   defp search_result_cache(ttl) when is_binary(ttl), do: cache_control_map(ttl)
+
+  defp search_result_cache(other) do
+    raise ArgumentError,
+          "Request.search_result_block/4 :cache_control must be true, false or a ttl " <>
+            "string (\"5m\" / \"1h\"); got #{inspect(other)}"
+  end
 end

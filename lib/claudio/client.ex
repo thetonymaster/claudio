@@ -31,18 +31,30 @@ defmodule Claudio.Client do
 
   ### Retry Configuration
 
-  Enable automatic retries for transient failures:
+  Enable automatic retries for transient failures — HTTP 408, 429, 500, 502, 503, 504,
+  529 (overloaded) and connection timeouts/refusals — on every method, including the
+  POSTs the Messages API uses:
 
       config :claudio, Claudio.Client,
-        retry: true  # Uses default retry strategy
+        retry: true  # 3 retries; Retry-After on 429/503, else backs off 1s, 2s, 4s
 
-      # Or customize:
+      # Or customize (delay doubles per attempt, capped at max_delay; all in ms):
       config :claudio, Claudio.Client,
         retry: [
           delay: 1000,
           max_retries: 3,
           max_delay: 10_000
         ]
+
+  Without `retry:`, Req's default applies: only GET/HEAD requests are retried.
+  `retry: false` disables retries entirely. Streaming requests are never retried.
+
+  Retries can duplicate work. After an ambiguous failure — a timeout, a closed connection,
+  a 5xx — the API may already have processed the request, and the retry sends it again:
+  a second message is generated and billed, and a create call (a batch, a file upload,
+  an Admin invite) can run twice. None of these endpoints take an idempotency key, so
+  set `retry: false` where a duplicate is unacceptable. After an ambiguous failure,
+  retry only if your application can deduplicate requests or reconcile the outcome.
 
   ## Usage
 
@@ -145,8 +157,18 @@ defmodule Claudio.Client do
     end
   end
 
+  # Documented form: `config :claudio, default_api_version: ..., default_beta_features: [...]`.
+  # The older nested `config :claudio, :claudio, ...` form is still read as a fallback.
   defp merge_defaults(config) do
-    app_config = Application.get_env(:claudio, :claudio, [])
+    nested = Application.get_env(:claudio, :claudio, [])
+
+    app_config =
+      Enum.reduce([:default_api_version, :default_beta_features], nested, fn key, acc ->
+        case Application.get_env(:claudio, key) do
+          nil -> acc
+          value -> Keyword.put(acc, key, value)
+        end
+      end)
 
     config
     |> Map.put_new(:version, Keyword.get(app_config, :default_api_version, @default_api_version))
@@ -177,14 +199,38 @@ defmodule Claudio.Client do
         finch -> [{:finch, finch} | Keyword.delete(opts, :connect_options)]
       end
 
-    req = Req.new(opts)
-
-    if retry_opts do
-      Req.Request.prepend_request_steps(req, retry: &apply_retry(&1, retry_opts))
-    else
-      req
-    end
+    Req.new(opts ++ req_retry_options(retry_opts))
   end
+
+  # Maps the documented `retry:` config onto Req's retry step. Req's own default only
+  # retries GET/HEAD, and every Messages call is a POST, so without this nothing retries.
+  defp req_retry_options(nil), do: []
+  defp req_retry_options(:disabled), do: [retry: false]
+
+  defp req_retry_options(opts) do
+    [retry: &retryable?/2, max_retries: Keyword.get(opts, :max_retries, 3)] ++
+      case Keyword.get(opts, :delay) do
+        # Unset: Req honours Retry-After on 429/503, else backs off 1s, 2s, 4s, ...
+        nil ->
+          []
+
+        delay ->
+          max_delay = Keyword.get(opts, :max_delay, 10_000)
+          [retry_delay: fn attempt -> min(delay * Integer.pow(2, attempt), max_delay) end]
+      end
+  end
+
+  @retryable_statuses [408, 429, 500, 502, 503, 504, 529]
+
+  @doc false
+  # Retry transient failures on any method: rate limits, 5xx, 529 overloaded, and
+  # connection-level errors.
+  def retryable?(_request, %Req.Response{status: status}), do: status in @retryable_statuses
+
+  def retryable?(_request, %Req.TransportError{reason: reason}),
+    do: reason in [:timeout, :econnrefused, :closed]
+
+  def retryable?(_request, _other), do: false
 
   defp get_headers(auth) do
     %{token: token, version: version} = auth
@@ -219,33 +265,12 @@ defmodule Claudio.Client do
   end
 
   defp get_retry_config do
-    client_config = config()
-
-    case Keyword.get(client_config, :retry) do
-      true ->
-        [
-          delay: 1000,
-          max_retries: 3,
-          max_delay: 10_000,
-          should_retry: fn
-            {:ok, %{status: status}} when status in [429, 500, 502, 503, 504] -> true
-            {:ok, _} -> false
-            {:error, _} -> true
-          end
-        ]
-
-      retry_opts when is_list(retry_opts) ->
-        retry_opts
-
-      _ ->
-        nil
+    case Keyword.get(config(), :retry) do
+      true -> []
+      false -> :disabled
+      retry_opts when is_list(retry_opts) -> retry_opts
+      _ -> nil
     end
-  end
-
-  defp apply_retry(request, _opts) do
-    # Req has built-in retry support, this is a placeholder
-    # We'll use Req's retry: :transient option in the actual request
-    request
   end
 
   defp config do

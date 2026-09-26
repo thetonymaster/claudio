@@ -3,8 +3,8 @@ defmodule Claudio.Messages.Stream do
   Utilities for parsing and consuming Server-Sent Events (SSE) from streaming Messages API responses.
 
   Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
-  when `parse_events/1` reaches the terminal `message_stop` event and final usage
-  is available from `message_delta` frames. Metadata carries `:input_tokens`,
+  when `parse_events/1` reaches the terminal `message_stop` event; the usage is
+  `message_start`'s merged with the `message_delta` frames (delta wins). Metadata carries `:input_tokens`,
   `:output_tokens`, the cache counters and `:thinking_tokens` when present.
 
   ## Event Types
@@ -22,9 +22,10 @@ defmodule Claudio.Messages.Stream do
 
   ## Example
 
-      response = Claudio.Messages.create_message(client, request)
+      {:ok, response} =
+        Claudio.Messages.create(client, Claudio.Messages.Request.enable_streaming(request))
 
-      response
+      response.body
       |> Claudio.Messages.Stream.parse_events()
       |> Stream.filter(&match?({:ok, %{event: "content_block_delta"}}, &1))
       |> Enum.each(fn {:ok, event} ->
@@ -53,7 +54,7 @@ defmodule Claudio.Messages.Stream do
   @spec parse_events(Enumerable.t()) :: Enumerable.t()
   def parse_events(stream) do
     stream
-    |> Stream.transform("", &parse_chunk/2)
+    |> Stream.transform(fn -> "" end, &parse_chunk/2, &flush_buffer/1, fn _ -> :ok end)
     |> Stream.map(&parse_event/1)
     |> emit_usage_telemetry()
     |> halt_after_message_stop()
@@ -81,10 +82,15 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp emit_usage_telemetry(event_stream) do
+    # message_delta usage is cumulative but may omit fields message_start carried (e.g.
+    # input_tokens, cache counters): merge, delta wins — as build_final_message/1 does.
     Stream.transform(event_stream, nil, fn
-      {:ok, %{event: "message_delta", data: data}} = event, _latest_usage ->
-        usage = data["usage"] || data[:usage]
-        {[event], usage || nil}
+      {:ok, %{event: "message_start", data: %{} = data}} = event, _usage ->
+        message = data["message"] || data[:message] || %{}
+        {[event], merge_usage(nil, message["usage"] || message[:usage])}
+
+      {:ok, %{event: "message_delta", data: %{} = data}} = event, usage ->
+        {[event], merge_usage(usage, data["usage"] || data[:usage])}
 
       {:ok, %{event: "message_stop"}} = event, latest_usage ->
         maybe_emit_stream_usage_telemetry(latest_usage)
@@ -94,6 +100,10 @@ defmodule Claudio.Messages.Stream do
         {[event], latest_usage}
     end)
   end
+
+  defp merge_usage(current, nil), do: current
+  defp merge_usage(nil, %{} = usage), do: stringify_keys(usage)
+  defp merge_usage(%{} = current, %{} = usage), do: Map.merge(current, stringify_keys(usage))
 
   defp maybe_emit_stream_usage_telemetry(usage) when is_map(usage) do
     metadata = usage_to_metadata(usage)
@@ -222,6 +232,11 @@ defmodule Claudio.Messages.Stream do
   @doc """
   Accumulates all events and returns the final complete message.
 
+  Streamed tool input (`input_json_delta` chunks on `tool_use`, `server_tool_use` and
+  `mcp_tool_use` blocks) is decoded into the block's `"input"`. If a block's accumulated
+  JSON is invalid — typically output cut off by `max_tokens` mid-call — the result is
+  `{:error, {:invalid_tool_input_json, index, partial_json}}`.
+
   ## Example
 
       {:ok, final_message} =
@@ -231,43 +246,37 @@ defmodule Claudio.Messages.Stream do
   """
   @spec build_final_message(Enumerable.t()) :: {:ok, map()} | {:error, term()}
   def build_final_message(event_stream) do
+    # Open blocks are keyed by index (a delta or stop names its block), and closed blocks
+    # are ordered by index, so interleaved blocks can't overwrite each other.
     initial_state = %{
       message: %{},
       content_blocks: [],
-      current_block: nil,
+      open_blocks: %{},
+      last_index: nil,
+      saw_stop: false,
       error: nil
     }
 
     final_state =
       Enum.reduce(event_stream, initial_state, fn
-        {:ok, %{event: "message_start", data: data}}, state ->
+        {:ok, %{event: "message_start", data: data}}, state when is_map(data) ->
           message = data["message"] || data[:message] || %{}
           # Convert atom keys to string keys for consistency
           message_with_string_keys = atomize_to_stringify(message)
           %{state | message: message_with_string_keys}
 
-        {:ok, %{event: "content_block_start", data: data}}, state ->
+        {:ok, %{event: "content_block_start", data: data}}, state when is_map(data) ->
           block = data["content_block"] || data[:content_block]
           index = data["index"] || data[:index]
-          %{state | current_block: {index, block}}
+          %{state | open_blocks: Map.put(state.open_blocks, index, block), last_index: index}
 
-        {:ok, %{event: "content_block_delta", data: data}}, state ->
-          update_current_block(state, data)
+        {:ok, %{event: "content_block_delta", data: data}}, state when is_map(data) ->
+          update_open_block(state, data)
 
-        {:ok, %{event: "content_block_stop"}}, state ->
-          case state.current_block do
-            {_index, block} ->
-              %{
-                state
-                | content_blocks: state.content_blocks ++ [block],
-                  current_block: nil
-              }
+        {:ok, %{event: "content_block_stop", data: data}}, state ->
+          close_block(state, event_index(data, state))
 
-            nil ->
-              state
-          end
-
-        {:ok, %{event: "message_delta", data: data}}, state ->
+        {:ok, %{event: "message_delta", data: data}}, state when is_map(data) ->
           delta = data["delta"] || data[:delta] || %{}
           usage = data["usage"] || data[:usage]
 
@@ -276,12 +285,20 @@ defmodule Claudio.Messages.Stream do
             |> maybe_update(delta, "stop_reason")
             |> maybe_update(delta, "stop_sequence")
             |> maybe_update(delta, "stop_details")
+            # Programmatic tool calling: the container may be refreshed here (S14).
+            |> maybe_update(delta, "container")
             |> maybe_put_usage(usage)
+            # context_management sits at the event's top level, beside delta and usage.
+            |> maybe_update(data, "context_management")
+            # After a mid-stream fallback the final message_delta repeats input_transformations
+            # at the event's top level (SDK BetaRawMessageDeltaEvent) with the serving
+            # model's entries, replacing the message_start value.
+            |> maybe_update(data, "input_transformations")
 
           %{state | message: message}
 
         {:ok, %{event: "message_stop"}}, state ->
-          state
+          %{state | saw_stop: true}
 
         {:ok, %{event: "ping"}}, state ->
           state
@@ -296,73 +313,95 @@ defmodule Claudio.Messages.Stream do
           state
       end)
 
-    case final_state.error do
-      nil ->
-        message = Map.put(final_state.message, "content", final_state.content_blocks)
-        {:ok, message}
+    cond do
+      final_state.error ->
+        {:error, final_state.error}
 
-      error ->
-        {:error, error}
+      # A block that started but never stopped means the stream was cut off: report it
+      # instead of returning a message silently missing that content.
+      map_size(final_state.open_blocks) > 0 ->
+        {:error, {:incomplete_stream, final_state.open_blocks |> Map.keys() |> Enum.sort()}}
+
+      # Cut off between blocks (or never started): no stop_reason, possibly missing content.
+      not final_state.saw_stop ->
+        {:error, {:incomplete_stream, :no_message_stop}}
+
+      true ->
+        content =
+          final_state.content_blocks
+          |> Enum.with_index()
+          |> Enum.sort_by(fn {{index, _block}, position} -> {index || position, position} end)
+          |> Enum.map(fn {{_index, block}, _position} -> block end)
+
+        {:ok, Map.put(final_state.message, "content", content)}
+    end
+  end
+
+  defp event_index(data, state) when is_map(data),
+    do: data["index"] || data[:index] || state.last_index
+
+  defp event_index(_data, state), do: state.last_index
+
+  defp close_block(state, index) do
+    case Map.pop(state.open_blocks, index) do
+      {nil, _open} ->
+        state
+
+      {block, open} ->
+        case finalize_block(block) do
+          {:ok, block} ->
+            %{state | content_blocks: state.content_blocks ++ [{index, block}], open_blocks: open}
+
+          {:error, partial_json} ->
+            %{state | error: {:invalid_tool_input_json, index, partial_json}, open_blocks: open}
+        end
     end
   end
 
   # Private functions
 
+  # SSE framing: an event is every line up to a blank line. A network chunk can end
+  # anywhere — mid-line, mid-event, mid-UTF-8 sequence — so the buffer keeps everything
+  # after the last complete event, not just the last line. CRLF is normalized to LF.
   defp parse_chunk(chunk, buffer) do
-    data = buffer <> chunk
-    lines = String.split(data, "\n")
-
-    case List.last(lines) do
-      "" ->
-        # Complete message, process all events
-        events = extract_events(Enum.drop(lines, -1), [])
-        {events, ""}
-
-      _ ->
-        # Incomplete message, keep last line in buffer
-        events = extract_events(Enum.drop(lines, -1), [])
-        {events, List.last(lines)}
-    end
+    data = String.replace(buffer <> chunk, "\r\n", "\n")
+    parts = String.split(data, "\n\n")
+    {complete, [rest]} = Enum.split(parts, -1)
+    {Enum.flat_map(complete, &event_from_block/1), rest}
   end
 
-  defp extract_events([], acc), do: Enum.reverse(acc)
-
-  defp extract_events(lines, acc) do
-    case parse_sse_block(lines) do
-      {nil, rest} -> extract_events(rest, acc)
-      {event, rest} -> extract_events(rest, [event | acc])
-    end
+  # A stream that ends without a trailing blank line still carries its last event.
+  defp flush_buffer(buffer) do
+    {event_from_block(String.replace(buffer, "\r\n", "\n")), buffer}
   end
 
-  defp parse_sse_block([]), do: {nil, []}
-
-  defp parse_sse_block(lines) do
-    {event_lines, rest} = Enum.split_while(lines, &(&1 != ""))
-    rest = Enum.drop_while(rest, &(&1 == ""))
-
-    if event_lines == [] do
-      {nil, rest}
-    else
-      event = parse_sse_lines(event_lines)
-      {event, rest}
+  # Per the SSE spec, an event with no data line is not dispatched.
+  defp event_from_block(block) do
+    case parse_sse_lines(String.split(block, "\n")) do
+      %{data: nil} -> []
+      event -> [event]
     end
   end
 
   defp parse_sse_lines(lines) do
-    Enum.reduce(lines, %{event: nil, data: nil}, fn line, acc ->
-      cond do
-        String.starts_with?(line, "event:") ->
-          event_type = line |> String.slice(6..-1//1) |> String.trim()
-          %{acc | event: event_type}
+    event =
+      Enum.reduce(lines, %{event: nil, data: nil}, fn line, acc ->
+        cond do
+          String.starts_with?(line, "event:") ->
+            event_type = line |> String.slice(6..-1//1) |> String.trim()
+            %{acc | event: event_type}
 
-        String.starts_with?(line, "data:") ->
-          data = line |> String.slice(5..-1//1) |> String.trim()
-          %{acc | data: data}
+          String.starts_with?(line, "data:") ->
+            data = line |> String.slice(5..-1//1) |> String.trim()
+            # Multiple data lines in one event are joined with a newline (SSE spec).
+            %{acc | data: if(acc.data, do: acc.data <> "\n" <> data, else: data)}
 
-        true ->
-          acc
-      end
-    end)
+          true ->
+            acc
+        end
+      end)
+
+    event
   end
 
   defp parse_event(%{event: event_type, data: data_str}) when is_binary(data_str) do
@@ -378,22 +417,19 @@ defmodule Claudio.Messages.Stream do
     end
   end
 
-  defp parse_event(%{event: event_type, data: nil}) do
-    {:ok, %{event: event_type, data: nil}}
-  end
-
   defp parse_event(other) do
     {:error, {:invalid_event, other}}
   end
 
-  defp update_current_block(state, data) do
-    case state.current_block do
-      {index, block} ->
-        delta = data["delta"] || data[:delta] || %{}
-        updated_block = apply_delta(block, delta)
-        %{state | current_block: {index, updated_block}}
+  defp update_open_block(state, data) do
+    index = event_index(data, state)
 
-      nil ->
+    case Map.fetch(state.open_blocks, index) do
+      {:ok, block} ->
+        delta = data["delta"] || data[:delta] || %{}
+        %{state | open_blocks: Map.put(state.open_blocks, index, apply_delta(block, delta))}
+
+      :error ->
         state
     end
   end
@@ -446,7 +482,43 @@ defmodule Claudio.Messages.Stream do
     Map.put(block, :citations, current ++ [citation])
   end
 
+  # Threshold compaction streams the whole summary in one compaction_delta after a
+  # content_block_start with "content": null (probed 2026-09-26). Every delta field but
+  # "type" is written into the block, so encrypted_content/signature survive if sent.
+  defp apply_delta(block, %{"type" => "compaction_delta"} = delta) do
+    Map.merge(block, Map.delete(delta, "type"))
+  end
+
+  defp apply_delta(block, %{type: "compaction_delta"} = delta) do
+    Map.merge(block, Map.delete(delta, :type))
+  end
+
   defp apply_delta(block, _delta), do: block
+
+  # Streamed tool input (tool_use, server_tool_use, mcp_tool_use) arrives as
+  # input_json_delta string chunks; decode them into "input" once the block is complete.
+  # Invalid JSON (output cut off by max_tokens, or eager input streaming) is an error
+  # rather than a block with half its input.
+  defp finalize_block(%{"partial_json" => json} = block) do
+    with {:ok, input} <- decode_tool_input(json),
+         do: {:ok, block |> Map.delete("partial_json") |> Map.put("input", input)}
+  end
+
+  defp finalize_block(%{partial_json: json} = block) do
+    with {:ok, input} <- decode_tool_input(json),
+         do: {:ok, block |> Map.delete(:partial_json) |> Map.put(:input, input)}
+  end
+
+  defp finalize_block(block), do: {:ok, block}
+
+  defp decode_tool_input(""), do: {:ok, %{}}
+
+  defp decode_tool_input(json) do
+    case Jason.decode(json) do
+      {:ok, %{} = input} -> {:ok, input}
+      _ -> {:error, json}
+    end
+  end
 
   defp maybe_update(map, delta, key) do
     case Map.get(delta, key) || Map.get(delta, String.to_atom(key)) do

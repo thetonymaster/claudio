@@ -15,7 +15,7 @@ Claudio provides a comprehensive, idiomatic Elixir interface for Claude AI model
 - **⚡ High Performance**: Built on Req for fast HTTP operations with excellent streaming support
 - **💎 Idiomatic Elixir**: Fluent API, pattern matching on errors, and proper supervision tree integration
 - **📦 Feature Complete**: Messages, Batches, Files, Tools, Caching, Vision - everything you need
-- **🧪 Well Tested**: 76 tests covering unit and integration scenarios
+- **🧪 Well Tested**: Extensive unit suite plus live integration tests against the real API
 - **📚 Fully Documented**: Complete API documentation with examples on HexDocs
 
 ## Features
@@ -38,6 +38,12 @@ Claudio provides a comprehensive, idiomatic Elixir interface for Claude AI model
 - ✅ **Automatic Retries** - Handle transient failures gracefully
 - ✅ **Structured Errors** - Pattern match on error types
 - ✅ **Cache Metrics** - Track cache hits and creation
+- ✅ **Thinking & Effort** - Adaptive thinking, effort, task budgets, thinking block binding
+- ✅ **Context Management** - Context editing, threshold and on-demand compaction
+- ✅ **Refusal Fallbacks** - Server-side retry on another model
+- ✅ **Tool Extensions** - Tool search, programmatic tool calling, advisor, computer/browser toolsets
+
+See the [CHANGELOG](CHANGELOG.md) for what changed in each release.
 
 ## Installation
 
@@ -46,7 +52,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.2.0"}
+    {:claudio, "~> 0.7"}
   ]
 end
 ```
@@ -129,10 +135,8 @@ request =
 # Stream text in real-time
 stream_response.body
 |> Stream.parse_events()
-|> Stream.filter_events(:content_block_delta)
-|> Enum.each(fn event ->
-  IO.write(event.delta.text)
-end)
+|> Stream.accumulate_text()
+|> Enum.each(&IO.write/1)
 ```
 
 ### Tool/Function Calling
@@ -273,26 +277,17 @@ requests =
 IO.puts("Batch created: #{batch["id"]}")
 
 # Wait for completion with progress updates
-{:ok, completed} = Batches.wait_for_completion(
-  client,
-  batch["id"],
-  fn status ->
-    counts = status["request_counts"]
-    progress = counts["succeeded"] + counts["errored"]
-    total = counts["processing"]
-    IO.puts("Progress: #{progress}/#{total}")
-  end,
-  poll_interval: 10_000  # Check every 10 seconds
-)
+{:ok, _completed} =
+  Batches.wait_for_completion(client, batch["id"],
+    poll_interval: 10,  # seconds between checks
+    callback: fn status ->
+      counts = status["request_counts"]
+      IO.puts("Done: #{counts["succeeded"] + counts["errored"]}, processing: #{counts["processing"]}")
+    end
+  )
 
-# Download results as JSONL
-{:ok, results_jsonl} = Batches.get_results(client, batch["id"])
-
-# Parse results
-results =
-  results_jsonl
-  |> String.split("\n", trim: true)
-  |> Enum.map(&Jason.decode!/1)
+# Download results: a list of decoded (string-keyed) maps
+{:ok, results} = Batches.get_results(client, batch["id"])
 
 Enum.each(results, fn result ->
   case result["result"]["type"] do
@@ -419,18 +414,26 @@ message = Message.new(:user, [Part.text("Analyze this dataset")])
 
 ### Telemetry & Monitoring
 
-Claudio emits `:telemetry` events for all API calls:
+Claudio emits `:telemetry` spans for message calls — `[:claudio, :messages, :create, :start | :stop | :exception]` —
+and `[:claudio, :messages, :stream, :usage]` when a stream finishes:
 
 ```elixir
 require Logger
 
+defmodule MyApp.ClaudioTelemetry do
+  require Logger
+
+  def handle([:claudio, :messages, :create, :stop], measurements, metadata, _config) do
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    Logger.info("#{metadata.model} #{metadata.status} in #{ms}ms, " <>
+      "tokens in/out: #{metadata[:input_tokens]}/#{metadata[:output_tokens]}")
+  end
+end
+
 :telemetry.attach(
   "claudio-monitoring",
-  [:claudio, :request, :stop],
-  fn _name, measurements, metadata, _config ->
-    Logger.info("API Call: #{metadata.model} took #{measurements.duration}ms")
-    Logger.info("Tokens: #{metadata.usage.total_tokens}")
-  end,
+  [:claudio, :messages, :create, :stop],
+  &MyApp.ClaudioTelemetry.handle/4,
   nil
 )
 ```

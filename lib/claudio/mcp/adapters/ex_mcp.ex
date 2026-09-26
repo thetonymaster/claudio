@@ -2,7 +2,7 @@ defmodule Claudio.MCP.Adapters.ExMCP do
   @moduledoc """
   Adapter for the ex_mcp library.
 
-  Requires `{:ex_mcp, "~> 0.2"}` in your dependencies.
+  Requires `{:ex_mcp, "~> 1.5"}` in your dependencies.
 
   ## Usage
 
@@ -17,7 +17,8 @@ defmodule Claudio.MCP.Adapters.ExMCP do
 
   @impl true
   def list_tools(client, opts \\ []) do
-    with {:ok, response} <- do_call(:list_tools, [client, opts]) do
+    # ex_mcp returns structs by default, whose Access only knows atom keys.
+    with {:ok, response} <- do_call(:list_tools, [client, Keyword.put_new(opts, :format, :map)]) do
       tools =
         response
         |> extract_list("tools")
@@ -35,7 +36,9 @@ defmodule Claudio.MCP.Adapters.ExMCP do
 
   @impl true
   def list_resources(client, opts \\ []) do
-    with {:ok, response} <- do_call(:list_resources, [client, opts]) do
+    # ex_mcp returns structs by default, whose Access only knows atom keys.
+    with {:ok, response} <-
+           do_call(:list_resources, [client, Keyword.put_new(opts, :format, :map)]) do
       resources =
         response
         |> extract_list("resources")
@@ -52,7 +55,8 @@ defmodule Claudio.MCP.Adapters.ExMCP do
 
   @impl true
   def list_prompts(client, opts \\ []) do
-    with {:ok, response} <- do_call(:list_prompts, [client, opts]) do
+    # ex_mcp returns structs by default, whose Access only knows atom keys.
+    with {:ok, response} <- do_call(:list_prompts, [client, Keyword.put_new(opts, :format, :map)]) do
       prompts =
         response
         |> extract_list("prompts")
@@ -76,11 +80,12 @@ defmodule Claudio.MCP.Adapters.ExMCP do
     end
   end
 
+  # Availability is checked up front; rescuing UndefinedFunctionError would also hide bugs
+  # inside the library.
   defp do_call(function, args) do
-    apply(ExMCP.Client, function, args)
-  rescue
-    UndefinedFunctionError ->
-      {:error, :ex_mcp_not_available}
+    if Code.ensure_loaded?(ExMCP.Client),
+      do: apply(ExMCP.Client, function, args),
+      else: {:error, :ex_mcp_not_available}
   end
 
   defp extract_list(response, key) when is_map(response) do
@@ -94,7 +99,7 @@ defmodule Claudio.MCP.Adapters.ExMCP do
     %Tool{
       name: tool["name"],
       description: tool["description"],
-      input_schema: tool["inputSchema"] || tool["input_schema"] || %{}
+      input_schema: tool["inputSchema"] || tool["input_schema"] || %{"type" => "object"}
     }
   end
 

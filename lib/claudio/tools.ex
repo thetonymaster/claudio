@@ -49,6 +49,12 @@ defmodule Claudio.Tools do
       |> Request.add_message(:user, "What's the weather in San Francisco?")
       |> Request.add_message(:assistant, Claudio.Messages.Response.to_assistant_content(response))
       |> Request.add_message(:user, results)
+
+  ## Client toolsets
+
+  A call from `Request.add_computer_toolset/2` has a `toolset_name`; answer it with
+  `create_tool_result(tool_use.id, result, false, toolset_name: tool_use.toolset_name)`.
+  If an action in a batch fails, answer the rest with `halt_result/1`.
   """
 
   @type tool_definition :: %{
@@ -60,7 +66,9 @@ defmodule Claudio.Tools do
   @type tool_use :: %{
           id: String.t(),
           name: String.t(),
-          input: map()
+          input: map(),
+          toolset_name: String.t() | nil,
+          caller: map() | nil
         }
 
   @type tool_result :: %{
@@ -114,7 +122,7 @@ defmodule Claudio.Tools do
 
   ## Example
 
-      {:ok, response} = Claudio.Messages.create_message(client, request)
+      {:ok, response} = Claudio.Messages.create(client, request)
       tool_uses = Claudio.Tools.extract_tool_uses(response)
 
       Enum.each(tool_uses, fn tool_use ->
@@ -151,6 +159,8 @@ defmodule Claudio.Tools do
   - `tool_use_id` - The ID from the tool_use block
   - `result` - The result of executing the tool (string or structured content)
   - `is_error` - (optional) Whether this represents an error result
+  - `opts` — `toolset_name:` echoes the `tool_use`'s `toolset_name` (required for results
+    answering a client-toolset member call; the API rejects them without it).
 
   ## Example
 
@@ -172,25 +182,62 @@ defmodule Claudio.Tools do
         true
       )
   """
-  @spec create_tool_result(String.t(), String.t() | list(), boolean()) :: tool_result()
-  def create_tool_result(tool_use_id, result, is_error \\ false)
-      when is_binary(tool_use_id) do
+  @spec create_tool_result(String.t(), String.t() | list() | map(), boolean(), keyword()) ::
+          tool_result()
+  def create_tool_result(tool_use_id, result, is_error \\ false, opts \\ [])
+      when is_binary(tool_use_id) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:toolset_name])
+
     base = %{
       "type" => "tool_result",
       "tool_use_id" => tool_use_id
     }
 
-    content =
-      cond do
-        is_binary(result) -> result
-        is_list(result) -> result
-        is_map(result) -> Jason.encode!(result)
-        true -> to_string(result)
-      end
+    content = tool_result_content!(result)
+
+    # The API rejects an empty error result (probed 2026-09-26).
+    if is_error and content in ["", []] do
+      raise ArgumentError,
+            "Tools.create_tool_result/4 with is_error: true needs non-empty content; got #{inspect(result)}"
+    end
 
     base
     |> Map.put("content", content)
     |> maybe_put_error(is_error)
+    |> maybe_put_toolset(Keyword.get(opts, :toolset_name))
+  end
+
+  # Exact texts from the computer-use and browser-use tool docs ("Batch actions").
+  @halt_texts %{
+    "computer" => "Not executed: an earlier computer action in this turn failed.",
+    "browser" => "Not executed: an earlier action in this turn failed."
+  }
+
+  @doc """
+  The result for a client-toolset action skipped because an earlier action in the same
+  turn failed: `is_error: true`, the exact text the toolset contract prescribes, and
+  `toolset_name` echoed. Takes a tool use from `extract_tool_uses/1`.
+  """
+  @spec halt_result(tool_use()) :: tool_result()
+  def halt_result(%{id: id, toolset_name: toolset_name} = tool_use) do
+    case halt_text(toolset_name) do
+      nil -> raise_halt_argument(tool_use)
+      text -> create_tool_result(id, text, true, toolset_name: toolset_name)
+    end
+  end
+
+  def halt_result(other), do: raise_halt_argument(other)
+
+  @doc """
+  The halt text a client toolset prescribes for actions skipped after a failure
+  (`"computer"`, `"browser"`), or `nil` for any other toolset name.
+  """
+  @spec halt_text(String.t() | nil) :: String.t() | nil
+  def halt_text(toolset_name), do: Map.get(@halt_texts, toolset_name)
+
+  defp raise_halt_argument(value) do
+    raise ArgumentError,
+          "Tools.halt_result/1 needs a computer or browser toolset tool use; got #{inspect(value)}"
   end
 
   @doc """
@@ -238,19 +285,56 @@ defmodule Claudio.Tools do
   defp is_tool_use?(%{type: :tool_use}), do: true
   defp is_tool_use?(_), do: false
 
-  defp normalize_tool_use(%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}) do
-    %{id: id, name: name, input: input}
+  defp normalize_tool_use(
+         %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} = b
+       ) do
+    %{id: id, name: name, input: input, toolset_name: b["toolset_name"], caller: b["caller"]}
   end
 
-  defp normalize_tool_use(%{type: "tool_use", id: id, name: name, input: input}) do
-    %{id: id, name: name, input: input}
+  defp normalize_tool_use(%{type: type, id: id, name: name, input: input} = b)
+       when type in ["tool_use", :tool_use] do
+    %{id: id, name: name, input: input, toolset_name: b[:toolset_name], caller: b[:caller]}
   end
 
-  defp normalize_tool_use(%{type: :tool_use, id: id, name: name, input: input}) do
-    %{id: id, name: name, input: input}
+  # A raw block without "input" (e.g. a hand-built or truncated one) still normalizes.
+  defp normalize_tool_use(%{"type" => "tool_use", "id" => id, "name" => name} = b) do
+    %{id: id, name: name, input: %{}, toolset_name: b["toolset_name"], caller: b["caller"]}
   end
 
   defp normalize_tool_use(tool_use), do: tool_use
+
+  defp tool_result_content!(result) when is_binary(result), do: result
+  defp tool_result_content!(nil), do: ""
+
+  defp tool_result_content!(result) when is_number(result) or is_atom(result),
+    do: to_string(result)
+
+  defp tool_result_content!(result) when is_list(result) do
+    if Enum.all?(result, &(is_map(&1) and not is_struct(&1))) do
+      result
+    else
+      raise ArgumentError,
+            "Tools.create_tool_result/4 list content must be content blocks (maps like " <>
+              "%{\"type\" => \"text\", \"text\" => ...}); got #{inspect(result)}"
+    end
+  end
+
+  defp tool_result_content!(result) when is_map(result) do
+    Jason.encode!(result)
+  rescue
+    _ in [Protocol.UndefinedError, Jason.EncodeError] -> raise_unsendable!(result)
+  end
+
+  defp tool_result_content!(result), do: raise_unsendable!(result)
+
+  defp raise_unsendable!(result) do
+    raise ArgumentError,
+          "Tools.create_tool_result/4: #{inspect(result)} cannot be sent as tool_result content " <>
+            "(use a string, a JSON-encodable map, or a list of content blocks)"
+  end
+
+  defp maybe_put_toolset(map, nil), do: map
+  defp maybe_put_toolset(map, toolset_name), do: Map.put(map, "toolset_name", toolset_name)
 
   defp maybe_put_error(map, false), do: map
 

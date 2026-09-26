@@ -4,20 +4,21 @@ defmodule Claudio.MCP.Adapters.HermesMCP do
 
   Requires `{:hermes_mcp, "~> 0.14"}` in your dependencies.
 
-  The client argument is a `{module, client}` tuple where `module` is the
-  Hermes client module and `client` is the client reference (PID or struct).
+  The client argument is a `{module, client}` tuple: `module` exposes Hermes's
+  client-first API — `Hermes.Client.Base` (or `Anubis.Client` for anubis_mcp) — and
+  `client` is your client process (the module you defined with `use Hermes.Client`).
+  The generated `MyClient.list_tools/1` functions take no client argument, so pass
+  the base module, not your own.
 
-  > **Note:** This adapter is untested without hermes_mcp installed.
-  > It will return `{:error, :hermes_mcp_not_available}` if the library
-  > is not available.
+  Returns `{:error, :hermes_mcp_not_available}` when `module` isn't loaded and
+  `{:error, {:undefined_client_function, module, function, arity}}` when it lacks a call.
 
   ## Usage
 
       # Start a Hermes client (see hermes_mcp docs)
-      {:ok, pid} = MyHermesClient.start_link(transport: {:stdio, command: "server"})
+      {:ok, _pid} = MyHermesClient.start_link(transport: {:stdio, command: "server"})
 
-      # Use via the adapter with {module, client} tuple
-      client = {MyHermesClient, pid}
+      client = {Hermes.Client.Base, MyHermesClient}
       {:ok, tools} = Claudio.MCP.Adapters.HermesMCP.list_tools(client)
   """
 
@@ -85,12 +86,26 @@ defmodule Claudio.MCP.Adapters.HermesMCP do
     end
   end
 
-  defp call_client(module, client, function, args, _opts) do
-    apply(module, function, [client | args])
-  rescue
-    UndefinedFunctionError ->
-      {:error, :hermes_mcp_not_available}
+  # Checks availability up front instead of rescuing UndefinedFunctionError, which would
+  # also swallow bugs raised inside the client and misreport them as a missing library.
+  defp call_client(module, client, function, args, opts) do
+    arity = length(args) + 2
+
+    cond do
+      not Code.ensure_loaded?(module) ->
+        {:error, :hermes_mcp_not_available}
+
+      not function_exported?(module, function, arity) ->
+        {:error, {:undefined_client_function, module, function, arity}}
+
+      true ->
+        apply(module, function, [client | args] ++ [opts])
+    end
   end
+
+  # Hermes (and anubis) wrap results: {:ok, %Hermes.MCP.Response{result: %{"tools" => ...}}}.
+  defp extract_list(%{__struct__: _, result: result}, key) when is_map(result),
+    do: extract_list(result, key)
 
   defp extract_list(response, key) when is_map(response) do
     case Map.get(response, key) do
@@ -106,7 +121,8 @@ defmodule Claudio.MCP.Adapters.HermesMCP do
     %Tool{
       name: get_field(tool, "name"),
       description: get_field(tool, "description"),
-      input_schema: get_field(tool, "inputSchema") || get_field(tool, "input_schema") || %{}
+      input_schema:
+        get_field(tool, "inputSchema") || get_field(tool, "input_schema") || %{"type" => "object"}
     }
   end
 

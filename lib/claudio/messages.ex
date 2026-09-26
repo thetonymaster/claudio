@@ -207,23 +207,20 @@ defmodule Claudio.Messages do
   """
   @spec count_tokens(Req.Request.t(), map() | Request.t()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
+  # Messages fields the count endpoint rejects with 400 "Extra inputs are not permitted"
+  # (probed 2026-09-25/26), stripped so a request can be counted as built.
+  @not_counted ~w(stream max_tokens inference_geo diagnostics fallbacks temperature top_k top_p
+                  stop_sequences metadata service_tier container)
+
   def count_tokens(client, %Request{} = request) do
     client = Claudio.Client.with_betas(client, Request.required_betas(request))
 
-    payload =
-      request
-      |> Request.to_map()
-      |> Map.delete("stream")
-      |> Map.delete("max_tokens")
-      # The count endpoint rejects these (400 "Extra inputs are not permitted", probed 2026-09-25).
-      |> Map.delete("inference_geo")
-      |> Map.delete("diagnostics")
-      |> Map.delete("fallbacks")
-
-    count_tokens(client, payload)
+    count_tokens(client, Request.to_map(request))
   end
 
   def count_tokens(client, payload) when is_map(payload) do
+    payload = Map.drop(payload, @not_counted ++ Enum.map(@not_counted, &String.to_atom/1))
+
     case Req.post(client, url: "messages/count_tokens", json: payload) do
       {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}
@@ -242,8 +239,10 @@ defmodule Claudio.Messages do
     metadata = %{model: payload["model"] || payload[:model], stream: true}
 
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
+      # Not retried: a retried async request would leave the failed attempt's body
+      # messages in the caller's mailbox.
       result =
-        case Req.post(client, url: "messages", json: payload, into: :self) do
+        case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
           {:ok, %Req.Response{status: 200} = r} ->
             {:ok, r}
 
@@ -312,12 +311,11 @@ defmodule Claudio.Messages do
     |> Enum.each(&send(self(), &1))
   end
 
-  defp try_decode(""), do: %{}
-
+  # A non-JSON (or empty) body stays a binary so APIError types it from the status.
   defp try_decode(body) when is_binary(body) do
     case Jason.decode(body) do
       {:ok, map} when is_map(map) -> map
-      _ -> %{"raw" => body}
+      _ -> body
     end
   end
 
@@ -327,9 +325,10 @@ defmodule Claudio.Messages do
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
       result =
         case Req.post(client, url: "messages", json: payload) do
-          {:ok, %Req.Response{status: 200, body: body}} ->
+          {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
             {:ok, Response.from_map(body)}
 
+          # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
           {:ok, %Req.Response{status: status, body: body}} ->
             {:error, APIError.from_response(status, body)}
 

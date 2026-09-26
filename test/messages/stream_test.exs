@@ -3,6 +3,202 @@ defmodule Claudio.Messages.StreamTest do
 
   alias Claudio.Messages.Stream, as: ClaudioStream
 
+  describe "parse_events/1 SSE framing (pre-release audit)" do
+    # A realistic stream with a multi-byte character, so byte-level splits can land inside
+    # a UTF-8 sequence and inside every line of every event.
+    @sse_stream Enum.join(
+                  [
+                    ~s(event: message_start),
+                    ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":3,"output_tokens":0}}}),
+                    "",
+                    ~s(event: content_block_start),
+                    ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                    "",
+                    ~s(event: ping),
+                    ~s(data: {"type":"ping"}),
+                    "",
+                    ~s(event: content_block_delta),
+                    ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Olá, café ☕"}}),
+                    "",
+                    ~s(event: content_block_stop),
+                    ~s(data: {"type":"content_block_stop","index":0}),
+                    "",
+                    ~s(event: message_delta),
+                    ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}),
+                    "",
+                    ~s(event: message_stop),
+                    ~s(data: {"type":"message_stop"}),
+                    "",
+                    ""
+                  ],
+                  "\n"
+                )
+
+    defp split_at(binary, offset) do
+      <<a::binary-size(offset), b::binary>> = binary
+      [a, b]
+    end
+
+    test "an event split across two chunks at ANY byte offset parses identically" do
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      assert [%{"text" => "Olá, café ☕"}] = expected["content"]
+
+      for offset <- 1..(byte_size(@sse_stream) - 1) do
+        assert {:ok, ^expected} =
+                 @sse_stream
+                 |> split_at(offset)
+                 |> ClaudioStream.parse_events()
+                 |> ClaudioStream.build_final_message(),
+               "split at byte #{offset}"
+      end
+    end
+
+    test "one byte per chunk parses identically" do
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      chunks = for <<byte::binary-size(1) <- @sse_stream>>, do: byte
+
+      assert {:ok, ^expected} =
+               chunks |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "CRLF line endings are accepted" do
+      crlf = String.replace(@sse_stream, "\n", "\r\n")
+
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      assert {:ok, ^expected} =
+               [crlf] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "multiple data: lines in one event are joined with a newline (SSE spec)" do
+      events =
+        ["event: ping\ndata: {\"type\":\ndata: \"ping\"}\n\n"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+
+    test "a final event without a trailing blank line is still emitted" do
+      events =
+        ["event: ping\ndata: {\"type\":\"ping\"}"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+
+    test "an event with no data line is not dispatched (SSE spec)" do
+      events =
+        ["event: ping\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\n"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+  end
+
+  describe "build_final_message/1 robustness (pre-release audit)" do
+    defp ev(event, data), do: {:ok, %{event: event, data: data}}
+
+    defp start(i, block),
+      do:
+        ev("content_block_start", %{
+          "type" => "content_block_start",
+          "index" => i,
+          "content_block" => block
+        })
+
+    defp text_delta(i, text),
+      do:
+        ev("content_block_delta", %{
+          "index" => i,
+          "delta" => %{"type" => "text_delta", "text" => text}
+        })
+
+    defp stop(i), do: ev("content_block_stop", %{"index" => i})
+
+    test "interleaved blocks are kept, in index order" do
+      events = [
+        start(0, %{"type" => "text", "text" => ""}),
+        start(1, %{"type" => "text", "text" => ""}),
+        text_delta(1, "one"),
+        text_delta(0, "zero"),
+        stop(1),
+        stop(0),
+        ev("message_stop", %{})
+      ]
+
+      assert {:ok, %{"content" => [%{"text" => "zero"}, %{"text" => "one"}]}} =
+               ClaudioStream.build_final_message(events)
+    end
+
+    test "a block that never closes is an error, not silently dropped content" do
+      events = [start(0, %{"type" => "text", "text" => ""}), text_delta(0, "partial")]
+
+      assert {:error, {:incomplete_stream, [0]}} = ClaudioStream.build_final_message(events)
+    end
+
+    test "hand-built events with nil data don't crash" do
+      events = [
+        ev("message_start", nil),
+        ev("message_delta", nil),
+        start(0, %{"type" => "text", "text" => "x"}),
+        stop(0),
+        ev("message_stop", %{})
+      ]
+
+      assert {:ok, %{"content" => [%{"text" => "x"}]}} = ClaudioStream.build_final_message(events)
+    end
+  end
+
+  describe "stream usage telemetry (pre-release audit)" do
+    def forward_usage(_name, _measurements, metadata, pid), do: send(pid, {:usage, metadata})
+
+    test "message_start usage is merged with message_delta usage (delta wins)" do
+      id = "stream-usage-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:claudio, :messages, :stream, :usage],
+          &__MODULE__.forward_usage/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      sse =
+        Enum.join(
+          [
+            ~s(event: message_start),
+            ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":1}}}),
+            "",
+            ~s(event: message_delta),
+            ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}),
+            "",
+            ~s(event: message_stop),
+            ~s(data: {"type":"message_stop"}),
+            "",
+            ""
+          ],
+          "\n"
+        )
+
+      [sse] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:usage, metadata}
+      assert metadata.input_tokens == 10
+      assert metadata.cache_read_input_tokens == 4
+      assert metadata.output_tokens == 9
+    end
+  end
+
   describe "parse_events/1 key convention" do
     # Earlier Claudio versions decoded event data with `Poison.decode(keys: :atoms)`,
     # producing atom-keyed data maps. Downstream consumers (e.g. Normandy's
@@ -470,6 +666,343 @@ defmodule Claudio.Messages.StreamTest do
       assert response.model == "claude-opus-5-5"
       assert Claudio.Messages.Response.served_by(response) == "claude-opus-4-8"
       assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
+    end
+  end
+
+  describe "build_final_message/1 threshold compaction" do
+    test "compaction_delta fills the block; context_management and stop_reason survive" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":0,"output_tokens":0},"diagnostics":null,"context_management":null}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary of the session."}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":0,"output_tokens":0,"iterations":[{"type":"compaction","input_tokens":54453,"output_tokens":883}]},"context_management":{"applied_edits":[]}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["content"] == [
+               %{"type" => "compaction", "content" => "Summary of the session."}
+             ]
+
+      assert message["context_management"] == %{"applied_edits" => []}
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      assert response.stop_reason == :compaction
+      assert response.context_management == %{"applied_edits" => []}
+      assert [%{type: :compaction, content: "Summary of the session."}] = response.content
+      assert [%{"type" => "compaction"}] = response.usage.iterations
+
+      # Review Focus 3: the streamed block replays byte-exact.
+      assert Claudio.Messages.Response.to_assistant_content(response) == [
+               %{"type" => "compaction", "content" => "Summary of the session."}
+             ]
+    end
+
+    test "atom-keyed event data: compaction_delta still fills the block" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_start",
+           data: %{index: 0, content_block: %{type: "compaction", content: nil}}
+         }},
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{index: 0, delta: %{type: "compaction_delta", content: "S"}}
+         }},
+        {:ok, %{event: "content_block_stop", data: %{index: 0}}},
+        {:ok, %{event: "message_stop", data: %{}}}
+      ]
+
+      assert {:ok, %{"content" => [%{type: "compaction", content: "S"}]}} =
+               ClaudioStream.build_final_message(events)
+    end
+
+    test "on-demand: a whole signed block in content_block_start, no deltas (spec F14)" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0}}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"Sum.","signature":"sig"}}),
+        "",
+        ~s(event: ping),
+        ~s(data: {"type":"ping"}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction"},"usage":{"output_tokens":0}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      # Byte-exact, signature included — what apply_compaction/2 (Task 4) replays.
+      assert response.stop_reason == :compaction
+
+      assert Claudio.Messages.Response.to_assistant_content(response) == [
+               %{"type" => "compaction", "content" => "Sum.", "signature" => "sig"}
+             ]
+    end
+
+    test "a message_delta without context_management keeps the message_start value" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","context_management":{"applied_edits":[]},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["context_management"] == %{"applied_edits" => []}
+    end
+  end
+
+  describe "build_final_message/1 container (S14)" do
+    defp container_stream(start_container, delta_container) do
+      [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","container":#{Jason.encode!(start_container)},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use","container":#{Jason.encode!(delta_container)}},"usage":{"output_tokens":1}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    test "message_start container survives a null delta container (Review Focus 4)" do
+      c = %{"id" => "container_1", "expires_at" => "t1"}
+      {:ok, message} = container_stream(c, nil)
+
+      assert Claudio.Messages.Response.from_map(message).container == c
+    end
+
+    test "a non-null delta container overwrites the start value" do
+      {:ok, message} =
+        container_stream(%{"id" => "container_1", "expires_at" => "t1"}, %{
+          "id" => "container_1",
+          "expires_at" => "t2"
+        })
+
+      assert message["container"] == %{"id" => "container_1", "expires_at" => "t2"}
+    end
+  end
+
+  describe "build_final_message/1 input_transformations (S15)" do
+    @start_entry ~s([{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}])
+
+    defp binding_stream(delta_event) do
+      [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","input_transformations":#{@start_entry},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        "data: " <> delta_event,
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    test "message_start value survives a delta without the key (Review Focus 4)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}})
+        )
+
+      assert [%{"type" => "thinking_dropped"}] =
+               Claudio.Messages.Response.from_map(message).input_transformations
+    end
+
+    test "a top-level key on message_delta replaces it (post-fallback copy)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1},"input_transformations":[]})
+        )
+
+      assert message["input_transformations"] == []
+    end
+
+    # The SDK types input_transformations as a field of the message_delta event, not of
+    # its delta (anthropic-sdk-python BetaRawMessageDeltaEvent, checked 2026-09-26).
+    test "a key inside delta is ignored: only the event's top level carries it" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[]},"usage":{"output_tokens":1}})
+        )
+
+      assert [%{"type" => "thinking_dropped"}] = message["input_transformations"]
+    end
+  end
+
+  describe "build_final_message/1 streamed tool input" do
+    defp tool_stream(start_block, partials) do
+      deltas =
+        Enum.flat_map(partials, fn json ->
+          [
+            ~s(event: content_block_delta),
+            "data: " <>
+              Jason.encode!(%{
+                "type" => "content_block_delta",
+                "index" => 0,
+                "delta" => %{"type" => "input_json_delta", "partial_json" => json}
+              }),
+            ""
+          ]
+        end)
+
+      ([
+         ~s(event: message_start),
+         ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":1,"output_tokens":0}}}),
+         "",
+         ~s(event: content_block_start),
+         "data: " <>
+           Jason.encode!(%{
+             "type" => "content_block_start",
+             "index" => 0,
+             "content_block" => start_block
+           }),
+         ""
+       ] ++
+         deltas ++
+         [
+           ~s(event: content_block_stop),
+           ~s(data: {"type":"content_block_stop","index":0}),
+           "",
+           ~s(event: message_delta),
+           ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+           "",
+           ~s(event: message_stop),
+           ~s(data: {"type":"message_stop"}),
+           ""
+         ])
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    @tool_use %{"type" => "tool_use", "id" => "toolu_1", "name" => "get_weather", "input" => %{}}
+
+    test "input_json_delta chunks are decoded into input; partial_json is removed" do
+      {:ok, message} = tool_stream(@tool_use, [~s({"city":), ~s( "Paris"})])
+
+      assert message["content"] == [Map.put(@tool_use, "input", %{"city" => "Paris"})]
+
+      response = Claudio.Messages.Response.from_map(message)
+      assert [%{input: %{"city" => "Paris"}}] = Claudio.Messages.Response.get_tool_uses(response)
+
+      assert Claudio.Messages.Response.to_assistant_content(response) ==
+               [Map.put(@tool_use, "input", %{"city" => "Paris"})]
+    end
+
+    test "server_tool_use input is decoded the same way" do
+      srv = %{
+        "type" => "server_tool_use",
+        "id" => "srvtoolu_1",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      {:ok, message} = tool_stream(srv, [~s({"query": "elixir"})])
+
+      assert message["content"] == [Map.put(srv, "input", %{"query" => "elixir"})]
+    end
+
+    test "a tool call with no input deltas keeps its start input" do
+      {:ok, message} = tool_stream(@tool_use, [])
+      assert message["content"] == [@tool_use]
+    end
+
+    test "an empty partial_json decodes to an empty input" do
+      {:ok, message} = tool_stream(@tool_use, [""])
+      assert message["content"] == [@tool_use]
+    end
+
+    test "invalid JSON (e.g. cut off by max_tokens) is an error, not a silent partial block" do
+      assert {:error, {:invalid_tool_input_json, 0, ~s({"city":)}} =
+               tool_stream(@tool_use, [~s({"city":)])
+    end
+  end
+
+  describe "re-audit: truncated streams" do
+    test "a stream that ends between blocks (no message_stop) is an error" do
+      sse =
+        Enum.join(
+          [
+            ~s(event: message_start),
+            ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":5,"output_tokens":0}}}),
+            "",
+            ~s(event: content_block_start),
+            ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hi"}}),
+            "",
+            ~s(event: content_block_stop),
+            ~s(data: {"type":"content_block_stop","index":0}),
+            "",
+            ""
+          ],
+          "\n"
+        )
+
+      assert {:error, {:incomplete_stream, :no_message_stop}} =
+               [sse] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "an empty stream is an error" do
+      assert {:error, {:incomplete_stream, :no_message_stop}} =
+               [""] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
     end
   end
 end

@@ -316,7 +316,7 @@ defmodule Claudio.Messages.ResponseTest do
              ]
     end
 
-    test "serializes mcp_tool_result blocks to API shape" do
+    test "serializes mcp_tool_result blocks to API shape (no server_name: the API rejects it)" do
       response = %Response{
         content: [
           %{
@@ -333,7 +333,6 @@ defmodule Claudio.Messages.ResponseTest do
                %{
                  "type" => "mcp_tool_result",
                  "tool_use_id" => "mcp_1",
-                 "server_name" => "srv",
                  "content" => "ok",
                  "is_error" => false
                }
@@ -466,7 +465,8 @@ defmodule Claudio.Messages.ResponseTest do
                type: :server_tool_use,
                id: "srvtoolu_1",
                name: "web_search",
-               input: %{"query" => "elixir"}
+               input: %{"query" => "elixir"},
+               caller: nil
              }
     end
 
@@ -498,7 +498,9 @@ defmodule Claudio.Messages.ResponseTest do
       assert block == %{
                type: :web_search_tool_result,
                tool_use_id: "srvtoolu_1",
-               content: @web_results
+               content: @web_results,
+               caller: nil,
+               raw: hd(data["content"])
              }
     end
 
@@ -561,9 +563,8 @@ defmodule Claudio.Messages.ResponseTest do
     end
 
     test "tolerates raw/untyped blocks (e.g. code_execution_tool_result) without crashing" do
-      # Dynamic-filtering web_search returns code_execution_tool_result blocks
-      # Claudio does not type — they pass through as raw string-keyed maps with
-      # no atom :type key. Getters must not crash on them.
+      # Dynamic-filtering web_search returns code_execution_tool_result blocks, which
+      # are typed shallowly since S14; getters must still not crash on mixed content.
       data = %{
         "content" => [
           %{"type" => "server_tool_use", "id" => "s1", "name" => "web_search", "input" => %{}},
@@ -843,6 +844,86 @@ defmodule Claudio.Messages.ResponseTest do
     end
   end
 
+  describe "from_map/1 compaction blocks" do
+    @signed %{"type" => "compaction", "content" => "Summary.", "signature" => "sig"}
+
+    test "string keys parse to a typed block that keeps the original under raw" do
+      response = Response.from_map(%{"content" => [@signed], "stop_reason" => "compaction"})
+
+      assert response.stop_reason == :compaction
+      assert [%{type: :compaction, content: "Summary.", raw: @signed}] = response.content
+    end
+
+    test "atom keys" do
+      raw = %{type: "compaction", content: "Summary."}
+      response = Response.from_map(%{content: [raw]})
+
+      assert [%{type: :compaction, content: "Summary.", raw: ^raw}] = response.content
+    end
+
+    test "content: nil (a failed compaction) parses" do
+      response = Response.from_map(%{"content" => [%{"type" => "compaction", "content" => nil}]})
+      assert [%{type: :compaction, content: nil}] = response.content
+    end
+
+    test "to_assistant_content/1 replays the block byte-exact, signature included" do
+      block = Map.put(@signed, "encrypted_content", "enc")
+
+      response =
+        Response.from_map(%{
+          "content" => [block, %{"type" => "text", "text" => "Hi"}]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               block,
+               %{"type" => "text", "text" => "Hi"}
+             ]
+    end
+  end
+
+  describe "compaction_block/1" do
+    test "nil without a compaction block" do
+      assert Response.compaction_block(Response.from_map(%{"content" => []})) == nil
+    end
+
+    test "returns the last compaction block" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{"type" => "compaction", "content" => "first"},
+            %{"type" => "text", "text" => "x"},
+            %{"type" => "compaction", "content" => "second"}
+          ]
+        })
+
+      assert %{type: :compaction, content: "second"} = Response.compaction_block(response)
+    end
+  end
+
+  describe "from_map/1 context_management" do
+    @applied %{
+      "applied_edits" => [
+        %{
+          "type" => "clear_tool_uses_20250919",
+          "cleared_tool_uses" => 2,
+          "cleared_input_tokens" => 900
+        }
+      ]
+    }
+
+    test "kept raw, string and atom keys" do
+      assert Response.from_map(%{"content" => [], "context_management" => @applied}).context_management ==
+               @applied
+
+      assert Response.from_map(%{content: [], context_management: @applied}).context_management ==
+               @applied
+    end
+
+    test "nil when absent" do
+      assert Response.from_map(%{"content" => []}).context_management == nil
+    end
+  end
+
   describe "from_map/1 usage with mixed token-key styles" do
     test "string input_tokens + atom output_tokens is normalised, not passed through raw" do
       usage =
@@ -1042,7 +1123,6 @@ defmodule Claudio.Messages.ResponseTest do
       mcp_result = %{
         "type" => "mcp_tool_result",
         "tool_use_id" => "mcp_1",
-        "server_name" => "s",
         "content" => [],
         "is_error" => false
       }
@@ -1193,6 +1273,255 @@ defmodule Claudio.Messages.ResponseTest do
         ])
 
       assert [%{id: "toolu_1"}, %{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+  end
+
+  describe "tool_use caller and toolset_name (S14)" do
+    @member %{
+      "type" => "tool_use",
+      "id" => "toolu_1",
+      "name" => "screenshot",
+      "input" => %{},
+      "toolset_name" => "computer",
+      "caller" => %{"type" => "direct"}
+    }
+
+    test "parsed and re-emitted by to_assistant_content/1 (a stripped toolset_name is a 400)" do
+      response = Response.from_map(%{"content" => [@member]})
+
+      assert [%{type: :tool_use, toolset_name: "computer", caller: %{"type" => "direct"}}] =
+               response.content
+
+      assert Response.to_assistant_content(response) == [@member]
+    end
+
+    test "absent: keys are nil and the replay is byte-identical to before" do
+      plain = %{"type" => "tool_use", "id" => "toolu_2", "name" => "x", "input" => %{"a" => 1}}
+      response = Response.from_map(%{"content" => [plain]})
+
+      assert [%{toolset_name: nil, caller: nil}] = response.content
+      assert Response.to_assistant_content(response) == [plain]
+    end
+
+    test "hand-built typed blocks without the new keys still replay (Review Focus 1)" do
+      response = %Response{
+        content: [
+          %{type: :tool_use, id: "toolu_3", name: "x", input: %{}},
+          %{type: :server_tool_use, id: "srv_1", name: "web_search", input: %{}},
+          %{type: :web_search_tool_result, tool_use_id: "srv_1", content: []}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "tool_use", "id" => "toolu_3", "name" => "x", "input" => %{}},
+               %{
+                 "type" => "server_tool_use",
+                 "id" => "srv_1",
+                 "name" => "web_search",
+                 "input" => %{}
+               },
+               %{"type" => "web_search_tool_result", "tool_use_id" => "srv_1", "content" => []}
+             ]
+    end
+
+    test "server_tool_use caller round-trips; atom-keyed tool_use reads toolset_name" do
+      srv = %{
+        "type" => "server_tool_use",
+        "id" => "srvtoolu_1",
+        "name" => "code_execution",
+        "input" => %{"code" => "1"},
+        "caller" => %{"type" => "direct"}
+      }
+
+      assert Response.to_assistant_content(Response.from_map(%{"content" => [srv]})) == [srv]
+
+      atom = %{
+        type: "tool_use",
+        id: "t",
+        name: "left_click",
+        input: %{},
+        toolset_name: "computer"
+      }
+
+      assert [%{toolset_name: "computer"}] = Response.from_map(%{content: [atom]}).content
+    end
+  end
+
+  describe "server-result blocks (S14)" do
+    @results [
+      {"web_fetch_tool_result", :web_fetch_tool_result},
+      {"code_execution_tool_result", :code_execution_tool_result},
+      {"bash_code_execution_tool_result", :bash_code_execution_tool_result},
+      {"text_editor_code_execution_tool_result", :text_editor_code_execution_tool_result},
+      {"tool_search_tool_result", :tool_search_tool_result},
+      {"advisor_tool_result", :advisor_tool_result}
+    ]
+
+    for {string, atom} <- @results do
+      @tag string: string, atom: atom
+      test "#{string} parses shallowly and replays raw", %{string: string, atom: atom} do
+        raw = %{
+          "type" => string,
+          "tool_use_id" => "srvtoolu_1",
+          "content" => %{"type" => "some_variant", "x" => 1},
+          "caller" => %{"type" => "direct"}
+        }
+
+        response = Response.from_map(%{"content" => [raw]})
+
+        assert [
+                 %{
+                   type: ^atom,
+                   tool_use_id: "srvtoolu_1",
+                   content: %{"type" => "some_variant", "x" => 1},
+                   caller: %{"type" => "direct"},
+                   raw: ^raw
+                 }
+               ] = response.content
+
+        assert Response.to_assistant_content(response) == [raw]
+      end
+    end
+
+    test "atom-keyed result block" do
+      raw = %{type: "tool_search_tool_result", tool_use_id: "s", content: %{}}
+
+      assert [%{type: :tool_search_tool_result, tool_use_id: "s", caller: nil, raw: ^raw}] =
+               Response.from_map(%{content: [raw]}).content
+    end
+
+    test "typed result blocks without a raw map replay rebuilt, not as nil" do
+      response = %Response{
+        content: [
+          %{
+            type: :code_execution_tool_result,
+            tool_use_id: "s",
+            content: %{},
+            caller: nil,
+            raw: nil
+          },
+          %{type: :container_upload, file_id: "f", raw: nil}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "code_execution_tool_result", "tool_use_id" => "s", "content" => %{}},
+               %{"type" => "container_upload", "file_id" => "f"}
+             ]
+    end
+
+    test "container_upload" do
+      raw = %{"type" => "container_upload", "file_id" => "file_1"}
+      response = Response.from_map(%{"content" => [raw]})
+
+      assert [%{type: :container_upload, file_id: "file_1", raw: ^raw}] = response.content
+      assert Response.to_assistant_content(response) == [raw]
+    end
+
+    test "web_search_tool_result caller now round-trips" do
+      raw = %{
+        "type" => "web_search_tool_result",
+        "tool_use_id" => "s",
+        "content" => [],
+        "caller" => %{"type" => "direct"}
+      }
+
+      assert Response.to_assistant_content(Response.from_map(%{"content" => [raw]})) == [raw]
+    end
+
+    test "get_server_tool_results/1,2" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{
+              "type" => "server_tool_use",
+              "id" => "a",
+              "name" => "code_execution",
+              "input" => %{}
+            },
+            %{"type" => "code_execution_tool_result", "tool_use_id" => "a", "content" => %{}},
+            %{"type" => "text", "text" => "x"},
+            %{"type" => "web_search_tool_result", "tool_use_id" => "b", "content" => []},
+            %{"type" => "container_upload", "file_id" => "f"}
+          ]
+        })
+
+      assert Enum.map(Response.get_server_tool_results(response), & &1.type) ==
+               [:code_execution_tool_result, :web_search_tool_result, :container_upload]
+
+      assert [%{tool_use_id: "b"}] =
+               Response.get_server_tool_results(response, :web_search_tool_result)
+
+      assert Response.get_server_tool_results(response, :advisor_tool_result) == []
+    end
+  end
+
+  describe "from_map/1 container (S14)" do
+    @container %{"id" => "container_1", "expires_at" => "2026-09-26T18:57:00Z"}
+
+    test "kept raw, string and atom keys; nil when absent" do
+      assert Response.from_map(%{"content" => [], "container" => @container}).container ==
+               @container
+
+      assert Response.from_map(%{content: [], container: @container}).container == @container
+      assert Response.from_map(%{"content" => []}).container == nil
+    end
+  end
+
+  describe "from_map/1 input_transformations (S15)" do
+    @dropped [
+      %{
+        "type" => "thinking_dropped",
+        "path" => "messages.1.content.0",
+        "reason" => "prefix_binding_mismatch"
+      }
+    ]
+
+    test "kept raw: one entry, empty list, atom top-level key" do
+      assert Response.from_map(%{"content" => [], "input_transformations" => @dropped}).input_transformations ==
+               @dropped
+
+      assert Response.from_map(%{"content" => [], "input_transformations" => []}).input_transformations ==
+               []
+
+      assert Response.from_map(%{content: [], input_transformations: @dropped}).input_transformations ==
+               @dropped
+    end
+
+    test "nil when absent — the beta was not sent (Review Focus 5)" do
+      assert Response.from_map(%{"content" => []}).input_transformations == nil
+    end
+  end
+
+  describe "mcp_tool_result replay (pre-release audit)" do
+    # Live probe G7 (2026-09-26): the API rejects `server_name` on a replayed
+    # mcp_tool_result ("Extra inputs are not permitted") and a null `is_error`.
+    test "replays exactly the API's block: no server_name, no null is_error" do
+      use_block = %{
+        "type" => "mcp_tool_use",
+        "id" => "mcptoolu_01",
+        "name" => "x",
+        "server_name" => "s",
+        "input" => %{}
+      }
+
+      result = %{
+        "type" => "mcp_tool_result",
+        "tool_use_id" => "mcptoolu_01",
+        "is_error" => false,
+        "content" => [%{"type" => "text", "text" => "ok"}]
+      }
+
+      response = Response.from_map(%{"content" => [use_block, result]})
+      assert Response.to_assistant_content(response) == [use_block, result]
+    end
+
+    test "a missing is_error is never sent as null" do
+      result = %{"type" => "mcp_tool_result", "tool_use_id" => "m", "content" => []}
+      [replayed] = Response.to_assistant_content(Response.from_map(%{"content" => [result]}))
+
+      refute Enum.any?(Map.values(replayed), &is_nil/1)
+      refute Map.has_key?(replayed, "server_name")
     end
   end
 end

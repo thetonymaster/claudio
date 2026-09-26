@@ -117,7 +117,7 @@ defmodule Claudio do
       ]
 
       {:ok, batch} = Claudio.Batches.create(client, requests)
-      {:ok, final} = Claudio.Batches.wait_for_completion(client, batch.id)
-      {:ok, results} = Claudio.Batches.get_results(client, batch.id)
+      {:ok, _final} = Claudio.Batches.wait_for_completion(client, batch["id"])
+      {:ok, results} = Claudio.Batches.get_results(client, batch["id"])
   """
 end
