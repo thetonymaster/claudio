@@ -114,12 +114,12 @@ These were features Claudio *partially* implemented in a way that breaks real mu
   - Library stays **model-agnostic** — raw setter + typed helpers (the `set_output_config/2` / `set_output_format/2` pattern); per-model rules live in docs, the API owns validation.
   - Specs are written **just in time**: S10 now, S11–S15 each spec'd immediately before implementation (dated beta strings go stale).
   - Existing public signatures do not change; new behaviour arrives as new functions / options.
-  - **Release:** one version bump (0.7.0) after S15 ships. S10–S14 accumulate under CHANGELOG `[Unreleased]`; no spec bumps `@version` on its own.
+  - **Release:** one version bump (0.7.0) after S15 ships. S10–S15 accumulate under CHANGELOG `[Unreleased]`; no spec bumps `@version` on its own.
 
 | Spec | Title | Status |
 |------|-------|--------|
 | **S10** | API drift fixes — MCP connector v2 (`mcp_toolset` + `mcp-client-2025-11-20`), Files/Skills GA, `code_execution_20260521`, `stop_details`, doc model ids / `budget_tokens` / forced `tool_choice` notes | merged #18 (92a0283); spec `2026-09-25-s10-api-drift-fixes-design.md` |
-| S11 | Thinking & effort — adaptive thinking helper, `display` (`summarized`/`omitted`, `updates` beta), `output_config.effort`, task budgets (`task-budgets-2026-03-13`) | spec written: `2026-09-25-s11-thinking-effort-design.md` |
+| S11 | Thinking & effort — adaptive thinking helper, `display` (`summarized`/`omitted`, `updates` beta), `output_config.effort`, task budgets (`task-budgets-2026-03-13`) | implemented on `feat/s11-thinking-effort` (PR pending); spec `2026-09-25-s11-thinking-effort-design.md` |
 | S12 | 5.x request surface — mid-conversation `role: "system"` messages + `clear_at` (beta), per-message effort (beta), refusal `fallbacks` (`server-side-fallback-2026-07-01`), `speed` (fast mode), `inference_geo`, cache diagnostics (beta) | not spec'd |
 | S13 | Context management — compaction (`compact-2026-01-12`: request, response/stream blocks, round-trip) + typed context-editing strategies | not spec'd |
 | S14 | Tool extensions — tool search + `defer_loading`, programmatic tool calling (`allowed_callers`), advisor tool, `computer_toolset_20260801`, typed parsing of new server-tool result blocks | not spec'd |
