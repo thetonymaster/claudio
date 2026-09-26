@@ -59,6 +59,8 @@ Client initialization requires:
 - `version`: API version (e.g., "2023-06-01")
 - `auth_type`: (optional) `:api_key` (default) or `:bearer`. Claude-Code-style OAuth tokens also need `beta: ["oauth-2025-04-20"]`.
 - `beta`: (optional) list of beta feature flags
+- App config: `config :claudio, default_api_version: ..., default_beta_features: [...]`; `config :claudio, Claudio.Client, timeout:, recv_timeout:, retry: true | [delay:, max_retries:, max_delay:]` — `retry` retries 408/429/5xx/529 and connection errors on every method (Req's default only retries GET/HEAD)
+- `Claudio.APIError.from_response/2` also handles non-JSON bodies (empty 5xx, proxy HTML), typed from the HTTP status
 
 > **Alt deployments (Bedrock / Vertex):** not implemented — they need SigV4 / GCP ADC signing, model-id prefixing, and per-feature masking (large effort, deferred until demand). The OAuth token-exchange flow (`POST /v1/oauth/token`) is likewise out of scope; supply an already-obtained bearer token.
 
@@ -85,7 +87,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - Tool definitions and tool choice configuration
 - Thinking mode configuration
 - **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`, plus `add_message_with_cache/4` for message-level breakpoints and `set_cache_control/2` for top-level auto-placement — all GA, no beta header)
-- **Vision/image support** (`add_message_with_image/4`, `add_message_with_image_url/3`)
+- **Vision/image support** (`add_message_with_image/5` — detects PNG/GIF/WebP/JPEG when no media type is given; `add_message_with_image_url/4`)
 - **Document support** (`add_message_with_document/5` — opts `:citations` / `:title` / `:context`; backward-compatible with the original `/4` arity)
 - **Citations + search results** (`add_message_with_document/5` with `citations: true` for grounded document citations; `search_result_block/4` builds RAG `search_result` content blocks — both GA, no beta header. ⚠️ Citations are **incompatible with structured outputs** — combining them returns 400.)
 - **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps; adds the `mcp_toolset` and declares `mcp-client-2025-11-20`)
@@ -102,7 +104,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
   - `add_code_execution_tool/2` — `code_execution_20260521` (default; `version:` `:"20260120"` / `:"20250825"`); GA (pairs with `set_container/2`)
   - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
   - `add_memory_tool/1` — `memory_20250818`; GA, client-side
-  - `add_computer_tool/4` — `computer_20250124`; **auto-declares the `computer-use-2025-01-24` beta** via `add_beta/2`
+  - `add_computer_tool/4` — `computer_20250124` (**auto-declares `computer-use-2025-01-24`** via `add_beta/2`); `version: :"20251124"` → `computer_20251124` + `computer-use-2025-11-24`
 - **Tool extensions** (`add_tool/3` — `defer_loading:`, `allowed_callers:` (`:code_execution` → `code_execution_20260120`), GA; `add_tool_search_tool/2` — `:regex` / `:bm25`, GA; `add_advisor_tool/3` — declares `advisor-tool-2026-03-01`; `add_computer_toolset/2` / `add_browser_toolset/2` — GA client toolsets, results must echo `toolset_name`; `add_computer_tool/4` `version: :"20251124"` declares `computer-use-2025-11-24`. Opus 5.5 accepts only the computer toolset.)
 - Converts to map via `to_map/1` for API submission
 
@@ -209,7 +211,7 @@ Agent-to-Agent protocol support for discovering and interacting with remote agen
 The `Claudio.Batches` module handles asynchronous batch processing:
 - `create/2`: Submit up to 100,000 requests in a single batch
 - `get/2`: Retrieve batch status
-- `get_results/2`: Download results as JSONL
+- `get_results/2`: Download results — a list of decoded, string-keyed maps (JSONL parsed; a malformed line is `{:error, {:invalid_result_line, n, line}}`)
 - `list/2`: List all batches with pagination
 - `cancel/2`: Cancel in-progress batch
 - `delete/2`: Delete batch and results
@@ -272,7 +274,7 @@ The `Claudio.APIError` exception provides structured error handling:
 
 ### JSON Handling
 - Jason for all JSON encoding/decoding (Req depends on it; `json:` request bodies go through it)
-- All API responses parsed with atom keys for easier access
+- JSON is decoded with **string keys** everywhere (Messages, Batches, streams); `Response` structs expose typed atom-keyed fields and blocks, raw sub-maps stay string-keyed
 
 ### Streaming Implementation
 - Streaming detected by pattern matching on `stream: true`
@@ -293,7 +295,7 @@ lib/
 └── claudio/
     ├── a2a/                   # A2A protocol (agent_card, artifact, client, message, part, task, util, transport/{http,grpc})
     ├── admin.ex               # Admin API (organizations/*)
-    ├── agent.ex               # Stateless tool-calling loop (Claudio.Agent): toolset pair dispatch, container carry, pause_turn resume
+    ├── agent.ex               # Stateless tool-calling loop (Claudio.Agent): toolset pair dispatch, container carry, pause_turn/compaction resume; errors return {:error, reason, last_response, messages}
     ├── api_error.ex           # Error handling
     ├── batches.ex             # Batches API
     ├── client.ex              # HTTP client setup

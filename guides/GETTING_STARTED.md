@@ -9,7 +9,7 @@ Add `claudio` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:claudio, "~> 0.2.0"}
+    {:claudio, "~> 0.7"}
   ]
 end
 ```
@@ -87,7 +87,7 @@ client = Claudio.Client.new(%{
 alias Claudio.Messages
 
 {:ok, response} = Messages.create_message(client, %{
-  "model" => "claude-sonnet-4-5-20250929",
+  "model" => "claude-opus-5-5",
   "max_tokens" => 1024,
   "messages" => [
     %{"role" => "user", "content" => "Hello, Claude!"}
@@ -108,7 +108,7 @@ IO.puts(text)
 alias Claudio.Messages.{Request, Response}
 
 # Build the request
-request = Request.new("claude-sonnet-4-5-20250929")
+request = Request.new("claude-opus-5-5")
 |> Request.add_message(:user, "Hello, Claude!")
 |> Request.set_max_tokens(1024)
 
@@ -123,7 +123,7 @@ IO.puts(text)
 ### Multi-turn Conversation
 
 ```elixir
-request = Request.new("claude-sonnet-4-5-20250929")
+request = Request.new("claude-opus-5-5")
 |> Request.add_message(:user, "What's 2+2?")
 |> Request.add_message(:assistant, "2+2 equals 4.")
 |> Request.add_message(:user, "What about 3+3?")
@@ -135,7 +135,7 @@ request = Request.new("claude-sonnet-4-5-20250929")
 ### With System Prompt
 
 ```elixir
-request = Request.new("claude-sonnet-4-5-20250929")
+request = Request.new("claude-opus-5-5")
 |> Request.set_system("You are a helpful math tutor. Always show your work.")
 |> Request.add_message(:user, "What's 15 * 23?")
 |> Request.set_max_tokens(200)
@@ -146,11 +146,12 @@ request = Request.new("claude-sonnet-4-5-20250929")
 ### Adjusting Model Parameters
 
 ```elixir
-request = Request.new("claude-sonnet-4-5-20250929")
+# Sampling parameters: Claude Haiku 4.5 and earlier models. Claude Opus 4.7+, 5.x and
+# Sonnet 5 reject them (400) — steer those with Request.set_effort/2 instead.
+request = Request.new("claude-haiku-4-5")
 |> Request.add_message(:user, "Write a creative story.")
 |> Request.set_max_tokens(1024)
 |> Request.set_temperature(0.8)  # More creative
-|> Request.set_top_p(0.9)
 
 {:ok, response} = Messages.create(client, request)
 ```
@@ -182,7 +183,7 @@ end
 Before sending a large request, you can count tokens:
 
 ```elixir
-request = Request.new("claude-sonnet-4-5-20250929")
+request = Request.new("claude-opus-5-5")
 |> Request.add_message(:user, "Long message here...")
 
 {:ok, count} = Messages.count_tokens(client, request)
@@ -199,7 +200,7 @@ defmodule MyApp.Claude do
   alias Claudio.Messages
 
   def ask(client, question, opts \\ []) do
-    model = Keyword.get(opts, :model, "claude-sonnet-4-5-20250929")
+    model = Keyword.get(opts, :model, "claude-opus-5-5")
     max_tokens = Keyword.get(opts, :max_tokens, 1024)
     system = Keyword.get(opts, :system)
 
@@ -251,7 +252,7 @@ defmodule MyApp.ClaudeClient do
   def handle_call({:ask, question}, _from, state) do
     alias Claudio.Messages.{Request, Response}
 
-    request = Request.new("claude-sonnet-4-5-20250929")
+    request = Request.new("claude-opus-5-5")
     |> Request.add_message(:user, question)
     |> Request.set_max_tokens(1024)
 

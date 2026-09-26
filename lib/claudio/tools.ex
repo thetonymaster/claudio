@@ -122,7 +122,7 @@ defmodule Claudio.Tools do
 
   ## Example
 
-      {:ok, response} = Claudio.Messages.create_message(client, request)
+      {:ok, response} = Claudio.Messages.create(client, request)
       tool_uses = Claudio.Tools.extract_tool_uses(response)
 
       Enum.each(tool_uses, fn tool_use ->
