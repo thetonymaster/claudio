@@ -19,6 +19,12 @@ defmodule Claudio.Messages.Response do
   Each handoff is a `:fallback` content block (`fallbacks/1`); `served_by/1` names the
   model that produced the message, and `usage.iterations` records every attempt.
 
+  Context management: `context_management` is the raw response map
+  (`%{"applied_edits" => [...]}`, `nil` when the request configured no edits). A
+  `:compaction` content block holds a compaction summary; `stop_reason` is `:compaction`
+  when the reply is only that block (on-demand compaction, or `pause_after_compaction`).
+  Continue with `Request.apply_compaction/2`.
+
   `usage` keeps every field the API returns: documented fields are atom keys (`nil`
   when absent); any other field keeps the key it arrived with (so it may be a string
   key). This applies when both `input_tokens` and `output_tokens` are present (either
@@ -33,6 +39,7 @@ defmodule Claudio.Messages.Response do
           | :pause_turn
           | :refusal
           | :model_context_window_exceeded
+          | :compaction
 
   @type content_block ::
           text_block()
@@ -45,6 +52,7 @@ defmodule Claudio.Messages.Response do
           | server_tool_use_block()
           | web_search_tool_result_block()
           | fallback_block()
+          | compaction_block()
 
   @type text_block :: %{
           :type => :text,
@@ -118,12 +126,26 @@ defmodule Claudio.Messages.Response do
         }
 
   @typedoc """
+  A compaction summary (`Request.add_compaction/2` threshold compaction, or
+  `Request.request_compaction/2` on demand). `content` is the summary text (`nil` when
+  compaction failed). `raw` is the block as received — including `signature` for on-demand
+  blocks — and is what `to_assistant_content/1` replays.
+  """
+  @type compaction_block :: %{
+          type: :compaction,
+          content: String.t() | nil,
+          raw: map()
+        }
+
+  @typedoc """
   Token usage. Documented fields are atom keys (`nil` when the API did not send
   them); any other field the API returns is kept under the key it arrived with.
   A usage map missing `input_tokens` or `output_tokens` is returned as received.
   `iterations` (present when `fallbacks` was set) lists each attempt as the raw
   API map: `"type" => "message"` for a model that declined, `"fallback_message"`
   for the one that served; the top-level counts cover only the returned attempt.
+  With compaction, iterations also holds `"type" => "compaction"` entries; the top-level
+  counts exclude them (the billed total is the sum over iterations).
   """
   @type usage :: %{
           optional(atom() | String.t()) => term(),
@@ -149,6 +171,7 @@ defmodule Claudio.Messages.Response do
           stop_sequence: String.t() | nil,
           stop_details: map() | nil,
           diagnostics: map() | nil,
+          context_management: map() | nil,
           usage: usage()
         }
 
@@ -162,6 +185,7 @@ defmodule Claudio.Messages.Response do
     :stop_sequence,
     :stop_details,
     :diagnostics,
+    :context_management,
     :usage
   ]
 
@@ -180,6 +204,7 @@ defmodule Claudio.Messages.Response do
       stop_sequence: data[:stop_sequence] || data["stop_sequence"],
       stop_details: data[:stop_details] || data["stop_details"],
       diagnostics: data[:diagnostics] || data["diagnostics"],
+      context_management: data[:context_management] || data["context_management"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end
@@ -297,6 +322,15 @@ defmodule Claudio.Messages.Response do
       %{to: to} when is_map(to) -> Map.get(to, "model") || Map.get(to, :model) || model
       _ -> model
     end
+  end
+
+  @doc """
+  Returns the last `compaction` block, or `nil`. See `Request.apply_compaction/2` to
+  continue from it.
+  """
+  @spec compaction_block(t()) :: compaction_block() | nil
+  def compaction_block(%__MODULE__{content: content}) do
+    content |> Enum.filter(&match?(%{type: :compaction}, &1)) |> List.last()
   end
 
   # Blocks from the last `fallback` block on — every block when there is none. Earlier
@@ -482,6 +516,12 @@ defmodule Claudio.Messages.Response do
     fallback_block(block, block["from"], block["to"], block["trigger"])
   end
 
+  defp parse_content_block(%{type: "compaction"} = block),
+    do: %{type: :compaction, content: block[:content], raw: block}
+
+  defp parse_content_block(%{"type" => "compaction"} = block),
+    do: %{type: :compaction, content: block["content"], raw: block}
+
   defp parse_content_block(block), do: block
 
   defp text_block(text, nil), do: %{type: :text, text: text}
@@ -551,6 +591,8 @@ defmodule Claudio.Messages.Response do
 
   defp block_to_api(%{type: :fallback, raw: raw}), do: raw
 
+  defp block_to_api(%{type: :compaction, raw: raw}), do: raw
+
   defp block_to_api(block), do: block
 
   # Continuation rules after a server-side fallback (platform.claude.com/docs/en/
@@ -619,6 +661,7 @@ defmodule Claudio.Messages.Response do
   defp parse_stop_reason("pause_turn"), do: :pause_turn
   defp parse_stop_reason("refusal"), do: :refusal
   defp parse_stop_reason("model_context_window_exceeded"), do: :model_context_window_exceeded
+  defp parse_stop_reason("compaction"), do: :compaction
   defp parse_stop_reason(nil), do: nil
   defp parse_stop_reason(other), do: other
 

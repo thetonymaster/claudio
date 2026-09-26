@@ -843,6 +843,86 @@ defmodule Claudio.Messages.ResponseTest do
     end
   end
 
+  describe "from_map/1 compaction blocks" do
+    @signed %{"type" => "compaction", "content" => "Summary.", "signature" => "sig"}
+
+    test "string keys parse to a typed block that keeps the original under raw" do
+      response = Response.from_map(%{"content" => [@signed], "stop_reason" => "compaction"})
+
+      assert response.stop_reason == :compaction
+      assert [%{type: :compaction, content: "Summary.", raw: @signed}] = response.content
+    end
+
+    test "atom keys" do
+      raw = %{type: "compaction", content: "Summary."}
+      response = Response.from_map(%{content: [raw]})
+
+      assert [%{type: :compaction, content: "Summary.", raw: ^raw}] = response.content
+    end
+
+    test "content: nil (a failed compaction) parses" do
+      response = Response.from_map(%{"content" => [%{"type" => "compaction", "content" => nil}]})
+      assert [%{type: :compaction, content: nil}] = response.content
+    end
+
+    test "to_assistant_content/1 replays the block byte-exact, signature included" do
+      block = Map.put(@signed, "encrypted_content", "enc")
+
+      response =
+        Response.from_map(%{
+          "content" => [block, %{"type" => "text", "text" => "Hi"}]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               block,
+               %{"type" => "text", "text" => "Hi"}
+             ]
+    end
+  end
+
+  describe "compaction_block/1" do
+    test "nil without a compaction block" do
+      assert Response.compaction_block(Response.from_map(%{"content" => []})) == nil
+    end
+
+    test "returns the last compaction block" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{"type" => "compaction", "content" => "first"},
+            %{"type" => "text", "text" => "x"},
+            %{"type" => "compaction", "content" => "second"}
+          ]
+        })
+
+      assert %{type: :compaction, content: "second"} = Response.compaction_block(response)
+    end
+  end
+
+  describe "from_map/1 context_management" do
+    @applied %{
+      "applied_edits" => [
+        %{
+          "type" => "clear_tool_uses_20250919",
+          "cleared_tool_uses" => 2,
+          "cleared_input_tokens" => 900
+        }
+      ]
+    }
+
+    test "kept raw, string and atom keys" do
+      assert Response.from_map(%{"content" => [], "context_management" => @applied}).context_management ==
+               @applied
+
+      assert Response.from_map(%{content: [], context_management: @applied}).context_management ==
+               @applied
+    end
+
+    test "nil when absent" do
+      assert Response.from_map(%{"content" => []}).context_management == nil
+    end
+  end
+
   describe "from_map/1 usage with mixed token-key styles" do
     test "string input_tokens + atom output_tokens is normalised, not passed through raw" do
       usage =
