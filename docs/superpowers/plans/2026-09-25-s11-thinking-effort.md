@@ -94,7 +94,7 @@ Implementation branch `feat/s11-thinking-effort`, cut from `docs/s11-thinking-ef
     end
 
     test "unknown display values raise" do
-      for bad <- [:full, "omitted"] do
+      for bad <- [:full, "omitted", nil] do
         assert_raise ArgumentError,
                      ~r/enable_adaptive_thinking\/2 :display must be one of :summarized, :omitted, :updates; got/,
                      fn ->
@@ -178,11 +178,11 @@ then add directly after the `enable_thinking/2` function body:
   def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
     opts = Keyword.validate!(opts, [:display])
 
-    case Keyword.get(opts, :display) do
-      nil ->
+    case Keyword.fetch(opts, :display) do
+      :error ->
         %{request | thinking: %{"type" => "adaptive"}}
 
-      display when display in @thinking_displays ->
+      {:ok, display} when display in @thinking_displays ->
         thinking = %{"type" => "adaptive", "display" => Atom.to_string(display)}
         request = %{request | thinking: thinking}
 
@@ -190,7 +190,7 @@ then add directly after the `enable_thinking/2` function body:
           do: add_beta(request, @thinking_display_updates_beta),
           else: request
 
-      other ->
+      {:ok, other} ->
         raise ArgumentError,
               "Request.enable_adaptive_thinking/2 :display must be one of " <>
                 ":summarized, :omitted, :updates; got #{inspect(other)}"
@@ -670,7 +670,22 @@ git commit -m "fix(response): keep usage.output_tokens_details"
     refute Map.has_key?(metadata, :thinking_tokens)
 ```
 
-(b) In the existing test "streaming emits final usage telemetry event when stream is consumed", after its `assert metadata.cache_read_input_tokens == 5`, add the same line:
+(b) In the existing test "streaming emits final usage telemetry event when stream is consumed", replace its unfiltered
+
+```elixir
+    attach_telemetry_handler([:claudio, :messages, :stream, :usage])
+```
+
+with a filtered one (`:telemetry.attach` is global and other async modules fire this event — `stream_test.exs` and Task 3's new stream test — so an unfiltered `assert_receive` can match a foreign event):
+
+```elixir
+    attach_telemetry_handler(
+      [:claudio, :messages, :stream, :usage],
+      fn metadata -> metadata[:input_tokens] == 123 end
+    )
+```
+
+and after its `assert metadata.cache_read_input_tokens == 5`, add the same line:
 
 ```elixir
     refute Map.has_key?(metadata, :thinking_tokens)
@@ -750,7 +765,10 @@ git commit -m "fix(response): keep usage.output_tokens_details"
       conn
     end)
 
-    attach_telemetry_handler([:claudio, :messages, :stream, :usage])
+    attach_telemetry_handler(
+      [:claudio, :messages, :stream, :usage],
+      fn metadata -> metadata[:output_tokens] == 80 end
+    )
 
     request =
       Request.new(model)
@@ -765,8 +783,6 @@ git commit -m "fix(response): keep usage.output_tokens_details"
     assert metadata.thinking_tokens == 64
   end
 ```
-
-Note: `[:claudio, :messages, :stream, :usage]` handlers are attached without a filter (as the existing stream test does) and the tests are `async: true`. `assert_receive` only sees messages sent to *this* test's pid, and each handler sends only to its own test pid, so the two stream tests cannot read each other's events.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -827,7 +843,20 @@ Expected: the two new tests FAIL with `KeyError` "key :thinking_tokens not found
   end
 ```
 
-and in the stream moduledoc, extend the telemetry sentence (lines 5-7) with: ``Metadata carries `:input_tokens`, `:output_tokens`, the cache counters and `:thinking_tokens` when present.``
+and in the stream moduledoc replace
+
+```
+  when `parse_events/1` reaches the terminal `message_stop` event and final usage
+  is available from `message_delta` frames.
+```
+
+with
+
+```
+  when `parse_events/1` reaches the terminal `message_stop` event and final usage
+  is available from `message_delta` frames. Metadata carries `:input_tokens`,
+  `:output_tokens`, the cache counters and `:thinking_tokens` when present.
+```
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -1048,7 +1077,7 @@ Expected: FAIL — "function Claudio.Messages.Stream.accumulate_thinking/1 is un
 - [ ] **Step 3: Implement** — add directly after `accumulate_text/1` (bare `Stream` here is Elixir's `Stream`, as in `accumulate_text/1`):
 
 ```elixir
-  @doc """
+  @doc ~S"""
   Emits `{block_index, text}` for every `thinking_delta` with non-empty text.
 
   The index tells one `thinking` block from the next: with `display: :updates` each
@@ -1175,7 +1204,7 @@ end
 - [ ] **Step 2: Run it**
 
 Run: `mix test test/integration/thinking_integration_test.exs --include integration 2>&1 | tail -15`
-Expected: PASS (`1 test, 0 failures`) when `ANTHROPIC_API_KEY` is set; when unset, the module is skipped — record **DID NOT RUN** in the ledger and in the final report, never "passed". A failure here is data about the API (e.g. no thinking block at `:high`, `output_tokens_details` absent): stop and report the raw response, do not loosen the assertions.
+Expected: PASS (`1 test, 0 failures`) when `ANTHROPIC_API_KEY` is set. When unset, ExUnit reports `1 test, 0 failures, 1 invalid` (the shared `setup_all` returns `{:skip, _}`, which ExUnit treats as an invalid setup — pre-existing helper pattern, not fixed here) — record **DID NOT RUN** in the ledger and in the final report, never "passed". A failure here is data about the API (e.g. no thinking block at `:high`, `output_tokens_details` absent): stop and report the raw response, do not loosen the assertions.
 
 - [ ] **Step 3: CHANGELOG** — in `CHANGELOG.md` under `## [Unreleased] — targets 0.7.0`:
 
@@ -1186,7 +1215,7 @@ Append to the end of `### Fixed`:
   it was dropped by the usage parser.
 ```
 
-Append to the end of `### Added`:
+Append to the end of the `[Unreleased]` section's `### Added` (the first `### Added` in the file, ~line 38 — it ends just before `### Docs`; the second one belongs to `[0.6.0]`):
 
 ```markdown
 - **Thinking & effort helpers** (`Claudio.Messages.Request`), no per-model validation:

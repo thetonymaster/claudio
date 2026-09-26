@@ -22,7 +22,7 @@ must hand-assemble these maps, remember which need a beta header, and avoid clob
 
 Two observability gaps compound this:
 
-1. `Response.parse_usage/1` (`lib/claudio/messages/response.ex:427-443`) keeps only four
+1. `Response.parse_usage/1` (`lib/claudio/messages/response.ex:427-452`) keeps only four
    keys, so `usage.output_tokens_details.thinking_tokens` — the only way to see how many
    output tokens went to thinking — is dropped from every parsed `Response`.
 2. Both usage-telemetry emitters keep the same four keys:
