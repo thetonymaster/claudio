@@ -52,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `connector_text` and `tool_use`, and keeps `server_tool_use` / `mcp_tool_use` only when their
   result is present. Output is unchanged for responses without a `fallback` block, or with it
   first (the normal non-streaming shape).
-- `Response.get_tool_uses/1` and `Tools.extract_tool_uses/1` (so `has_tool_uses?/1`) skip
-  `tool_use` blocks before the last `fallback` block — they came from the model that declined.
+- `Response.get_tool_uses/1`, `Tools.extract_tool_uses/1` (so `has_tool_uses?/1`) and
+  `MCP.ResultMapper.extract_mcp_calls/1` skip `tool_use` blocks before the last `fallback` block —
+  they came from the model that declined.
 - `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its content holds a
   `fallback` block; the API rejects a replayed `fallback` block without it.
 
