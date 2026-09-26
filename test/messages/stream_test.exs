@@ -469,6 +469,7 @@ defmodule Claudio.Messages.StreamTest do
 
       assert response.model == "claude-opus-5-5"
       assert Claudio.Messages.Response.served_by(response) == "claude-opus-4-8"
+      assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
     end
   end
 end

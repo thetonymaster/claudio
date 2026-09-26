@@ -32,7 +32,8 @@ defmodule Claudio.Messages.ResponseTest do
                cache_creation: nil,
                service_tier: nil,
                inference_geo: nil,
-               speed: nil
+               speed: nil,
+               iterations: nil
              }
     end
 
@@ -750,11 +751,11 @@ defmodule Claudio.Messages.ResponseTest do
           "usage" => %{
             "input_tokens" => 1,
             "output_tokens" => 2,
-            "iterations" => [%{"type" => "message"}]
+            "future_field" => [%{"type" => "message"}]
           }
         }).usage
 
-      assert string_keyed["iterations"] == [%{"type" => "message"}]
+      assert string_keyed["future_field"] == [%{"type" => "message"}]
 
       atom_keyed =
         Response.from_map(%{
@@ -781,13 +782,43 @@ defmodule Claudio.Messages.ResponseTest do
       refute Map.has_key?(usage, "speed")
     end
 
+    test "iterations becomes an atom key with raw entries (RF example)" do
+      iterations = [
+        %{
+          "type" => "message",
+          "model" => "claude-fable-5",
+          "input_tokens" => 535,
+          "output_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "cache_creation_input_tokens" => 0
+        },
+        %{
+          "type" => "fallback_message",
+          "model" => "claude-opus-4-8",
+          "input_tokens" => 412,
+          "output_tokens" => 264,
+          "cache_read_input_tokens" => 0,
+          "cache_creation_input_tokens" => 0
+        }
+      ]
+
+      usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 412, "output_tokens" => 264, "iterations" => iterations}
+        }).usage
+
+      assert usage.iterations == iterations
+      refute Map.has_key?(usage, "iterations")
+    end
+
     test "nil usage has the new keys as nil" do
       usage = Response.from_map(%{"content" => []}).usage
 
       assert usage.input_tokens == 0
       assert usage.output_tokens == 0
 
-      for key <- [:cache_creation, :service_tier, :inference_geo, :speed] do
+      for key <- [:cache_creation, :service_tier, :inference_geo, :speed, :iterations] do
         assert Map.fetch!(usage, key) == nil
       end
     end

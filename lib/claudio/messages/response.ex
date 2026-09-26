@@ -3,15 +3,21 @@ defmodule Claudio.Messages.Response do
   Structured response from the Messages API.
 
   `stop_details` is the raw API map (`"type"`, `"category"`, `"explanation"`), set only
-  when `stop_reason` is `:refusal`. For streamed responses it is read from
-  `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
-  Anthropic's streaming docs.
+  when `stop_reason` is `:refusal`. With `Request.set_fallbacks/2` it can also carry
+  `"recommended_model"` (a model to retry directly when the fallback attempt was
+  skipped), `"fallback_credit_token"` and `"fallback_has_prefill_claim"`. For streamed
+  responses it is read from `message_delta.delta` next to `stop_reason`; that location
+  is unconfirmed in Anthropic's streaming docs.
 
   `diagnostics` is carried raw (see `Request.enable_cache_diagnostics/2`):
   `nil` when diagnostics were not requested, there was nothing to compare, or the
   comparison found no divergence; `%{"cache_miss_reason" => nil}` when the comparison
   was still pending (inconclusive — check the next turn); otherwise a reason map such
   as `%{"cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => n}}`.
+
+  With `Request.set_fallbacks/2`, a refused request may be retried on another model.
+  Each handoff is a `:fallback` content block (`fallbacks/1`); `served_by/1` names the
+  model that produced the message, and `usage.iterations` records every attempt.
 
   `usage` keeps every field the API returns: documented fields are atom keys (`nil`
   when absent); any other field keeps the key it arrived with (so it may be a string
@@ -115,6 +121,9 @@ defmodule Claudio.Messages.Response do
   Token usage. Documented fields are atom keys (`nil` when the API did not send
   them); any other field the API returns is kept under the key it arrived with.
   A usage map missing `input_tokens` or `output_tokens` is returned as received.
+  `iterations` (present when `fallbacks` was set) lists each attempt as the raw
+  API map: `"type" => "message"` for a model that declined, `"fallback_message"`
+  for the one that served; the top-level counts cover only the returned attempt.
   """
   @type usage :: %{
           optional(atom() | String.t()) => term(),
@@ -126,7 +135,8 @@ defmodule Claudio.Messages.Response do
           cache_creation: map() | nil,
           service_tier: String.t() | nil,
           inference_geo: String.t() | nil,
-          speed: String.t() | nil
+          speed: String.t() | nil,
+          iterations: [map()] | nil
         }
 
   @type t :: %__MODULE__{
@@ -538,7 +548,8 @@ defmodule Claudio.Messages.Response do
     :cache_creation,
     :service_tier,
     :inference_geo,
-    :speed
+    :speed,
+    :iterations
   ]
   @usage_string_keys Enum.map(@usage_keys, &Atom.to_string/1)
 
