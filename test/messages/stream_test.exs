@@ -591,4 +591,39 @@ defmodule Claudio.Messages.StreamTest do
       assert message["context_management"] == %{"applied_edits" => []}
     end
   end
+
+  describe "build_final_message/1 container (S14)" do
+    defp container_stream(start_container, delta_container) do
+      [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","container":#{Jason.encode!(start_container)},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use","container":#{Jason.encode!(delta_container)}},"usage":{"output_tokens":1}}),
+        ""
+      ]
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    test "message_start container survives a null delta container (Review Focus 4)" do
+      c = %{"id" => "container_1", "expires_at" => "t1"}
+      {:ok, message} = container_stream(c, nil)
+
+      assert Claudio.Messages.Response.from_map(message).container == c
+    end
+
+    test "a non-null delta container overwrites the start value" do
+      {:ok, message} =
+        container_stream(%{"id" => "container_1", "expires_at" => "t1"}, %{
+          "id" => "container_1",
+          "expires_at" => "t2"
+        })
+
+      assert message["container"] == %{"id" => "container_1", "expires_at" => "t2"}
+    end
+  end
 end

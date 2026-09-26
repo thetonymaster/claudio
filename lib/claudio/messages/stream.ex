@@ -276,6 +276,8 @@ defmodule Claudio.Messages.Stream do
             |> maybe_update(delta, "stop_reason")
             |> maybe_update(delta, "stop_sequence")
             |> maybe_update(delta, "stop_details")
+            # Programmatic tool calling: the container may be refreshed here (S14).
+            |> maybe_update(delta, "container")
             |> maybe_put_usage(usage)
             # context_management sits at the event's top level, beside delta and usage.
             |> maybe_update(data, "context_management")
