@@ -207,23 +207,20 @@ defmodule Claudio.Messages do
   """
   @spec count_tokens(Req.Request.t(), map() | Request.t()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
+  # Messages fields the count endpoint rejects with 400 "Extra inputs are not permitted"
+  # (probed 2026-09-25/26), stripped so a request can be counted as built.
+  @not_counted ~w(stream max_tokens inference_geo diagnostics fallbacks temperature top_k top_p
+                  stop_sequences metadata service_tier container)
+
   def count_tokens(client, %Request{} = request) do
     client = Claudio.Client.with_betas(client, Request.required_betas(request))
 
-    payload =
-      request
-      |> Request.to_map()
-      |> Map.delete("stream")
-      |> Map.delete("max_tokens")
-      # The count endpoint rejects these (400 "Extra inputs are not permitted", probed 2026-09-25).
-      |> Map.delete("inference_geo")
-      |> Map.delete("diagnostics")
-      |> Map.delete("fallbacks")
-
-    count_tokens(client, payload)
+    count_tokens(client, Request.to_map(request))
   end
 
   def count_tokens(client, payload) when is_map(payload) do
+    payload = Map.drop(payload, @not_counted ++ Enum.map(@not_counted, &String.to_atom/1))
+
     case Req.post(client, url: "messages/count_tokens", json: payload) do
       {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, body}

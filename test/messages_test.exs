@@ -633,4 +633,42 @@ defmodule Claudio.MessagesTest do
   defp unique_model(suffix) do
     "claude-3-5-sonnet-20241022-#{suffix}-#{System.unique_integer([:positive])}"
   end
+
+  describe "count_tokens/2 strips fields the count endpoint rejects (pre-release audit)" do
+    # Live probe G1 (2026-09-26): each of these → 400 "Extra inputs are not permitted".
+    @rejected ~w(temperature top_k top_p stop_sequences metadata service_tier container)
+
+    test "Request form and raw map", %{client: client, bypass: bypass} do
+      test_pid = self()
+
+      Bypass.expect(bypass, "POST", "/messages/count_tokens", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:count_body, Jason.decode!(body)})
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"input_tokens" => 5}))
+      end)
+
+      request =
+        Request.new("claude-haiku-4-5")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_temperature(0.5)
+        |> Request.set_top_k(5)
+        |> Request.set_top_p(0.9)
+        |> Request.set_stop_sequences(["X"])
+        |> Request.set_metadata(%{"user_id" => "u"})
+        |> Request.set_service_tier("auto")
+        |> Request.set_container("container_1")
+
+      assert {:ok, %{"input_tokens" => 5}} = Claudio.Messages.count_tokens(client, request)
+      assert_received {:count_body, body}
+      assert Map.keys(body) -- ["model", "messages"] == []
+
+      raw = Map.new(@rejected, &{&1, "x"}) |> Map.merge(%{"model" => "m", "messages" => []})
+      assert {:ok, _} = Claudio.Messages.count_tokens(client, raw)
+      assert_received {:count_body, raw_body}
+      assert Enum.sort(Map.keys(raw_body)) == ["messages", "model"]
+    end
+  end
 end

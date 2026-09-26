@@ -206,6 +206,10 @@ defmodule Claudio.Messages.Request do
 
   defp advisor_block?(_block), do: false
 
+  defp edit_type(%{"type" => type}), do: to_string(type)
+  defp edit_type(%{type: type}), do: to_string(type)
+  defp edit_type(_edit), do: nil
+
   defp has_compact_edit?(config) do
     case Map.get(config, "edits") || Map.get(config, :edits) do
       edits when is_list(edits) ->
@@ -533,8 +537,8 @@ defmodule Claudio.Messages.Request do
 
     tool =
       tool
-      |> maybe_put("defer_loading", defer_loading!(Keyword.get(opts, :defer_loading)))
-      |> maybe_put("allowed_callers", allowed_callers!(Keyword.get(opts, :allowed_callers)))
+      |> put_tool_key("defer_loading", defer_loading!(Keyword.get(opts, :defer_loading)))
+      |> put_tool_key("allowed_callers", allowed_callers!(Keyword.get(opts, :allowed_callers)))
 
     %{request | tools: (tools || []) ++ [tool]}
   end
@@ -583,8 +587,10 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
   def add_tool_with_cache(%__MODULE__{} = request, tool, opts \\ []) when is_map(tool) do
-    tool_with_cache = Map.put(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
-    add_tool(request, tool_with_cache)
+    # defer_loading is left out on purpose: the API rejects it together with cache_control.
+    opts = Keyword.validate!(opts, [:ttl, :allowed_callers])
+    tool = put_tool_key(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
+    add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
 
   @doc """
@@ -909,8 +915,14 @@ defmodule Claudio.Messages.Request do
         "clear_at_least",
         map_opt(opts, :clear_at_least, &count_map!(fun, :clear_at_least, "input_tokens", &1))
       )
-      |> maybe_put("exclude_tools", opts[:exclude_tools])
-      |> maybe_put("clear_tool_inputs", Keyword.get(opts, :clear_tool_inputs))
+      |> maybe_put(
+        "exclude_tools",
+        map_opt(opts, :exclude_tools, &string_list!(fun, :exclude_tools, &1))
+      )
+      |> maybe_put(
+        "clear_tool_inputs",
+        clear_tool_inputs!(fun, Keyword.get(opts, :clear_tool_inputs))
+      )
 
     request |> put_edit(edit, :last) |> add_beta(@context_management_beta)
   end
@@ -1086,6 +1098,28 @@ defmodule Claudio.Messages.Request do
     end
   end
 
+  defp string_list!(fun, opt, list) when is_list(list) do
+    if Enum.all?(list, &is_binary/1), do: list, else: string_list_error!(fun, opt, list)
+  end
+
+  defp string_list!(fun, opt, other), do: string_list_error!(fun, opt, other)
+
+  defp string_list_error!(fun, opt, value) do
+    raise ArgumentError,
+          "Request.#{fun} #{inspect(opt)} must be a list of tool names; got #{inspect(value)}"
+  end
+
+  defp clear_tool_inputs!(_fun, value) when is_boolean(value) or is_nil(value), do: value
+
+  defp clear_tool_inputs!(fun, value) when is_list(value),
+    do: string_list!(fun, :clear_tool_inputs, value)
+
+  defp clear_tool_inputs!(fun, other) do
+    raise ArgumentError,
+          "Request.#{fun} :clear_tool_inputs must be a boolean or a list of tool names; " <>
+            "got #{inspect(other)}"
+  end
+
   defp clear_trigger!({kind, n}) when kind in [:input_tokens, :tool_uses] and is_integer(n),
     do: %{"type" => Atom.to_string(kind), "value" => n}
 
@@ -1108,7 +1142,13 @@ defmodule Claudio.Messages.Request do
     cm = cm || %{}
     key = if Map.has_key?(cm, :edits) and not Map.has_key?(cm, "edits"), do: :edits, else: "edits"
     current = Map.get(cm, key) || []
-    edits = if position == :first, do: [edit | current], else: current ++ [edit]
+
+    edits =
+      if position == :first,
+        # Only one clear_thinking edit is meaningful: a new one replaces the old.
+        do: [edit | Enum.reject(current, &(edit_type(&1) == edit["type"]))],
+        else: current ++ [edit]
+
     %{request | context_management: Map.put(cm, key, edits)}
   end
 
@@ -1481,7 +1521,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_strict_tool(t(), map()) :: t()
   def add_strict_tool(%__MODULE__{} = request, tool) when is_map(tool) do
-    add_tool(request, Map.put(tool, "strict", true))
+    add_tool(request, put_tool_key(tool, "strict", true))
   end
 
   @doc """
@@ -1493,7 +1533,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_tool_with_eager_streaming(t(), map()) :: t()
   def add_tool_with_eager_streaming(%__MODULE__{} = request, tool) when is_map(tool) do
-    add_tool(request, Map.put(tool, "eager_input_streaming", true))
+    add_tool(request, put_tool_key(tool, "eager_input_streaming", true))
   end
 
   @doc """
@@ -1584,6 +1624,9 @@ defmodule Claudio.Messages.Request do
         nil ->
           nil
 
+        configs when not is_map(configs) ->
+          bad_member_config!(type, configs)
+
         configs ->
           Map.new(configs, fn {member, conf} ->
             {to_string(member), member_config!(type, conf)}
@@ -1615,6 +1658,15 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_web_search_tool(t(), keyword()) :: t()
   def add_web_search_tool(%__MODULE__{} = request, opts \\ []) do
+    opts =
+      Keyword.validate!(opts, [
+        :version,
+        :max_uses,
+        :allowed_domains,
+        :blocked_domains,
+        :user_location
+      ])
+
     tool =
       %{"type" => web_search_type(Keyword.get(opts, :version)), "name" => "web_search"}
       |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
@@ -1642,6 +1694,16 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_web_fetch_tool(t(), keyword()) :: t()
   def add_web_fetch_tool(%__MODULE__{} = request, opts \\ []) do
+    opts =
+      Keyword.validate!(opts, [
+        :version,
+        :max_uses,
+        :allowed_domains,
+        :blocked_domains,
+        :max_content_tokens,
+        :citations
+      ])
+
     tool =
       %{"type" => web_fetch_type(Keyword.get(opts, :version)), "name" => "web_fetch"}
       |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
@@ -1701,6 +1763,8 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_text_editor_tool(t(), keyword()) :: t()
   def add_text_editor_tool(%__MODULE__{} = request, opts \\ []) do
+    opts = Keyword.validate!(opts, [:max_characters])
+
     tool =
       %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
       |> maybe_put("max_characters", Keyword.get(opts, :max_characters))
@@ -1870,6 +1934,13 @@ defmodule Claudio.Messages.Request do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
+  # Sets a string key on a caller's tool map, dropping an atom twin so the JSON never
+  # carries the key twice (atom-keyed tool maps are accepted everywhere).
+  defp put_tool_key(tool, _key, nil), do: tool
+
+  defp put_tool_key(tool, key, value),
+    do: tool |> Map.delete(String.to_atom(key)) |> Map.put(key, value)
+
   defp stringify_keys(map) when is_map(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
   defp member_config!(_type, conf) when is_map(conf), do: stringify_keys(conf)
@@ -1899,10 +1970,12 @@ defmodule Claudio.Messages.Request do
   defp web_search_type(:basic), do: "web_search_20250305"
   defp web_search_type(nil), do: "web_search_20260209"
   defp web_search_type(version) when is_binary(version), do: version
+  defp web_search_type(version) when is_atom(version), do: "web_search_#{version}"
 
   defp web_fetch_type(:basic), do: "web_fetch_20250910"
   defp web_fetch_type(nil), do: "web_fetch_20260209"
   defp web_fetch_type(version) when is_binary(version), do: version
+  defp web_fetch_type(version) when is_atom(version), do: "web_fetch_#{version}"
 
   defp normalize_search_result_content(text) when is_binary(text),
     do: %{"type" => "text", "text" => text}
@@ -1913,4 +1986,10 @@ defmodule Claudio.Messages.Request do
   defp search_result_cache(false), do: nil
   defp search_result_cache(true), do: cache_control_map(nil)
   defp search_result_cache(ttl) when is_binary(ttl), do: cache_control_map(ttl)
+
+  defp search_result_cache(other) do
+    raise ArgumentError,
+          "Request.search_result_block/4 :cache_control must be true, false or a ttl " <>
+            "string (\"5m\" / \"1h\"); got #{inspect(other)}"
+  end
 end

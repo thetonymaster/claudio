@@ -1984,4 +1984,102 @@ defmodule Claudio.Messages.RequestTest do
       refute Jason.encode!(request.messages) =~ "null"
     end
   end
+
+  describe "tool helper robustness (pre-release audit)" do
+    test "atom-keyed tool maps don't get duplicate JSON keys" do
+      base = %{name: "x", description: "d", input_schema: %{type: "object"}}
+
+      for request <- [
+            Request.add_strict_tool(Request.new("m"), Map.put(base, :strict, false)),
+            Request.add_tool_with_eager_streaming(
+              Request.new("m"),
+              Map.put(base, :eager_input_streaming, false)
+            ),
+            Request.add_tool_with_cache(
+              Request.new("m"),
+              Map.put(base, :cache_control, %{type: "ephemeral"}), ttl: "1h"),
+            Request.add_tool(Request.new("m"), Map.put(base, :defer_loading, false),
+              defer_loading: true
+            )
+          ] do
+        [tool] = request.tools
+        # An atom key and its string twin would encode as the same JSON key twice.
+        names = tool |> Map.keys() |> Enum.map(&to_string/1)
+        assert names == Enum.uniq(names), "duplicate key in #{inspect(tool)}"
+      end
+    end
+
+    test "add_tool_with_cache/3 validates options and passes allowed_callers on" do
+      tool = %{"name" => "x", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+      request =
+        Request.add_tool_with_cache(Request.new("m"), tool, allowed_callers: [:code_execution])
+
+      assert [%{"allowed_callers" => ["code_execution_20260120"], "cache_control" => _}] =
+               request.tools
+
+      # defer_loading + cache_control on one tool is an API 400 (spec F2); a typo must not vanish.
+      assert_raise ArgumentError, fn ->
+        Request.add_tool_with_cache(Request.new("m"), tool, defer_loading: true)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_tool_with_cache(Request.new("m"), tool, tll: "1h")
+      end
+    end
+
+    test "server tool helpers validate options and accept dated version atoms" do
+      assert_raise ArgumentError, fn ->
+        Request.add_web_search_tool(Request.new("m"), max_use: 3)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_web_fetch_tool(Request.new("m"), max_use: 3)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_text_editor_tool(Request.new("m"), max_chars: 3)
+      end
+
+      assert [%{"type" => "web_search_20260209"}] =
+               Request.add_web_search_tool(Request.new("m"), version: :"20260209").tools
+
+      assert [%{"type" => "web_fetch_20250910"}] =
+               Request.add_web_fetch_tool(Request.new("m"), version: :"20250910").tools
+    end
+
+    test "bad search_result cache_control and toolset configs raise ArgumentError" do
+      assert_raise ArgumentError, ~r/cache_control/, fn ->
+        Request.search_result_block("s", "t", ["x"], cache_control: :ephemeral)
+      end
+
+      assert_raise ArgumentError, ~r/:configs/, fn ->
+        Request.add_computer_toolset(Request.new("m"), configs: "bad")
+      end
+    end
+
+    test "context-edit option types are checked; a second clear_thinking replaces the first" do
+      r = Request.new("m")
+
+      assert_raise ArgumentError, ~r/:exclude_tools/, fn ->
+        Request.add_clear_tool_uses(r, exclude_tools: "bash")
+      end
+
+      assert_raise ArgumentError, ~r/:clear_tool_inputs/, fn ->
+        Request.add_clear_tool_uses(r, clear_tool_inputs: "yes")
+      end
+
+      request =
+        r
+        |> Request.add_clear_thinking(keep: 1)
+        |> Request.add_clear_tool_uses()
+        |> Request.add_clear_thinking(keep: :all)
+
+      assert [
+               %{"type" => "clear_thinking_20251015", "keep" => "all"},
+               %{"type" => "clear_tool_uses_20250919"}
+             ] =
+               request.context_management["edits"]
+    end
+  end
 end

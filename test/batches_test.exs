@@ -83,4 +83,27 @@ defmodule Claudio.BatchesTest do
 
     assert {:ok, %{"id" => "batch_2"}} = Claudio.Batches.create(client, requests)
   end
+
+  test "create/2 never forwards stream: true on a batch item (items are non-streaming)", %{
+    client: client,
+    bypass: bypass
+  } do
+    Bypass.expect_once(bypass, "POST", "/messages/batches", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      [item] = Jason.decode!(body)["requests"]
+      refute Map.has_key?(item["params"], "stream")
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, Jason.encode!(%{"id" => "b", "processing_status" => "in_progress"}))
+    end)
+
+    request =
+      Request.new("m")
+      |> Request.add_message(:user, "hi")
+      |> Request.set_max_tokens(8)
+      |> Request.enable_streaming()
+
+    assert {:ok, _} = Claudio.Batches.create(client, [%{custom_id: "a", params: request}])
+  end
 end

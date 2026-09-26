@@ -365,13 +365,16 @@ defmodule Claudio.Batches do
 
   # Private functions
 
+  # Batch items are never streamed: a request built with enable_streaming/1 drops `stream`.
   defp prepare_item(%{params: %Request{} = req} = item),
-    do: {%{item | params: Request.to_map(req)}, Request.required_betas(req)}
+    do: {%{item | params: batch_params(req)}, Request.required_betas(req)}
 
   defp prepare_item(%{"params" => %Request{} = req} = item),
-    do: {Map.put(item, "params", Request.to_map(req)), Request.required_betas(req)}
+    do: {Map.put(item, "params", batch_params(req)), Request.required_betas(req)}
 
   defp prepare_item(item), do: {item, []}
+
+  defp batch_params(req), do: req |> Request.to_map() |> Map.delete("stream")
 
   defp do_wait_for_completion(client, batch_id, poll_interval, timeout, start_time, callback) do
     elapsed = System.monotonic_time(:millisecond) - start_time
