@@ -63,7 +63,7 @@ defmodule Claudio.MixProject do
       main: "Claudio",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "LICENSE", "guides/GETTING_STARTED.md"],
+      extras: ["README.md", "CHANGELOG.md", "LICENSE", "guides/GETTING_STARTED.md"],
       groups_for_extras: %{
         "Guides" => ["guides/GETTING_STARTED.md"]
       },
