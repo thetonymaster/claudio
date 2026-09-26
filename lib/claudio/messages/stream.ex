@@ -282,9 +282,8 @@ defmodule Claudio.Messages.Stream do
             # context_management sits at the event's top level, beside delta and usage.
             |> maybe_update(data, "context_management")
             # After a mid-stream fallback the final message_delta repeats input_transformations
-            # with the serving model's entries (preserved-thinking docs). Its nesting is not
-            # observable on demand, so read delta first and let the event's top level win.
-            |> maybe_update(delta, "input_transformations")
+            # at the event's top level (SDK BetaRawMessageDeltaEvent) with the serving
+            # model's entries, replacing the message_start value.
             |> maybe_update(data, "input_transformations")
 
           %{state | message: message}

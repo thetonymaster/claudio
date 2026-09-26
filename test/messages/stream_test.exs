@@ -665,31 +665,15 @@ defmodule Claudio.Messages.StreamTest do
       assert message["input_transformations"] == []
     end
 
-    test "when both carry it, the event's top level wins (spec §3)" do
-      {:ok, message} =
-        binding_stream(
-          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[{"type":"from_delta"}]},"usage":{"output_tokens":1},"input_transformations":[{"type":"from_top"}]})
-        )
-
-      assert message["input_transformations"] == [%{"type" => "from_top"}]
-    end
-
-    test "an empty list inside delta replaces a non-empty start value" do
+    # The SDK types input_transformations as a field of the message_delta event, not of
+    # its delta (anthropic-sdk-python BetaRawMessageDeltaEvent, checked 2026-09-26).
+    test "a key inside delta is ignored: only the event's top level carries it" do
       {:ok, message} =
         binding_stream(
           ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[]},"usage":{"output_tokens":1}})
         )
 
-      assert message["input_transformations"] == []
-    end
-
-    test "a key inside delta replaces it too (nesting unverified, spec F8)" do
-      {:ok, message} =
-        binding_stream(
-          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[{"type":"thinking_dropped","path":"messages.3.content.0","reason":"model_binding_mismatch"}]},"usage":{"output_tokens":1}})
-        )
-
-      assert [%{"reason" => "model_binding_mismatch"}] = message["input_transformations"]
+      assert [%{"type" => "thinking_dropped"}] = message["input_transformations"]
     end
   end
 end
