@@ -127,6 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream).
 - `Tools.extract_tool_uses/1` returns `toolset_name` and `caller`; `Tools.create_tool_result/4`
   (`toolset_name:`); `Tools.halt_result/1`.
+- **Thinking block binding:** `enable_adaptive_thinking/2` `block_binding:` and
+  `Request.set_thinking_block_binding/2` (`:error` / `:drop_block`; declare
+  `thinking-binding-controls-2026-08-01`); `Response.input_transformations` (raw list, `nil`
+  without the beta; replaced by a streamed `message_delta` copy after a fallback).
 
 ### Docs
 
