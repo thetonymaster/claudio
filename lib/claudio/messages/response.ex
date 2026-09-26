@@ -148,6 +148,31 @@ defmodule Claudio.Messages.Response do
     |> Enum.join("")
   end
 
+  # Exact text of an interrupted `display: "updates"` thinking block
+  # (platform.claude.com/docs/en/build-with-claude/thinking, fetched 2026-09-25).
+  @interrupted_thinking "This part of the response was interrupted before it finished."
+
+  @doc """
+  Returns the non-empty `thinking` texts, in content order.
+
+  A list, not a joined string: with `display: :updates` each `thinking` block is a
+  separate progress note. Empty texts (`display: :omitted`) and `redacted_thinking`
+  blocks are skipped. An interrupted update's placeholder text is kept — filter it
+  with `thinking_interrupted?/1`.
+  """
+  @spec get_thinking(t()) :: [String.t()]
+  def get_thinking(%__MODULE__{content: content}) do
+    for %{type: :thinking, thinking: text} <- content, is_binary(text), text != "", do: text
+  end
+
+  @doc """
+  True when `block` is a `thinking` block holding the API's placeholder for an
+  update that was cut off: `"#{@interrupted_thinking}"`.
+  """
+  @spec thinking_interrupted?(content_block()) :: boolean()
+  def thinking_interrupted?(%{type: :thinking, thinking: @interrupted_thinking}), do: true
+  def thinking_interrupted?(_block), do: false
+
   @doc """
   Extracts all tool use requests from the response.
   """
