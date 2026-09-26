@@ -90,6 +90,9 @@ defmodule Claudio.Agent do
   doesn't converge within `max_turns` tool round-trips.
 
   Returns `{:error, reason}` if the API call fails.
+
+  Raises `ArgumentError` if a handler returns anything other than `{:ok, content}` or
+  `{:error, reason}` — a programming error, reported with the handler's name.
   """
   @spec run(Req.Request.t(), Request.t(), handlers(), keyword()) :: run_result()
   def run(client, %Request{} = request, tool_handlers, opts \\ []) do
@@ -182,6 +185,7 @@ defmodule Claudio.Agent do
             case result do
               {:ok, value} -> {value, false}
               {:error, reason} -> {reason, true}
+              other -> raise_bad_return!(tool_use, other)
             end
 
           # Only toolsets with a documented halt contract halt; an unknown toolset keeps running.
@@ -219,6 +223,19 @@ defmodule Claudio.Agent do
       nil -> {:error, "Unknown tool: #{tool_use.name}"}
       _other -> {:error, "Handler for #{tool_use.name} must take (input)"}
     end
+  end
+
+  # A handler returning anything else is a programming error: fail loudly with the
+  # handler's name instead of a CaseClauseError deep in the loop.
+  defp raise_bad_return!(tool_use, other) do
+    label =
+      if tool_use.toolset_name,
+        do: "toolset #{inspect(tool_use.toolset_name)}",
+        else: "tool #{inspect(tool_use.name)}"
+
+    raise ArgumentError,
+          "Claudio.Agent handler for #{label} must return {:ok, content} or " <>
+            "{:error, reason}; got #{inspect(other)}"
   end
 
   defp safely(fun) do

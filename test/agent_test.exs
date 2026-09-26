@@ -784,6 +784,28 @@ defmodule Claudio.AgentTest do
              ] = tool_results(second)
     end
 
+    test "a handler returning anything but {:ok, _} / {:error, _} raises a clear ArgumentError",
+         %{
+           client: client,
+           bypass: bypass
+         } do
+      serve(bypass, [message([plain("t1", "lookup"), member("c1", "screenshot")], "tool_use")])
+
+      assert_raise ArgumentError,
+                   ~r/handler for tool "lookup" must return \{:ok, content\} or \{:error, reason\}; got :ok/,
+                   fn ->
+                     Agent.run(client, base_request(), %{"lookup" => fn _ -> :ok end})
+                   end
+
+      serve(bypass, [message([member("c1", "screenshot")], "tool_use")])
+
+      assert_raise ArgumentError,
+                   ~r/handler for toolset "computer" must return .*got "png"/,
+                   fn ->
+                     Agent.run(client, base_request(), %{"computer" => fn _, _ -> "png" end})
+                   end
+    end
+
     test "pause_turn resumes with the assistant content and no user message", %{
       client: client,
       bypass: bypass
