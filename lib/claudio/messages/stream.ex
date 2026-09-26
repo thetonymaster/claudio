@@ -457,8 +457,13 @@ defmodule Claudio.Messages.Stream do
 
   defp maybe_put_usage(map, nil), do: map
 
+  # message_delta usage is cumulative but may omit fields message_start carried
+  # (e.g. input_tokens): merge, delta wins.
   defp maybe_put_usage(map, usage) do
-    Map.put(map, "usage", usage)
+    case Map.get(map, "usage") do
+      %{} = current -> Map.put(map, "usage", Map.merge(current, usage))
+      _ -> Map.put(map, "usage", usage)
+    end
   end
 
   # Convert a map with atom keys to string keys (shallow conversion for top level only)

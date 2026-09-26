@@ -221,6 +221,39 @@ defmodule Claudio.Messages.StreamTest do
     end
   end
 
+  describe "build_final_message/1 usage merge" do
+    test "message_delta usage merges over message_start usage (input_tokens survive)" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":5,"cache_read_input_tokens":2,"output_tokens":1}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"output_tokens_details":{"thinking_tokens":2}}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["usage"] == %{
+               "input_tokens" => 5,
+               "cache_read_input_tokens" => 2,
+               "output_tokens" => 3,
+               "output_tokens_details" => %{"thinking_tokens" => 2}
+             }
+
+      usage = Claudio.Messages.Response.from_map(message).usage
+      assert usage.input_tokens == 5
+      assert usage.output_tokens == 3
+      assert usage.output_tokens_details == %{"thinking_tokens" => 2}
+    end
+  end
+
   describe "output_tokens_details through build_final_message/1 → Response.from_map/1" do
     test "final message_delta usage details survive into the parsed Response" do
       sse = [

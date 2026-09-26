@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was dropped by the usage parser.
 - `set_output_format/2` (and the new output-config helpers) no longer emit a duplicate
   key when `set_output_config/2` was given atom keys — existing keys are stringified first.
+- `Stream.build_final_message/1` merges `message_delta` usage over `message_start` usage
+  instead of replacing it, so `input_tokens` (and cache counters) survive when the delta
+  omits them; previously the parsed `Response.usage` came back as a raw, incomplete map.
 
 ### Changed
 
