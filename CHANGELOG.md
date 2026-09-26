@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — targets 0.7.0
+## [0.7.0] - 2026-09-26
 
 ### Fixed
 
@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was dropped by the usage parser.
 - `set_output_format/2` (and the new output-config helpers) no longer emit a duplicate
   key when `set_output_config/2` was given atom keys — existing keys are stringified first.
-- `Stream.build_final_message/1` merges `message_delta` usage over `message_start` usage
+- `Claudio.Messages.Stream.build_final_message/1` merges `message_delta` usage over `message_start` usage
   instead of replacing it, so `input_tokens` (and cache counters) survive when the delta
   omits them; previously the parsed `Response.usage` came back as a raw, incomplete map.
-- `Stream.build_final_message/1` keeps a streamed threshold-compaction summary
+- `Claudio.Messages.Stream.build_final_message/1` keeps a streamed threshold-compaction summary
   (`compaction_delta`); it was dropped, leaving `"content": null`.
 - `Request.set_context_management/2` also declares `compact-2026-01-12` when its edits hold a
   `compact_20260112` edit; with only `context-management-2025-06-27` the API rejects it. Its
@@ -27,10 +27,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Response.to_assistant_content/1` re-emits `toolset_name` and `caller` on `tool_use` (and
   `caller` on `server_tool_use` / `web_search_tool_result`); replaying a client-toolset call
   without `toolset_name` was rejected.
-- `Stream.build_final_message/1` decodes streamed tool input (`input_json_delta` chunks on
+- `Claudio.Messages.Stream.build_final_message/1` decodes streamed tool input (`input_json_delta` chunks on
   `tool_use` / `server_tool_use` / `mcp_tool_use`) into the block's `"input"`; it was left as an
   undecoded `"partial_json"` string with an empty `input`. Invalid JSON (e.g. cut off by
   `max_tokens`) returns `{:error, {:invalid_tool_input_json, index, partial_json}}`.
+- **Streaming:** `Claudio.Messages.Stream.parse_events/1` no longer tears apart an event split
+  across network chunks (it emitted an `event:` with no data and a `data:` with no event, which
+  crashed `build_final_message/1` or silently lost the event). CRLF line endings, multi-line
+  `data:` and a final event without a trailing blank line are handled. `build_final_message/1`
+  keeps interleaved blocks (keyed by index) and returns `{:error, {:incomplete_stream, indexes}}`
+  for a block that never closed. Streamed usage telemetry merges `message_start` usage (input
+  and cache counts were lost).
+- `Response.to_assistant_content/1` no longer sends `server_name` on a replayed
+  `mcp_tool_result` — the API rejects it, so replaying any MCP-connector turn failed.
+- `Request.add_message/3` with parsed `Response` content (e.g. `response.content`) sends each
+  block in API shape; it sent `"caller": null`, which the API rejects.
+- `Claudio.Messages.count_tokens/2` also strips `temperature`, `top_k`, `top_p`,
+  `stop_sequences`, `metadata`, `service_tier` and `container` (Request and raw-map forms) — each
+  made the count endpoint return 400, so a request using them couldn't be counted.
+- `Claudio.APIError.from_response/2` handles non-JSON bodies (an empty 5xx, a proxy's HTML
+  page) instead of raising `FunctionClauseError`; the type comes from the HTTP status (429 →
+  `:rate_limit_error`, 529 → `:overloaded_error`, …). A 200 whose body isn't a JSON object is
+  an `APIError` too.
+- **Retries actually happen:** the documented `config :claudio, Claudio.Client, retry: ...`
+  was a no-op placeholder (and Req's default never retries POST). It now retries 408, 429,
+  5xx, 529 and connection errors on every method.
+- `config :claudio, default_api_version: ..., default_beta_features: [...]` (the documented
+  form) is honoured; only the nested `config :claudio, :claudio, ...` form was read.
+- `Claudio.Batches.create/2` drops `stream` from `%Request{}` items (batch items are never
+  streamed).
+- `Claudio.Agent`: a handler returning `{:error, %SomeException{}}` / `{:error, {:tuple, ...}}`
+  no longer crashes with a protocol error (the reason becomes text); `stream: true` requests
+  and `max_turns` < 1 raise a clear `ArgumentError` (was a `CaseClauseError` / one call); a
+  failed on-demand compaction no longer re-sends the compaction request every turn.
+- `Claudio.MCP.ToolAdapter.to_claudio_tool/2` emits tools the API accepts: no `"description":
+  null`, an `input_schema` with `"type"`, and an `ArgumentError` for names outside
+  `^[a-zA-Z0-9_-]{1,128}$` (were 400s).
+- MCP adapters: `HermesMCP` unwraps Hermes response structs (list functions returned
+  `{:ok, []}`), passes `opts`, and documents the client-first module
+  (`{Hermes.Client.Base, MyClient}` — the old `{MyClient, pid}` usage crashed); `ExMCP` requests
+  `format: :map` (list functions returned `{:ok, []}` under ex_mcp 1.5's default); no adapter
+  reports a bug inside the library as "not available". Version constraints corrected
+  (`ex_mcp ~> 1.5`, `mcp_ex ~> 0.1`).
+- `Tools.create_tool_result/4` rejects content the API would reject (an empty error result, a
+  list of non-block values) and raises `ArgumentError` for unencodable values instead of a
+  protocol error; `Tools.extract_tool_uses/1` normalizes a raw `tool_use` without `input`.
+- `Request` tool helpers: atom-keyed tool maps no longer get a duplicate JSON key;
+  `add_tool_with_cache/3` validates its options (`:ttl`, `:allowed_callers`) instead of silently
+  dropping others; `add_web_search_tool/2`, `add_web_fetch_tool/2`, `add_text_editor_tool/2`
+  validate options and accept dated version atoms; `add_message_with_image/5` detects PNG, GIF
+  and WebP data when no media type is given (it always sent `image/jpeg`).
+- Removed the `:poison` dependency and a bug where every GET/DELETE request (Models, Files,
+  Batches, Admin, Skills) sent the literal body `"Elixir.Poison"` (#17). If your app used Poison
+  only through Claudio, add it yourself.
 
 ### Changed
 
@@ -57,8 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`, `iterations`); any other field is kept
   under the key it arrived with instead of being dropped. Documented fields the API did not
   send now appear as `nil`, so exact `usage == %{...}` comparisons need the new keys.
-- `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo`, `diagnostics` and
-  `fallbacks`, which the count endpoint rejects.
+- `Claudio.Messages.count_tokens/2` strips every field the count endpoint rejects (see Fixed),
+  for raw maps too.
 - `Response.to_assistant_content/1` applies the API's continuation rules after a server-side
   fallback: before the last `fallback` block it drops `thinking`, `redacted_thinking`,
   `connector_text` and `tool_use`, and keeps `server_tool_use` / `mcp_tool_use` only when their
@@ -85,19 +134,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another call with no user turn; counts toward `:max_turns`) instead of returning the summary
   as the final reply. A handler returning anything other than `{:ok, _}` / `{:error, _}` raises
   `ArgumentError` naming the handler (was a `CaseClauseError`).
+- **`Claudio.Agent.run/4` errors keep the history:** an API error mid-loop returns
+  `{:error, reason, last_response_or_nil, messages}` (was `{:error, reason}`, which discarded
+  executed turns). Match the 4-tuple, like `:max_turns_exceeded`.
+- `Claudio.Batches.get_results/2` decodes results with **string keys** (was `keys: :atoms`),
+  like every other response, and returns `{:error, {:invalid_result_line, n, line}}` for a
+  malformed line instead of silently dropping it.
+- Server-result blocks that were raw string-keyed maps in 0.6 (`web_fetch_tool_result`,
+  `code_execution_tool_result`, `bash_code_execution_tool_result`,
+  `text_editor_code_execution_tool_result`, `tool_search_tool_result`, `advisor_tool_result`,
+  `container_upload`, `compaction`) now parse as typed maps (`%{type: :atom, ..., raw: map}`);
+  code matching `%{"type" => "web_fetch_tool_result"}` on `response.content` must match the
+  atom type or read `raw`.
+- Stream parse errors carry `%Jason.DecodeError{}` (was `%Poison.ParseError{}`).
+- `Claudio.MCP.ToolAdapter.to_claudio_tool/2` omits a nil `"description"` and raises on invalid
+  names (see Fixed).
+- The Messages streaming path requires a complete stream: a block that never closes is an error
+  (see Fixed).
 
 ### Added
 
 - `ServerConfig.to_toolset/1`, `set_default_config/2`, `configure_tool/3`, `split_raw/1`.
 - `Files.list/2` GA pagination options `:page` and `:ids`.
 - `add_code_execution_tool/2` `:version` option.
-- `Response.stop_details` (also accumulated by `Stream.build_final_message/1`).
+- `Response.stop_details` (also accumulated by `Claudio.Messages.Stream.build_final_message/1`).
 - **Thinking & effort helpers** (`Claudio.Messages.Request`), no per-model validation:
   - `enable_adaptive_thinking/2` (`display:` `:summarized` / `:omitted` / `:updates`;
     `:updates` declares `thinking-display-updates-2026-08-18`) and `disable_thinking/1`.
   - `set_effort/2` (`:low` … `:max`, GA) and `set_task_budget/3` (`output_config.task_budget`,
     declares `task-budgets-2026-03-13`) — both merge into `output_config`.
-- `Response.get_thinking/1`, `Response.thinking_interrupted?/1`, `Stream.accumulate_thinking/1`.
+- `Response.get_thinking/1`, `Response.thinking_interrupted?/1`, `Claudio.Messages.Stream.accumulate_thinking/1`.
 - Telemetry: `:thinking_tokens` in `[:claudio, :messages, :create, :stop]` and
   `[:claudio, :messages, :stream, :usage]` metadata, when the API reports it.
 - **5.x request surface** (`Claudio.Messages.Request`), no per-model or placement validation:
@@ -145,6 +211,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Examples use `claude-opus-5-5` (sampling-setter examples use `claude-haiku-4-5`, since Opus 4.7+ and 5.x reject sampling params); `enable_thinking/2` and `set_tool_choice/2`
   document the 400s on current models; Files documented as GA.
+- README and the getting-started guide: install snippet (`~> 0.7`), working streaming, Batches
+  and telemetry examples (the old ones called functions or events that don't exist); CLAUDE.md
+  arities and key-style notes corrected; the CHANGELOG is published on hexdocs; CI covers
+  Elixir 1.18 / OTP 27 and 1.19 / OTP 28.
 
 ## [0.6.0] - 2026-06-19
 
