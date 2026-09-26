@@ -3,8 +3,6 @@ defmodule Claudio.SkillsTest do
 
   alias Claudio.Skills
 
-  @beta "skills-2025-10-02"
-
   setup do
     bypass = Bypass.open()
 
@@ -23,18 +21,18 @@ defmodule Claudio.SkillsTest do
     |> Plug.Conn.resp(status, Jason.encode!(body))
   end
 
-  defp assert_beta(conn) do
-    assert Plug.Conn.get_req_header(conn, "anthropic-beta") == [@beta]
+  defp assert_no_beta(conn) do
+    assert Plug.Conn.get_req_header(conn, "anthropic-beta") == []
     conn
   end
 
   describe "reads and management" do
-    test "list passes limit/source and attaches the skills beta", %{
+    test "list passes limit/source with no beta header", %{
       client: client,
       bypass: bypass
     } do
       Bypass.expect_once(bypass, "GET", "/skills", fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
         params = URI.decode_query(conn.query_string)
         assert params["limit"] == "50"
         assert params["source"] == "custom"
@@ -46,7 +44,7 @@ defmodule Claudio.SkillsTest do
 
     test "get fetches a single skill", %{client: client, bypass: bypass} do
       Bypass.expect_once(bypass, "GET", "/skills/skill_1", fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
         json(conn, 200, %{"id" => "skill_1", "type" => "skill", "display_title" => "My Skill"})
       end)
 
@@ -55,7 +53,7 @@ defmodule Claudio.SkillsTest do
 
     test "delete issues a DELETE", %{client: client, bypass: bypass} do
       Bypass.expect_once(bypass, "DELETE", "/skills/skill_1", fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
         json(conn, 200, %{"id" => "skill_1", "type" => "skill_deleted"})
       end)
 
@@ -67,7 +65,7 @@ defmodule Claudio.SkillsTest do
       bypass: bypass
     } do
       Bypass.expect(bypass, fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
 
         case {conn.method, conn.request_path} do
           {"GET", "/skills/skill_1/versions"} ->
@@ -90,12 +88,12 @@ defmodule Claudio.SkillsTest do
   end
 
   describe "multipart create" do
-    test "create POSTs multipart/form-data with the beta header", %{
+    test "create POSTs multipart/form-data with no beta header", %{
       client: client,
       bypass: bypass
     } do
       Bypass.expect_once(bypass, "POST", "/skills", fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
         [content_type] = Plug.Conn.get_req_header(conn, "content-type")
         assert String.starts_with?(content_type, "multipart/form-data")
         json(conn, 200, %{"id" => "skill_1", "type" => "skill"})
@@ -110,7 +108,7 @@ defmodule Claudio.SkillsTest do
       bypass: bypass
     } do
       Bypass.expect_once(bypass, "POST", "/skills/skill_1/versions", fn conn ->
-        conn = assert_beta(conn)
+        conn = assert_no_beta(conn)
         [content_type] = Plug.Conn.get_req_header(conn, "content-type")
         assert String.starts_with?(content_type, "multipart/form-data")
         json(conn, 200, %{"version" => "1759178010641130"})

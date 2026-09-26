@@ -6,11 +6,10 @@ defmodule Claudio.Messages.Request do
 
       alias Claudio.Messages.Request
 
-      Request.new("claude-sonnet-4-5-20250929")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_system("You are a helpful assistant")
       |> Request.set_max_tokens(1024)
-      |> Request.set_temperature(0.7)
       |> Request.to_map()
   """
 
@@ -70,7 +69,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-sonnet-4-5-20250929")
+      Request.new("claude-opus-5-5")
   """
   @spec new(String.t()) :: t()
   def new(model) when is_binary(model) do
@@ -90,11 +89,11 @@ defmodule Claudio.Messages.Request do
   ## Examples
 
       # Simple text message
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What is the weather?")
 
       # Multimodal message with image
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_message(:user, [
         %{"type" => "image", "source" => %{
           "type" => "base64",
@@ -120,7 +119,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_image(:user, "What's in this image?", base64_data, "image/jpeg")
   """
   @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t()) :: t()
@@ -152,7 +151,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_image_url(:user, "What's in this image?", "https://example.com/image.jpg")
   """
   @spec add_message_with_image_url(t(), role(), String.t(), String.t()) :: t()
@@ -186,7 +185,7 @@ defmodule Claudio.Messages.Request do
 
   ## Examples
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_message_with_document(:user, "Summarize this document", "file_abc123")
 
       Request.new("claude-opus-4-8")
@@ -260,11 +259,11 @@ defmodule Claudio.Messages.Request do
   ## Examples
 
       # Simple string
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_system("You are a helpful assistant")
 
       # With prompt caching
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_system([
         %{
           "type" => "text",
@@ -287,7 +286,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_system_with_cache("Long system prompt...", ttl: "1h")
   """
   @spec set_system_with_cache(t(), String.t(), keyword()) :: t()
@@ -308,7 +307,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_max_tokens(1024)
   """
   @spec set_max_tokens(t(), integer()) :: t()
@@ -321,8 +320,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-haiku-4-5")
       |> Request.set_temperature(0.7)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_temperature(t(), float()) :: t()
   def set_temperature(%__MODULE__{} = request, temperature)
@@ -335,8 +337,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-haiku-4-5")
       |> Request.set_top_p(0.9)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_top_p(t(), float()) :: t()
   def set_top_p(%__MODULE__{} = request, top_p)
@@ -349,8 +354,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-haiku-4-5")
       |> Request.set_top_k(40)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_top_k(t(), integer()) :: t()
   def set_top_k(%__MODULE__{} = request, top_k) when is_integer(top_k) and top_k > 0 do
@@ -362,7 +370,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_stop_sequences(["END", "STOP"])
   """
   @spec set_stop_sequences(t(), list(String.t())) :: t()
@@ -375,7 +383,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.enable_streaming()
   """
   @spec enable_streaming(t()) :: t()
@@ -400,7 +408,7 @@ defmodule Claudio.Messages.Request do
         }
       }
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_tool(tool)
   """
   @spec add_tool(t(), map()) :: t()
@@ -422,7 +430,7 @@ defmodule Claudio.Messages.Request do
         "input_schema" => %{"type" => "object", "properties" => %{}}
       }
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.add_tool_with_cache(tool)
   """
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
@@ -436,11 +444,16 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_tool_choice(:auto)
       |> Request.set_tool_choice(:any)
       |> Request.set_tool_choice({:tool, "get_weather"})
       |> Request.set_tool_choice(:none)
+
+  `:any` and `{:tool, name}` return 400 on Claude Fable 5.1, Mythos 5.1 and
+  Opus 5.5. There, use `:auto` with a prompt instruction naming the tool,
+  `add_strict_tool/2` for schema-valid arguments, or `set_output_format/2`
+  when the forced call only existed to get JSON back.
   """
   @spec set_tool_choice(t(), tool_choice()) :: t()
   def set_tool_choice(%__MODULE__{} = request, :auto) do
@@ -464,7 +477,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_metadata(%{"user_id" => "123"})
   """
   @spec set_metadata(t(), map()) :: t()
@@ -477,8 +490,12 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
-      |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 1000})
+      Request.new("claude-opus-5-5")
+      |> Request.enable_thinking(%{"type" => "adaptive"})
+
+  `%{"type" => "enabled", "budget_tokens" => n}` returns 400 on Claude Opus 4.7+,
+  Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. Dedicated
+  thinking/effort helpers are planned (roadmap S11).
   """
   @spec enable_thinking(t(), map()) :: t()
   def enable_thinking(%__MODULE__{} = request, config) when is_map(config) do
@@ -486,24 +503,74 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
-  Adds MCP (Model Context Protocol) server definitions.
+  Adds a server for the MCP connector (`mcp-client-2025-11-20`).
 
-  ## Example
+  Emits both halves the API requires: the server entry in `mcp_servers` and an
+  `mcp_toolset` entry in `tools` referencing it by name. Declares the
+  `mcp-client-2025-11-20` beta via `add_beta/2`.
 
-      Request.new("claude-sonnet-4-5-20250929")
-      |> Request.add_mcp_server(%{
-        "name" => "my_server",
-        "url" => "http://localhost:8080"
-      })
+  Accepts a `Claudio.MCP.ServerConfig` or a raw map; a legacy
+  `tool_configuration` key in a raw map is translated onto the toolset with a
+  deprecation warning. If `tools` already holds an `mcp_toolset` for that
+  server name (the API allows one per server), no second toolset is added —
+  unless the new one carries `default_config`/`configs`, which would be lost,
+  so that raises `ArgumentError`. Add hand-built toolsets **before** calling
+  this, or the request will carry two. Server names must be unique; adding a
+  second server with an existing name raises `ArgumentError`.
+
+      Request.new("claude-opus-5-5")
+      |> Request.add_mcp_server(
+        Claudio.MCP.ServerConfig.new("my_server", "https://mcp.example.com/sse")
+      )
   """
   @spec add_mcp_server(t(), Claudio.MCP.ServerConfig.t() | map()) :: t()
   def add_mcp_server(%__MODULE__{} = request, %Claudio.MCP.ServerConfig{} = server) do
-    add_mcp_server(request, Claudio.MCP.ServerConfig.to_map(server))
+    put_mcp_server(
+      request,
+      Claudio.MCP.ServerConfig.to_map(server),
+      Claudio.MCP.ServerConfig.to_toolset(server)
+    )
   end
 
-  def add_mcp_server(%__MODULE__{mcp_servers: servers} = request, server) when is_map(server) do
-    current_servers = servers || []
-    %{request | mcp_servers: current_servers ++ [server]}
+  def add_mcp_server(%__MODULE__{} = request, server) when is_map(server) do
+    {server_map, toolset} = Claudio.MCP.ServerConfig.split_raw(server)
+    put_mcp_server(request, server_map, toolset)
+  end
+
+  defp put_mcp_server(%__MODULE__{mcp_servers: servers} = request, server_map, toolset) do
+    name = toolset["mcp_server_name"]
+
+    if Enum.any?(servers || [], &((&1["name"] || &1[:name]) == name)) do
+      raise ArgumentError,
+            "request already has an MCP server named #{inspect(name)}; the connector " <>
+              "requires unique server names (each is referenced by exactly one mcp_toolset)"
+    end
+
+    request = %{request | mcp_servers: (servers || []) ++ [server_map]}
+
+    request =
+      cond do
+        not has_mcp_toolset?(request.tools, name) ->
+          add_tool(request, toolset)
+
+        Map.has_key?(toolset, "default_config") or Map.has_key?(toolset, "configs") ->
+          raise ArgumentError,
+                "request already has an mcp_toolset for #{inspect(name)}; the new server's " <>
+                  "tool config (#{inspect(Map.take(toolset, ["default_config", "configs"]))}) " <>
+                  "would be dropped. Put the config on one toolset only."
+
+        true ->
+          request
+      end
+
+    add_beta(request, "mcp-client-2025-11-20")
+  end
+
+  defp has_mcp_toolset?(tools, server_name) do
+    Enum.any?(tools || [], fn tool ->
+      (tool["type"] || tool[:type]) == "mcp_toolset" and
+        (tool["mcp_server_name"] || tool[:mcp_server_name]) == server_name
+    end)
   end
 
   @doc """
@@ -513,7 +580,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_context_management(%{
         "strategy" => "auto",
         "max_context_tokens" => 100000
@@ -533,11 +600,11 @@ defmodule Claudio.Messages.Request do
   ## Example
 
       # String container ID
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_container("my-container-123")
 
       # Container config object
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_container(%{
         "id" => "my-container",
         "ttl" => 3600
@@ -558,7 +625,7 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-3-5-sonnet-20241022")
+      Request.new("claude-opus-5-5")
       |> Request.set_service_tier("auto")
   """
   @spec set_service_tier(t(), String.t()) :: t()
@@ -717,15 +784,32 @@ defmodule Claudio.Messages.Request do
     add_tool(request, tool)
   end
 
+  @code_execution_versions [:"20260521", :"20260120", :"20250825"]
+
   @doc """
-  Adds the server-side `code_execution` tool (`code_execution_20260120`). GA —
-  no beta header. Pairs with `set_container/2` for container reuse and the Files
-  API (`container_upload` blocks). Results are typed as
-  `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`.
+  Adds the server-side `code_execution` tool. GA — no beta header. Pairs with
+  `set_container/2` for container reuse and the Files API (`container_upload`
+  blocks). Results arrive as `bash_code_execution_tool_result` /
+  `text_editor_code_execution_tool_result` blocks.
+
+  ## Options
+
+    * `:version` — `:"20260521"` (default), `:"20260120"`, or `:"20250825"`.
+      `20260521` and `20260120` run the same runtime (REPL persistence and
+      programmatic tool calling); `20260521` also tells Claude about the
+      90-second per-cell limit. Use `:"20250825"` to turn those features off.
   """
-  @spec add_code_execution_tool(t()) :: t()
-  def add_code_execution_tool(%__MODULE__{} = request) do
-    add_tool(request, %{"type" => "code_execution_20260120", "name" => "code_execution"})
+  @spec add_code_execution_tool(t(), keyword()) :: t()
+  def add_code_execution_tool(%__MODULE__{} = request, opts \\ []) do
+    version = Keyword.get(opts, :version, :"20260521")
+
+    unless version in @code_execution_versions do
+      raise ArgumentError,
+            "add_code_execution_tool/2 :version must be one of " <>
+              "#{inspect(@code_execution_versions)}; got #{inspect(version)}"
+    end
+
+    add_tool(request, %{"type" => "code_execution_#{version}", "name" => "code_execution"})
   end
 
   @doc """

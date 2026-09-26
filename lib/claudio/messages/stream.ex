@@ -221,6 +221,7 @@ defmodule Claudio.Messages.Stream do
             state.message
             |> maybe_update(delta, "stop_reason")
             |> maybe_update(delta, "stop_sequence")
+            |> maybe_update(delta, "stop_details")
             |> maybe_put_usage(usage)
 
           %{state | message: message}

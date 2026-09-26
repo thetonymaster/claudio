@@ -573,4 +573,30 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.get_text(response) == "done"
     end
   end
+
+  describe "from_map/1 stop_details" do
+    @details %{"type" => "refusal", "category" => "cyber", "explanation" => "declined"}
+
+    test "keeps stop_details as a raw string-keyed map on refusal" do
+      response =
+        Response.from_map(%{
+          "content" => [],
+          "stop_reason" => "refusal",
+          "stop_details" => @details
+        })
+
+      assert response.stop_reason == :refusal
+      assert response.stop_details == @details
+    end
+
+    test "nil when absent" do
+      assert Response.from_map(%{"content" => [], "stop_reason" => "end_turn"}).stop_details ==
+               nil
+    end
+
+    test "atom-keyed stop_details" do
+      response = Response.from_map(%{content: [], stop_reason: "refusal", stop_details: @details})
+      assert response.stop_details == @details
+    end
+  end
 end

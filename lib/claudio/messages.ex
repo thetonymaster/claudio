@@ -13,10 +13,9 @@ defmodule Claudio.Messages do
       alias Claudio.Messages.{Request, Response}
 
       # Build a request
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_max_tokens(1024)
-      |> Request.set_temperature(0.7)
 
       # Create message
       {:ok, response} = Claudio.Messages.create(client, request)
@@ -37,7 +36,7 @@ defmodule Claudio.Messages do
 
   For streaming responses, enable streaming and consume events:
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Tell me a story")
       |> Request.set_max_tokens(1024)
       |> Request.enable_streaming()
@@ -63,7 +62,7 @@ defmodule Claudio.Messages do
         required: ["location"]
       })
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What's the weather?")
       |> Request.add_tool(tool)
       |> Request.set_max_tokens(1024)
@@ -80,7 +79,7 @@ defmodule Claudio.Messages do
 
   Cache large contexts to reduce costs (up to 90% savings):
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.set_system_with_cache("Large context here...", ttl: "5m")
       |> Request.add_message(:user, "Question about context")
       |> Request.set_max_tokens(1024)
@@ -95,7 +94,7 @@ defmodule Claudio.Messages do
   The original API using raw maps is still supported:
 
       {:ok, response} = Claudio.Messages.create_message(client, %{
-        "model" => "claude-3-5-sonnet-20241022",
+        "model" => "claude-opus-5-5",
         "max_tokens" => 1024,
         "messages" => [%{"role" => "user", "content" => "Hello"}]
       })
@@ -128,7 +127,7 @@ defmodule Claudio.Messages do
   ## Examples
 
       # Using Request builder
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_max_tokens(1024)
 
@@ -136,7 +135,7 @@ defmodule Claudio.Messages do
 
       # Using raw map (backward compatible)
       {:ok, response} = Claudio.Messages.create(client, %{
-        "model" => "claude-3-5-sonnet-20241022",
+        "model" => "claude-opus-5-5",
         "max_tokens" => 1024,
         "messages" => [%{"role" => "user", "content" => "Hello"}]
       })
@@ -200,7 +199,7 @@ defmodule Claudio.Messages do
   ## Example
 
       {:ok, count} = Claudio.Messages.count_tokens(client, %{
-        "model" => "claude-3-5-sonnet-20241022",
+        "model" => "claude-opus-5-5",
         "messages" => [%{"role" => "user", "content" => "Hello"}]
       })
 

@@ -23,7 +23,7 @@ defmodule Claudio do
       # Build and send a request
       alias Claudio.Messages.{Request, Response}
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_max_tokens(1024)
 
@@ -54,7 +54,7 @@ defmodule Claudio do
         version: "2023-06-01"
       })
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What is 2+2?")
       |> Request.set_max_tokens(100)
 
@@ -63,7 +63,7 @@ defmodule Claudio do
 
   ### Streaming
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Write a poem")
       |> Request.set_max_tokens(1024)
       |> Request.enable_streaming()
@@ -91,7 +91,7 @@ defmodule Claudio do
         }
       )
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What's the weather in Paris?")
       |> Request.add_tool(weather_tool)
       |> Request.set_max_tokens(1024)
@@ -109,7 +109,7 @@ defmodule Claudio do
         %{
           "custom_id" => "req-1",
           "params" => %{
-            "model" => "claude-3-5-sonnet-20241022",
+            "model" => "claude-opus-5-5",
             "max_tokens" => 1024,
             "messages" => [%{"role" => "user", "content" => "Hello"}]
           }

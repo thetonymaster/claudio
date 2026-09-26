@@ -11,17 +11,19 @@ Legend: ✅ verified in Claudio's source · 📖 per official Anthropic docs (re
 
 ## Status summary
 
+> Statuses updated 2026-09-25: S1–S9 shipped in v0.6.0 (see CHANGELOG). Scope gaps kept below: Bedrock/Vertex (S8) and prompt-tools (S9) were deferred, not built. New work is tracked in "2026-09 refresh" at the end of this file.
+
 | Spec | Title | Beads | Priority | Status |
 |------|-------|-------|----------|--------|
-| **S1** | Extended-thinking round-trip correctness | `claudio-hms` | P1 | **DONE** (this branch) |
-| S2 | Per-feature beta-header management | `claudio-7mj` | P2 | open |
-| S3 | Request-builder additions (structured outputs, eager streaming, msg-level caching) | `claudio-9lj` | P2 | open |
-| S4 | Models API module | `claudio-5h7` | P2 | open |
-| S5 | Citations + content-block parsing (search_result, server-tool results) | `claudio-0vx` | P2 | open (blocked by S1 ✓) |
-| S6 | Server-side tool helpers (web_search, web_fetch, code_execution, text_editor, computer_use, memory) | `claudio-euz` | P2 | open (blocked by S2, S5) |
-| S7 | Admin API module | `claudio-nwf` | P3 | open (blocked by S2) |
-| S8 | Auth (Bearer/OAuth) + alt deployments (Bedrock/Vertex) | `claudio-c7t` | P3 | open |
-| S9 | Niche beta endpoints (Agent Skills API, prompt-tools) | `claudio-zrq` | P4 | open (blocked by S2) |
+| **S1** | Extended-thinking round-trip correctness | `claudio-hms` | P1 | shipped v0.6.0 |
+| S2 | Per-feature beta-header management | `claudio-7mj` | P2 | shipped v0.6.0 |
+| S3 | Request-builder additions (structured outputs, eager streaming, msg-level caching) | `claudio-9lj` | P2 | shipped v0.6.0 |
+| S4 | Models API module | `claudio-5h7` | P2 | shipped v0.6.0 |
+| S5 | Citations + content-block parsing (search_result, server-tool results) | `claudio-0vx` | P2 | shipped v0.6.0 |
+| S6 | Server-side tool helpers (web_search, web_fetch, code_execution, text_editor, computer_use, memory) | `claudio-euz` | P2 | shipped v0.6.0 |
+| S7 | Admin API module | `claudio-nwf` | P3 | shipped v0.6.0 |
+| S8 | Auth (Bearer/OAuth) + alt deployments (Bedrock/Vertex) | `claudio-c7t` | P3 | shipped v0.6.0 (Bearer/OAuth only; Bedrock/Vertex deferred) |
+| S9 | Niche beta endpoints (Agent Skills API, prompt-tools) | `claudio-zrq` | P4 | shipped v0.6.0 (Skills API; prompt-tools not built) |
 
 **Recommended build order:** S1 → S2 → S4 → S3 → S5 → S6 → S7 → S8 → S9.
 Rationale: bugs first (S1); beta-header plumbing (S2) is foundational for S6/S7/S9; Models (S4) is a ~1-file freebie; S6 is heaviest and sits after its dependencies (may split into web-tools / code-exec / computer+memory).
@@ -100,3 +102,26 @@ These were features Claudio *partially* implemented in a way that breaks real mu
 
 - Anthropic docs: `platform.claude.com/docs` (structured outputs, models-list, citations, search-results, prompt-caching, streaming, extended-thinking, administration-api, tool pages for web-search/web-fetch/code-execution/text-editor/computer-use/memory, agent-skills, beta-headers, authentication, Bedrock/Vertex).
 - Official SDKs: `github.com/anthropics/anthropic-sdk-python`, `…/anthropic-sdk-typescript`.
+
+---
+
+## 2026-09 refresh (post-v0.6.0)
+
+- **Date:** 2026-09-25
+- **Baseline:** Claudio v0.6.0 (S1–S9 shipped). Diffed against the bundled `claude-api` reference and live docs fetched 2026-09-25.
+- **Scope decision:** Messages API + supporting endpoints only. **Managed Agents** (agents / environments / sessions / vaults / deployments / memory stores) is a separate effort, not tracked here.
+- **Design decisions (apply to S10–S14):**
+  - Library stays **model-agnostic** — raw setter + typed helpers (the `set_output_config/2` / `set_output_format/2` pattern); per-model rules live in docs, the API owns validation.
+  - Specs are written **just in time**: S10 now, S11–S14 each spec'd immediately before implementation (dated beta strings go stale).
+  - Existing public signatures do not change; new behaviour arrives as new functions / options.
+  - **Release:** one version bump (0.7.0) after S14 ships. S10–S13 accumulate under CHANGELOG `[Unreleased]`; no spec bumps `@version` on its own.
+
+| Spec | Title | Status |
+|------|-------|--------|
+| **S10** | API drift fixes — MCP connector v2 (`mcp_toolset` + `mcp-client-2025-11-20`), Files/Skills GA, `code_execution_20260521`, `stop_details`, doc model ids / `budget_tokens` / forced `tool_choice` notes | spec written: `2026-09-25-s10-api-drift-fixes-design.md` |
+| S11 | Thinking & effort — adaptive thinking helper, `display` (`summarized`/`omitted`, `updates` beta), `output_config.effort`, task budgets (`task-budgets-2026-03-13`) | not spec'd |
+| S12 | 5.x request surface — mid-conversation `role: "system"` messages + `clear_at` (beta), per-message effort (beta), refusal `fallbacks` (`server-side-fallback-2026-07-01`), `speed` (fast mode), `inference_geo`, cache diagnostics (beta) | not spec'd |
+| S13 | Context management — compaction (`compact-2026-01-12`: request, response/stream blocks, round-trip) + typed context-editing strategies | not spec'd |
+| S14 | Tool extensions — tool search + `defer_loading`, programmatic tool calling (`allowed_callers`), advisor tool, `computer_toolset_20260801`, typed parsing of new server-tool result blocks | not spec'd |
+
+**Build order:** S10 → S11 → S12 → S13 → S14. S10 first because it fixes a request shape that is invalid today (MCP connector). Beta strings in the table are from the reference as of 2026-09-25 — re-pin each against the live page when its spec is written.

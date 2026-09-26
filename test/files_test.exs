@@ -17,6 +17,15 @@ defmodule Claudio.FilesTest do
     {:ok, %{client: client, bypass: bypass}}
   end
 
+  # The shared setup client sends files-api-2025-04-14 (legacy shapes); GA
+  # pagination tests use a client without it.
+  defp ga_client(bypass) do
+    Claudio.Client.new(
+      %{token: "fake-token", version: "2023-06-01"},
+      "http://localhost:#{bypass.port}/"
+    )
+  end
+
   describe "upload/3" do
     test "sends multipart POST and returns file metadata", %{client: client, bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/files", fn conn ->
@@ -217,6 +226,69 @@ defmodule Claudio.FilesTest do
                  after_id: "file_x",
                  before_id: "file_y"
                )
+    end
+
+    test "GA client: :page is sent as a cursor, with no beta header", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "anthropic-beta") == []
+        assert URI.decode_query(conn.query_string) == %{"page" => "pg_2"}
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, %{"data" => [], "next_page" => nil}} =
+               Claudio.Files.list(ga_client(bypass), page: "pg_2")
+    end
+
+    test "GA client: :ids repeats ids[] in order, with no beta header", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "anthropic-beta") == []
+        # URI.decode_query collapses repeated keys, so read the raw pairs
+        pairs = conn.query_string |> URI.query_decoder() |> Enum.to_list()
+        assert pairs == [{"ids[]", "file_a"}, {"ids[]", "file_b"}]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, %{"data" => [], "next_page" => nil}} =
+               Claudio.Files.list(ga_client(bypass), ids: ["file_a", "file_b"])
+    end
+
+    test "empty ids sends no ids[] parameter", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, _} = Claudio.Files.list(client, ids: [])
+    end
+
+    test "ids: nil sends no ids[] parameter, like the other options", %{
+      client: client,
+      bypass: bypass
+    } do
+      Bypass.expect_once(bypass, "GET", "/files", fn conn ->
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"data" => [], "next_page" => nil}))
+      end)
+
+      assert {:ok, _} = Claudio.Files.list(client, ids: nil)
+    end
+
+    test "a non-list :ids raises an ArgumentError naming the option", %{client: client} do
+      assert_raise ArgumentError,
+                   ~s(Claudio.Files.list/2 :ids must be a list of file ids; got "file_a"),
+                   fn -> Claudio.Files.list(client, ids: "file_a") end
     end
   end
 end

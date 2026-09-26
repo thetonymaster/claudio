@@ -28,7 +28,7 @@ defmodule Claudio.Tools do
       # Use in a request
       alias Claudio.Messages.Request
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What's the weather in San Francisco?")
       |> Request.add_tool(weather_tool)
       |> Request.set_tool_choice(:auto)
@@ -45,7 +45,7 @@ defmodule Claudio.Tools do
       end)
 
       # Continue conversation with tool results
-      request2 = Request.new("claude-3-5-sonnet-20241022")
+      request2 = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What's the weather in San Francisco?")
       |> Request.add_message(:assistant, response.content)
       |> Request.add_message(:user, results)
@@ -215,7 +215,7 @@ defmodule Claudio.Tools do
 
       message = Claudio.Tools.create_tool_result_message(tool_results)
 
-      request = Request.new("claude-3-5-sonnet-20241022")
+      request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Initial question")
       |> Request.add_message(:assistant, assistant_response.content)
       |> Request.add_message(:user, message)
