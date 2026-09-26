@@ -487,25 +487,25 @@ defmodule Claudio.MessagesTest do
     assert metadata.thinking_tokens == 64
   end
 
-  defp attach_telemetry_handler(event_name, filter_fn \\ fn _metadata -> true end) do
+  defp attach_telemetry_handler(event_name, filter_fn) do
     handler_id = "messages-test-#{System.unique_integer([:positive])}"
-    test_pid = self()
 
     :ok =
       :telemetry.attach(
         handler_id,
         event_name,
-        fn name, _measurements, metadata, {pid, filter} ->
-          if filter.(metadata) do
-            send(pid, {:telemetry_event, name, metadata})
-          end
-        end,
-        {test_pid, filter_fn}
+        &__MODULE__.forward_telemetry_event/4,
+        {self(), filter_fn}
       )
 
     on_exit(fn ->
       :telemetry.detach(handler_id)
     end)
+  end
+
+  # A module function capture: telemetry logs a performance note for anonymous handlers.
+  def forward_telemetry_event(name, _measurements, metadata, {pid, filter}) do
+    if filter.(metadata), do: send(pid, {:telemetry_event, name, metadata})
   end
 
   describe "beta-header merge for %Request{}" do
