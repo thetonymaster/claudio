@@ -42,11 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Request.add_code_execution_tool/2` defaults to `code_execution_20260521`
   (same runtime as `20260120`).
 - `Response.usage` keeps every field the API returns: documented fields are atom keys
-  (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`); any other field is kept
+  (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`, `iterations`); any other field is kept
   under the key it arrived with instead of being dropped. Documented fields the API did not
   send now appear as `nil`, so exact `usage == %{...}` comparisons need the new keys.
-- `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo` and `diagnostics`,
-  which the count endpoint rejects.
+- `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo`, `diagnostics` and
+  `fallbacks`, which the count endpoint rejects.
+- `Response.to_assistant_content/1` applies the API's continuation rules after a server-side
+  fallback: before the last `fallback` block it drops `thinking`, `redacted_thinking`,
+  `connector_text` and `tool_use`, and keeps `server_tool_use` / `mcp_tool_use` only when their
+  result is present. Output is unchanged for responses without a `fallback` block, or with it
+  first (the normal non-streaming shape).
+- `Response.get_tool_uses/1` and `Tools.extract_tool_uses/1` (so `has_tool_uses?/1`) skip
+  `tool_use` blocks before the last `fallback` block — they came from the model that declined.
+- `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its content holds a
+  `fallback` block; the API rejects a replayed `fallback` block without it.
 
 ### Added
 
@@ -69,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `set_speed/2` (`:fast` / `:standard`, always declares `fast-mode-2026-02-01`),
     `set_inference_geo/2` (`:global` / `:us`, GA), `enable_cache_diagnostics/2` (GA).
 - `Response.diagnostics` (raw cache-diagnostics map).
+- **Refusal fallbacks:** `Request.set_fallbacks/2` (`:default` or up to three models / override
+  maps; declares `server-side-fallback-2026-07-01`); typed `:fallback` content blocks (original
+  kept under `raw:` and replayed verbatim); `Response.fallbacks/1`, `Response.served_by/1`;
+  `usage.iterations`.
 
 ### Docs
 
