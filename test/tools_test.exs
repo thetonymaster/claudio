@@ -258,4 +258,36 @@ defmodule Claudio.ToolsTest do
       assert length(message) == 2
     end
   end
+
+  describe "tool results the API accepts (pre-release audit)" do
+    test "an error result with empty content raises (the API rejects it)" do
+      for empty <- ["", nil] do
+        assert_raise ArgumentError, ~r/is_error.*empty/, fn ->
+          Tools.create_tool_result("t", empty, true)
+        end
+      end
+    end
+
+    test "a list must hold content-block maps" do
+      assert_raise ArgumentError, ~r/content blocks/, fn ->
+        Tools.create_tool_result("t", ["a", "b"])
+      end
+
+      assert %{"content" => [%{"type" => "text", "text" => "a"}]} =
+               Tools.create_tool_result("t", [%{"type" => "text", "text" => "a"}])
+    end
+
+    test "a struct without a JSON encoder raises ArgumentError instead of a protocol crash" do
+      assert_raise ArgumentError, ~r/cannot be sent as tool_result content/, fn ->
+        Tools.create_tool_result("t", {:a, 1})
+      end
+    end
+
+    test "a raw tool_use block without input normalizes to input: %{}" do
+      raw = %{"content" => [%{"type" => "tool_use", "id" => "a", "name" => "n"}]}
+
+      assert [%{id: "a", name: "n", input: %{}, toolset_name: nil, caller: nil}] =
+               Tools.extract_tool_uses(raw)
+    end
+  end
 end

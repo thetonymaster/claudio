@@ -193,13 +193,13 @@ defmodule Claudio.Tools do
       "tool_use_id" => tool_use_id
     }
 
-    content =
-      cond do
-        is_binary(result) -> result
-        is_list(result) -> result
-        is_map(result) -> Jason.encode!(result)
-        true -> to_string(result)
-      end
+    content = tool_result_content!(result)
+
+    # The API rejects an empty error result (probed 2026-09-26).
+    if is_error and content in ["", []] do
+      raise ArgumentError,
+            "Tools.create_tool_result/4 with is_error: true needs non-empty content; got #{inspect(result)}"
+    end
 
     base
     |> Map.put("content", content)
@@ -296,7 +296,42 @@ defmodule Claudio.Tools do
     %{id: id, name: name, input: input, toolset_name: b[:toolset_name], caller: b[:caller]}
   end
 
+  # A raw block without "input" (e.g. a hand-built or truncated one) still normalizes.
+  defp normalize_tool_use(%{"type" => "tool_use", "id" => id, "name" => name} = b) do
+    %{id: id, name: name, input: %{}, toolset_name: b["toolset_name"], caller: b["caller"]}
+  end
+
   defp normalize_tool_use(tool_use), do: tool_use
+
+  defp tool_result_content!(result) when is_binary(result), do: result
+  defp tool_result_content!(nil), do: ""
+
+  defp tool_result_content!(result) when is_number(result) or is_atom(result),
+    do: to_string(result)
+
+  defp tool_result_content!(result) when is_list(result) do
+    if Enum.all?(result, &(is_map(&1) and not is_struct(&1))) do
+      result
+    else
+      raise ArgumentError,
+            "Tools.create_tool_result/4 list content must be content blocks (maps like " <>
+              "%{\"type\" => \"text\", \"text\" => ...}); got #{inspect(result)}"
+    end
+  end
+
+  defp tool_result_content!(result) when is_map(result) do
+    Jason.encode!(result)
+  rescue
+    _ in [Protocol.UndefinedError, Jason.EncodeError] -> raise_unsendable!(result)
+  end
+
+  defp tool_result_content!(result), do: raise_unsendable!(result)
+
+  defp raise_unsendable!(result) do
+    raise ArgumentError,
+          "Tools.create_tool_result/4: #{inspect(result)} cannot be sent as tool_result content " <>
+            "(use a string, a JSON-encodable map, or a list of content blocks)"
+  end
 
   defp maybe_put_toolset(map, nil), do: map
   defp maybe_put_toolset(map, toolset_name), do: Map.put(map, "toolset_name", toolset_name)
