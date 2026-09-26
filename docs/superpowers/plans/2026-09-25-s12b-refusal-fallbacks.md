@@ -16,13 +16,15 @@
 - Enumerated values are **atoms only** (`:default`); errors name the function, the allowed shapes and `inspect/1` of the value received.
 - Beta string, verbatim: `server-side-fallback-2026-07-01` (every `set_fallbacks/2`). The integration test additionally needs `mcp-client-2025-11-20` for `mcp_tool_use` in history.
 - Echo rules (spec §3, from RF's table): before the **last** `fallback` block drop `thinking`, `redacted_thinking`, `connector_text`, `tool_use`; keep `server_tool_use` / `mcp_tool_use` only when some block's `tool_use_id` equals their `id`; keep everything else. Blocks at/after the last `fallback` are kept. No `fallback`, or last `fallback` at index 0 → output unchanged.
+- Replay beta (spec §1, F15): `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its list content holds a block typed `"fallback"` / `:fallback` (string or atom key).
+- Tool readers (spec §2): `Response.get_tool_uses/1` and `Tools.extract_tool_uses/1` return only `tool_use` blocks at or after the last `fallback` block, via the `@doc false` helper `Response.since_last_fallback/1`.
 - Existing public signatures unchanged. No `@version` bump; CHANGELOG under `## [Unreleased] — targets 0.7.0`.
 - Commits: add files individually (`git add .` forbidden); **no AI attribution lines** (no Co-Authored-By, no "Generated with").
-- Gates before each commit: `mix format` (plan code is not pre-formatted) and `mix compile --warnings-as-errors`; Task 5 ends with the strict `mix format --check-formatted` and the full suite.
+- Gates before each commit: `mix format` (plan code is not pre-formatted) and `mix compile --warnings-as-errors`; Task 6 ends with the strict `mix format --check-formatted` and the full suite.
 
 ## Review Focus
 
-1. A response with **no** `fallback` block, or with it at index 0 (every non-streaming response), must give `to_assistant_content/1` output identical to today's — including thinking + tool_use blocks, which the filter would drop if it misfired. Pinned in Task 4.
+1. A response with **no** `fallback` block, or with it at index 0 (the normal non-streaming shape), must give `to_assistant_content/1` output identical to today's — including thinking + tool_use blocks, which the filter would drop if it misfired. Pinned in Task 4.
 2. Streamed mid-output fallback: `model` names the declining model, so `served_by/1` must read the last `fallback` block's `to.model` — pinned in Task 2 (stream test + reader tests).
 3. Two `fallback` blocks: rules apply only before the **last** one; a `thinking` block between the two is dropped, one after the last is kept. Pinned in Task 4.
 4. Atom-keyed input (`Response.from_map/1` with atom keys, and unknown atom-keyed blocks passed through) must be filtered by the same rules as string-keyed input. Pinned in Task 4.
@@ -37,13 +39,13 @@ Implementation branch `feat/s12b-refusal-fallbacks`, cut from `docs/s12b-fallbac
 ### Task 1: `Request.set_fallbacks/2` and the `count_tokens` strip
 
 **Files:**
-- Modify: `lib/claudio/messages/request.ex` — `@type t` (~line 44), `defstruct` (~line 70), new function directly **after** `enable_cache_diagnostics/2` (~line 975), `to_map/1` (~line 1232)
+- Modify: `lib/claudio/messages/request.ex` — `@type t` (~line 44), `defstruct` (~line 70) plus `@fallback_beta` directly after it, new function directly **after** `enable_cache_diagnostics/2` (~line 975), `to_map/1` (~line 1232)
 - Modify: `lib/claudio/messages.ex:218-220` — `count_tokens/2` Request clause
 - Test: `test/request_test.exs` (new `describe` after `describe "set_inference_geo/2"`), `test/messages_test.exs:566-598`
 
 **Interfaces:**
 - Consumes: `add_beta/2`, `required_betas/1`, `maybe_put/3` (existing, `request.ex`).
-- Produces: `Request.set_fallbacks(t(), :default | [String.t() | map(), ...]) :: t()`; struct field `fallbacks :: String.t() | [map()] | nil`; `to_map/1` emits `"fallbacks"`. Task 5 uses `set_fallbacks(:default)`.
+- Produces: `Request.set_fallbacks(t(), :default | [String.t() | map(), ...]) :: t()`; struct field `fallbacks :: String.t() | [map()] | nil`; `to_map/1` emits `"fallbacks"`. Task 6 uses `set_fallbacks(:default)`.
 
 - [ ] **Step 1: Write the failing request tests**
 
@@ -134,11 +136,16 @@ In `defstruct`, after `diagnostics: nil`:
     fallbacks: nil
 ```
 
+Directly after the closing `]` of `defstruct` (module level — Task 5's `add_message/3`, near the top of the module, reads it too, and an attribute is only readable by code that follows it):
+
+```elixir
+  # Server-side refusal fallbacks; also needed to replay a `fallback` block (probed 2026-09-25).
+  @fallback_beta "server-side-fallback-2026-07-01"
+```
+
 Directly after `enable_cache_diagnostics/2`:
 
 ```elixir
-  @fallback_beta "server-side-fallback-2026-07-01"
-
   @doc """
   Sets `fallbacks` — server-side retry of a refused request on another model (beta;
   declares `server-side-fallback-2026-07-01`).
@@ -416,7 +423,7 @@ Append to `test/messages/stream_test.exs`, before the final `end`:
         ~s(data: {"type":"content_block_stop","index":2}),
         "",
         ~s(event: message_delta),
-        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"iterations":[{"type":"message","model":"claude-opus-5-5","input_tokens":5,"output_tokens":1},{"type":"fallback_message","model":"claude-opus-4-8","input_tokens":7,"output_tokens":3}]}}),
         "",
         ~s(event: message_stop),
         ~s(data: {"type":"message_stop"}),
@@ -427,6 +434,10 @@ Append to `test/messages/stream_test.exs`, before the final `end`:
         [Enum.join(sse, "\n") <> "\n"]
         |> ClaudioStream.parse_events()
         |> ClaudioStream.build_final_message()
+
+      # RF: the serving model is also in the final message_delta's usage.iterations.
+      assert [%{"type" => "message"}, %{"type" => "fallback_message", "model" => "claude-opus-4-8"}] =
+               message["usage"]["iterations"]
 
       response = Claudio.Messages.Response.from_map(message)
 
@@ -442,7 +453,7 @@ Append to `test/messages/stream_test.exs`, before the final `end`:
 - [ ] **Step 3: Run them to verify they fail**
 
 Run: `mix test test/response_test.exs test/messages/stream_test.exs 2>&1 | tail -20`
-Expected: FAIL — `from_map/1 fallback blocks` tests fail on the match (block is still the raw string-keyed map), `fallbacks/1` / `served_by/1` tests with `UndefinedFunctionError`, the stream test with a `MatchError` on `%{type: :fallback}` (or `UndefinedFunctionError` for `served_by/1`). If the stream test fails **before** reaching `from_map/1` (e.g. the fallback block is missing from `message["content"]`), stop: `build_final_message/1` does not handle no-delta blocks as the spec assumes (spec §4) — report the raw failure before changing stream code.
+Expected: FAIL — the `from_map/1 fallback blocks` parse tests fail on the match (block is still the raw string-keyed map), except "to_assistant_content/1 re-emits the original block, unknown sub-fields included", which already PASSES (an unknown block passes through both catch-alls; it pins that the typed block keeps doing so); `fallbacks/1` / `served_by/1` tests with `UndefinedFunctionError`, the stream test with a `MatchError` on `%{type: :fallback}` (or `UndefinedFunctionError` for `served_by/1`). If the stream test fails **before** reaching `from_map/1` (e.g. the fallback block is missing from `message["content"]`), stop: `build_final_message/1` does not handle no-delta blocks as the spec assumes (spec §4) — report the raw failure before changing stream code.
 
 - [ ] **Step 4: Implement**
 
@@ -486,7 +497,9 @@ After `get_mcp_tool_uses/2`:
   `to.model`, else `model`.
 
   Not simply `model`: a streamed response that fell back mid-output keeps the
-  requested (declining) model from `message_start` in `model`.
+  requested (declining) model from `message_start` in `model`. When every model in
+  the chain declined (`stop_reason: :refusal`), it names the model whose refusal was
+  returned.
   """
   @spec served_by(t()) :: String.t() | nil
   def served_by(%__MODULE__{model: model} = response) do
@@ -545,11 +558,11 @@ git commit -m "feat(response): typed fallback block, fallbacks/1, served_by/1"
 
 **Files:**
 - Modify: `lib/claudio/messages/response.ex` — moduledoc (~1-19), `@typedoc`/`@type usage` (~100-117), `@usage_keys` (~478-488)
-- Test: `test/response_test.exs` — exact usage assertion (~26-36), `"unknown fields survive under their original key"` (~747-766), `"nil usage has the new keys as nil"` (~783-793), new tests in `describe "from_map/1 usage keeps every field"`
+- Test: `test/response_test.exs` — exact usage assertion (~26-36), `"unknown fields survive under their original key"` (~747-766), `"nil usage has the new keys as nil"` (~783-793), new tests in `describe "from_map/1 usage keeps every field"`; `test/messages/stream_test.exs` — Task 2's mid-output fallback test
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-2.
-- Produces: `usage.iterations :: [map()] | nil` (entries stay raw, string-keyed as the API sends them). Task 5's integration test reads it.
+- Produces: `usage.iterations :: [map()] | nil` (entries stay raw, string-keyed as the API sends them). Task 6's integration test reads it.
 
 - [ ] **Step 1: Update the tests that pin today's behaviour (failing first)**
 
@@ -622,8 +635,14 @@ git commit -m "feat(response): typed fallback block, fallbacks/1, served_by/1"
     end
 ```
 
-Run: `mix test test/response_test.exs 2>&1 | tail -15`
-Expected: FAIL — the exact assertion (no `:iterations` key), the nil-usage test (`KeyError` on `:iterations`) and the new iterations test (`usage.iterations` → `KeyError`). The rewritten `future_field` test passes (behaviour unchanged for unknown keys).
+5. In `test/messages/stream_test.exs`, Task 2's `"the no-delta fallback block survives and parses into the Response"`: after `assert Claudio.Messages.Response.served_by(response) == "claude-opus-4-8"` add
+
+```elixir
+      assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
+```
+
+Run: `mix test test/response_test.exs test/messages/stream_test.exs 2>&1 | tail -15`
+Expected: FAIL — the exact assertion (no `:iterations` key), the nil-usage test (`KeyError` on `:iterations`), the new iterations test and the stream test (`usage.iterations` → `KeyError`). The rewritten `future_field` test passes (behaviour unchanged for unknown keys).
 
 - [ ] **Step 2: Implement**
 
@@ -686,6 +705,7 @@ Expected: compile clean; `0 failures`.
 ```bash
 git add lib/claudio/messages/response.ex
 git add test/response_test.exs
+git add test/messages/stream_test.exs
 git commit -m "feat(response): usage.iterations as a documented key; document fallback stop_details"
 ```
 
@@ -698,7 +718,7 @@ git commit -m "feat(response): usage.iterations as a documented key; document fa
 
 **Interfaces:**
 - Consumes: Task 2's `block_to_api(%{type: :fallback, raw: raw})` → `raw` (string- or atom-keyed map whose type is `"fallback"`).
-- Produces: `to_assistant_content(t()) :: [map()]` — same signature; output filtered per spec §3. Task 5's integration test replays it.
+- Produces: `to_assistant_content(t()) :: [map()]` — same signature; output filtered per spec §3. Task 6's integration test replays it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -826,6 +846,12 @@ Append to `test/response_test.exs`, before the final `end`:
              ]
     end
 
+    test "non-map entries pass through without crashing the filter" do
+      blocks = ["stray", %{"type" => "text", "text" => "a"}, fb("a", "b"), %{"type" => "text", "text" => "b"}]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
     test "atom-keyed input follows the same rules" do
       fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
       connector = %{type: "connector_text", text: "narration"}
@@ -850,7 +876,7 @@ Append to `test/response_test.exs`, before the final `end`:
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/response_test.exs 2>&1 | tail -20`
-Expected: the two "unchanged" tests and the "result after the fallback" test PASS already (nothing to drop — they pin the no-op invariant); "mid-output fallback", "two fallback blocks" and "atom-keyed input" FAIL with the dropped blocks still present in the left-hand side.
+Expected: the two "unchanged" tests and the "result after the fallback" test PASS already (nothing to drop — they pin the no-op invariant); "mid-output fallback", "two fallback blocks" and "atom-keyed input" FAIL with the dropped blocks still present in the left-hand side. "non-map entries pass through" also PASSES now (there is no filter yet); it guards Step 3's `field/2`.
 
 - [ ] **Step 3: Implement**
 
@@ -873,9 +899,9 @@ Replace `to_assistant_content/1` and its `@doc`:
   continuation rules: before the last `fallback` block it drops `thinking`,
   `redacted_thinking`, `connector_text` and `tool_use` blocks, and keeps a
   `server_tool_use` or `mcp_tool_use` only when its result block is present.
-  `fallback` blocks stay where they are. This only changes anything for a streamed
-  response that fell back mid-output — a non-streaming response puts the `fallback`
-  block first. `response.content` still holds every block.
+  `fallback` blocks stay where they are. In practice this only changes a streamed
+  response that fell back mid-output; a non-streaming response normally puts the
+  `fallback` block first. `response.content` still holds every block.
   """
   @spec to_assistant_content(t()) :: [map()]
   def to_assistant_content(%__MODULE__{content: content}) do
@@ -941,6 +967,8 @@ Directly after the catch-all `defp block_to_api(block), do: block`:
       :error -> Map.get(block, String.to_existing_atom(key))
     end
   end
+
+  defp field(_not_a_map, _key), do: nil
 ```
 
 Note: `String.to_existing_atom/1` is safe here — `key` is always one of the literals `"type"`, `"id"`, `"tool_use_id"`, whose atoms exist in this module.
@@ -953,7 +981,7 @@ Expected: PASS, `0 failures`.
 - [ ] **Step 5: Mutation check of the no-op invariant**
 
 One mutation at a time; run `mix test test/response_test.exs 2>&1 | tail -8` after each, then restore:
-1. Add `"text"` to `@dropped_before_fallback`. Expected: "mid-output fallback", "two fallback blocks" and "atom-keyed input" FAIL.
+1. Add `"text"` to `@dropped_before_fallback`. Expected: "mid-output fallback", "two fallback blocks", "atom-keyed input", "a result after the fallback still pairs a server_tool_use before it" and "non-map entries pass through" FAIL.
 2. Replace the pairing branch with `type in @paired_before_fallback -> true`. Expected: "mid-output fallback" FAILS (unpaired `srv_2` / `mcp_2` kept).
 3. In `last_fallback_index/1`, return the **first** fallback index (`last || index`). Expected: "two fallback blocks" FAILS.
 
@@ -971,14 +999,223 @@ git commit -m "feat(response): apply fallback continuation rules in to_assistant
 ```
 
 ---
-### Task 5: Live integration test + docs
+### Task 5: Tool readers skip superseded tool calls; `add_message/3` declares the replay beta
+
+**Files:**
+- Modify: `lib/claudio/messages/response.ex` — `get_tool_uses/1` (~200-206) and its `@doc`; new `@doc false` `since_last_fallback/1` directly after `served_by/1` (Task 2)
+- Modify: `lib/claudio/tools.ex:125-138` — both `extract_tool_uses/1` list clauses, and its `@doc`
+- Modify: `lib/claudio/messages/request.ex:113-121` — `add_message/3`; new private `has_fallback_block?/1` directly after it
+- Test: `test/response_test.exs` (new `describe` at the end), `test/tools_test.exs` (inside `describe "extract_tool_uses/1"`), `test/request_test.exs` (new `describe` after `describe "add_message/3"`)
+
+**Interfaces:**
+- Consumes: Task 4's private `last_fallback_index/1` (reads `"type"`/`:type`, string or atom value, non-maps → no type); Task 1's `@fallback_beta` (defined right after `defstruct`); Task 4's test helpers `fb/2` and `content/1` in `response_test.exs`.
+- Produces: `@doc false def since_last_fallback(list()) :: list()` in `Claudio.Messages.Response`; `get_tool_uses/1`, `Tools.extract_tool_uses/1` (and `has_tool_uses?/1`, which calls it) skip `tool_use` before the last `fallback`; `add_message/3` declares `server-side-fallback-2026-07-01` for content holding a `fallback` block. Task 6's replay relies on the latter.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `test/response_test.exs`, before the final `end`:
+
+```elixir
+  describe "get_tool_uses/1 after a fallback" do
+    test "skips tool_use blocks before the last fallback block" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          fb("a", "b"),
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+
+    test "without a fallback block every tool_use is returned" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_1"}, %{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+  end
+```
+
+Add inside `describe "extract_tool_uses/1"` in `test/tools_test.exs`:
+
+```elixir
+    test "skips tool_use blocks before the last fallback block (raw maps and Response)" do
+      raw = %{
+        "content" => [
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ]
+      }
+
+      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(raw)
+      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(Claudio.Messages.Response.from_map(raw))
+
+      atom_keyed = %{
+        content: [%{type: "tool_use", id: "toolu_1", name: "x", input: %{}}, %{type: "fallback"}]
+      }
+
+      assert Tools.extract_tool_uses(atom_keyed) == []
+      refute Tools.has_tool_uses?(atom_keyed)
+    end
+```
+
+Add to `test/request_test.exs`, after `describe "add_message/3"`:
+
+```elixir
+  describe "add_message/3 with a fallback block" do
+    test "declares the fallback beta (the API rejects a replayed fallback block without it)" do
+      for block <- [
+            %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+            %{type: "fallback"},
+            %{type: :fallback}
+          ] do
+        request =
+          Request.new("m")
+          |> Request.add_message(:assistant, [block, %{"type" => "text", "text" => "hi"}])
+
+        assert Request.required_betas(request) == ["server-side-fallback-2026-07-01"]
+      end
+    end
+
+    test "content without a fallback block declares nothing" do
+      for content <- ["hi", [%{"type" => "text", "text" => "hi"}], ["stray"]] do
+        request = Request.new("m") |> Request.add_message(:user, content)
+        assert Request.required_betas(request) == []
+      end
+    end
+  end
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `mix test test/response_test.exs test/tools_test.exs test/request_test.exs 2>&1 | tail -20`
+Expected: FAIL — "skips tool_use blocks before the last fallback block" (both files: `toolu_1` still returned) and "declares the fallback beta" (`[]` instead of the beta). "without a fallback block every tool_use is returned" and "content without a fallback block declares nothing" PASS already — they pin today's behaviour.
+
+- [ ] **Step 3: Implement**
+
+In `response.ex`, directly after `served_by/1`:
+
+```elixir
+  # Blocks from the last `fallback` block on — every block when there is none. Earlier
+  # blocks belong to a model that declined (see to_assistant_content/1). Reads parsed
+  # and raw (string- or atom-keyed) content alike; shared with Claudio.Tools.
+  @doc false
+  @spec since_last_fallback(list()) :: list()
+  def since_last_fallback(blocks) when is_list(blocks) do
+    case last_fallback_index(blocks) do
+      nil -> blocks
+      index -> Enum.drop(blocks, index)
+    end
+  end
+```
+
+Replace `get_tool_uses/1` and its `@doc`:
+
+```elixir
+  @doc """
+  Extracts the tool use requests to execute. After a server-side fallback, `tool_use`
+  blocks before the last `fallback` block came from the model that declined; they are
+  skipped here, as `to_assistant_content/1` drops them from the replay.
+  """
+  @spec get_tool_uses(t()) :: list(tool_use_block())
+  def get_tool_uses(%__MODULE__{content: content}) do
+    content
+    |> since_last_fallback()
+    |> Enum.filter(&(&1[:type] == :tool_use))
+  end
+```
+
+In `tools.ex`, both list clauses of `extract_tool_uses/1`:
+
+```elixir
+  def extract_tool_uses(%{content: content}) when is_list(content) do
+    content
+    |> Claudio.Messages.Response.since_last_fallback()
+    |> Enum.filter(&is_tool_use?/1)
+    |> Enum.map(&normalize_tool_use/1)
+  end
+
+  def extract_tool_uses(%{"content" => content}) when is_list(content) do
+    content
+    |> Claudio.Messages.Response.since_last_fallback()
+    |> Enum.filter(&is_tool_use?/1)
+    |> Enum.map(&normalize_tool_use/1)
+  end
+```
+
+and append to its `@doc` (before the closing `"""`):
+
+```markdown
+  After a server-side fallback, `tool_use` blocks before the last `fallback` block
+  came from the model that declined and are skipped (see
+  `Claudio.Messages.Response.to_assistant_content/1`).
+```
+
+In `request.ex`, replace `add_message/3`'s body and add the helper after it:
+
+```elixir
+  def add_message(%__MODULE__{messages: messages} = request, role, content)
+      when role in [:user, :assistant] do
+    message = %{
+      "role" => to_string(role),
+      "content" => normalize_content(content)
+    }
+
+    request = %{request | messages: messages ++ [message]}
+
+    # Replaying a `fallback` block (Response.to_assistant_content/1) needs the beta even
+    # on a turn that does not set fallbacks (400 without it, probed 2026-09-25).
+    if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
+  end
+
+  defp has_fallback_block?(content) when is_list(content) do
+    Enum.any?(content, fn
+      %{"type" => type} -> type in ["fallback", :fallback]
+      %{type: type} -> type in ["fallback", :fallback]
+      _ -> false
+    end)
+  end
+
+  defp has_fallback_block?(_content), do: false
+```
+
+Also add one sentence to `add_message/3`'s `@doc`: "A list `content` holding a `fallback` block (from `Response.to_assistant_content/1`) declares `server-side-fallback-2026-07-01`, which the API requires to accept it."
+
+- [ ] **Step 4: Run to verify they pass**
+
+Run: `mix test test/response_test.exs test/tools_test.exs test/request_test.exs 2>&1 | tail -5`
+Expected: PASS, `0 failures`.
+
+- [ ] **Step 5: Gates and commit**
+
+Run: `mix format && mix compile --warnings-as-errors && mix test 2>&1 | tail -3`
+Expected: compile clean; `0 failures`.
+
+```bash
+git add lib/claudio/messages/response.ex
+git add lib/claudio/tools.ex
+git add lib/claudio/messages/request.ex
+git add test/response_test.exs
+git add test/tools_test.exs
+git add test/request_test.exs
+git commit -m "feat: tool readers skip superseded tool calls; add_message/3 declares the replay beta"
+```
+
+---
+
+### Task 6: Live integration test + docs
 
 **Files:**
 - Create: `test/integration/fallbacks_integration_test.exs`
 - Modify: `CHANGELOG.md` (`## [Unreleased] — targets 0.7.0`), `CLAUDE.md` (Request builder after line ~95; Response bullets ~133-134)
 
 **Interfaces:**
-- Consumes: `Request.set_fallbacks/2` (Task 1), `Response.served_by/1` (Task 2), `usage.iterations` (Task 3), filtered `Response.to_assistant_content/1` (Task 4); existing `Request.add_beta/2`, `Claudio.APIError` (`status_code`, `message`).
+- Consumes: `Request.set_fallbacks/2` (Task 1), `Response.served_by/1` (Task 2), `usage.iterations` (Task 3), filtered `Response.to_assistant_content/1` (Task 4), `add_message/3` declaring the replay beta (Task 5); existing `Request.add_beta/2`, `Claudio.APIError` (`status_code`, `message`).
 - Produces: nothing consumed later.
 
 - [ ] **Step 1: Write the integration test**
@@ -1042,7 +1279,7 @@ defmodule Claudio.FallbacksIntegrationTest do
       |> Request.add_message(:assistant, assistant_content)
       |> Request.add_message(:user, "Say ok.")
       |> Request.set_max_tokens(16)
-      |> Request.set_fallbacks(:default)
+      # No set_fallbacks/2: the fallback beta must come from add_message/3 (spec F15).
       |> Request.add_beta(@mcp_beta)
 
     Claudio.Messages.create(client, request)
@@ -1090,7 +1327,7 @@ defmodule Claudio.FallbacksIntegrationTest do
 end
 ```
 
-The three control tests prove each dropped block type really makes the next request fail, so the 200 in the second test is evidence the filter did its job (including the `mcp_tool_use` inference) rather than evidence the API is lenient.
+The three control tests prove each dropped block type really makes the next request fail, so the 200 in the second test is evidence the filter did its job (including the `mcp_tool_use` inference) rather than evidence the API is lenient. The replay requests do not call `set_fallbacks/2`, so they also prove `add_message/3` supplies the beta a replayed `fallback` block needs (P16 → 400 without it). The `"tool_result"` assertion rests on the error texts quoted in spec F10.
 
 - [ ] **Step 2: Run it**
 
@@ -1108,7 +1345,11 @@ In `### Changed`, extend the `Response.usage` bullet's list of new documented fi
   fallback: before the last `fallback` block it drops `thinking`, `redacted_thinking`,
   `connector_text` and `tool_use`, and keeps `server_tool_use` / `mcp_tool_use` only when their
   result is present. Output is unchanged for responses without a `fallback` block, or with it
-  first (every non-streaming response).
+  first (the normal non-streaming shape).
+- `Response.get_tool_uses/1` and `Tools.extract_tool_uses/1` (so `has_tool_uses?/1`) skip
+  `tool_use` blocks before the last `fallback` block — they came from the model that declined.
+- `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its content holds a
+  `fallback` block; the API rejects a replayed `fallback` block without it.
 ```
 
 In `### Added`:
@@ -1133,8 +1374,13 @@ Replace the `stop_details` bullet (~134) and add two after it:
 ```markdown
 - **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`; with fallbacks also `recommended_model`, `fallback_credit_token`), `nil` unless `stop_reason: :refusal`
 - **`fallback` blocks** — `%{type: :fallback, from:, to:, trigger:, raw:}`; `fallbacks/1` lists them, `served_by/1` names the serving model (last block's `to.model`, else `model` — a streamed mid-output fallback keeps the requested model in `model`); `usage.iterations` records each attempt
-- **`to_assistant_content/1`** applies the fallback continuation rules (drops / pairing before the last `fallback` block); a no-op without a mid-output fallback
+- **`to_assistant_content/1`** applies the fallback continuation rules (drops / pairing before the last `fallback` block); a no-op without a mid-output fallback. `get_tool_uses/1` (and `Tools.extract_tool_uses/1`) skip `tool_use` before the last `fallback`; `add_message/3` declares the fallback beta when replaying a `fallback` block
 ```
+
+Also update three existing lines:
+- `CLAUDE.md:121` "Parses content blocks (…)": add `fallback` to the list.
+- `CLAUDE.md:132` "documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`)": add `iterations`.
+- `CLAUDE.md:277` "Content blocks typed by their :type field (…)": add `:fallback`.
 
 - [ ] **Step 5: Final gates and commit**
 
@@ -1162,5 +1408,8 @@ git commit -m "test(integration): live fallback replay checks; docs for S12b"
 | §2 `stop_details` new keys documented | 3 |
 | §3 echo filter incl. `mcp_tool_use` pairing, both key styles, no-op invariant | 4 |
 | §4 no-delta stream block → Response | 2 |
-| Testing: integration default call + filtered replay + controls | 5 |
-| CHANGELOG / CLAUDE.md | 5 |
+| §1 `add_message/3` declares the replay beta (F15) | 5 |
+| §2 `get_tool_uses/1` / `Tools.extract_tool_uses/1` skip superseded tool calls | 5 |
+| §4 known limitation (`partial_json`) — documented only, no task | — |
+| Testing: integration default call + filtered replay (no `set_fallbacks`) + controls | 6 |
+| CHANGELOG / CLAUDE.md | 6 |

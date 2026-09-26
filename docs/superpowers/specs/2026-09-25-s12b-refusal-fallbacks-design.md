@@ -7,7 +7,7 @@
 - **Split from:** roadmap S12 (Q, 2026-09-25). S12a (request surface) shipped first (#20).
 - **Provenance:** live docs re-fetched 2026-09-25 — `build-with-claude/refusals-and-fallback`
   (RF), `api/beta/messages/create` (REF), `release-notes/overview` (RN), all under
-  `platform.claude.com/docs/en/` — plus live probes P7–P15 against `claude-opus-5-5`.
+  `platform.claude.com/docs/en/` — plus live probes P7–P18 against `claude-opus-5-5`.
 
 ## Problem
 
@@ -30,8 +30,9 @@ fails with a 400.
 | F6 | `usage.iterations`: `"message"` entries = declined attempts, `"fallback_message"` = serving attempt. Present whenever `fallbacks` is set (P7: even with no refusal). Top-level usage covers only the returned attempt. | RF; P7 |
 | F7 | `stop_details` adds `recommended_model` (only when `fallbacks` set; `null` unless the fallback attempt was skipped), and REF lists `fallback_credit_token`, `fallback_has_prefill_claim`. | RF, REF |
 | F8 | **Echo table** (RF "Continuing the conversation"): `fallback` — keep exactly where it appeared; `text` — keep; any block after the final `fallback` — keep; `thinking` / `redacted_thinking` / `connector_text` before the final `fallback` — drop; client `tool_use` before it — drop; `server_tool_use` before it — keep when paired with its result, drop otherwise. | RF |
-| F9 | Non-streaming mid-output decline: partial output is omitted, `fallback` is the first block. Streaming mid-output decline: earlier blocks stay; the `fallback` block is a `content_block_start`/`_stop` pair with no deltas. **So F8 only changes anything for streamed responses.** | RF |
-| F10 | The API accepts a caller-built `fallback` block in history (P10 → 200). Before a `fallback`: unpaired client `tool_use` → 400 (P11); unpaired `server_tool_use` → 400 (P14), paired → 200 (P15); unpaired `mcp_tool_use` → 400 (P12b), paired `mcp_tool_use` + `mcp_tool_result` → 200 without any `mcp_servers` entry (P13). `mcp_tool_use` in history needs the `mcp-client-2025-11-20` beta (P12). | P10–P15 |
+| F9 | Non-streaming mid-output decline: partial output is omitted and the result "looks like a decline before any output, with the `fallback` block first" (RF; a multi-hop response may have several leading `fallback` blocks, and RF's tool-use note says completed tool results carry over — so "first" is the norm, not a guarantee). Streaming mid-output decline: earlier blocks stay; the `fallback` block is a `content_block_start`/`_stop` pair with no deltas. **So F8 normally only changes anything for streamed responses; the filter is correct either way.** | RF |
+| F10 | The API accepts a caller-built `fallback` block in history (P10 → 200, beta header + `fallbacks: "default"`). Before a `fallback`: unpaired client `tool_use` → 400 "`tool_use` ids were found without `tool_result` blocks immediately after: toolu_01…" (P11); unpaired `server_tool_use` → 400 "`web_search` tool use with id `srvtoolu_01` was found without a corresponding `web_search_tool_result` block" (P14), paired → 200 (P15); unpaired `mcp_tool_use` → 400 "`mcp_tool_use` with id `mcptoolu_01` was found without a corresponding `mcp_tool_result` block" (P12b), paired `mcp_tool_use` + `mcp_tool_result` → 200 without any `mcp_servers` entry (P13). `mcp_tool_use` in history needs the `mcp-client-2025-11-20` beta (P12). | P10–P15 |
+| F15 | A `fallback` block in history **needs the beta header**: without it → 400 "Input tag 'fallback' found using 'type' does not match any of the expected tags" (P16); with the header and **no** `fallbacks` field → 200 (P18). `count_tokens` accepts the beta header once the `fallbacks` key is stripped (P17 → 200). | P16–P18 |
 | F11 | `count_tokens` rejects `fallbacks` (P9 → 400 "Extra inputs are not permitted"). | P9 |
 | F12 | Batches: a batch item with `fallbacks` comes back as an errored result (not a 400). Not on Bedrock / Google Cloud / Foundry. | RF |
 | F13 | There is no documented way to trigger a refusal deliberately. | RF |
@@ -55,7 +56,14 @@ fails with a 400.
   string nor a map.
 - **Not** validated locally (left to the API, consistent with S11/S12a): the three-entry cap,
   distinctness, `allowed_fallback_models`, and use inside Batches (F12).
-- `Messages.count_tokens/2` (Request form) strips `"fallbacks"` (F11), like `inference_geo`.
+- `Messages.count_tokens/2` (Request form) strips `"fallbacks"` (F11), like `inference_geo`; the
+  beta header it still sends is accepted (P17).
+- **Replay beta (F15; Q, 2026-09-25):** `Request.add_message/3` declares
+  `server-side-fallback-2026-07-01` when its list content contains a block whose type is
+  `"fallback"` / `:fallback` (string or atom key). So
+  `add_message(:assistant, Response.to_assistant_content(resp))` stays valid on a later turn that
+  does not call `set_fallbacks/2`. Raw maps passed straight to `Messages.create/2` are not
+  scanned.
 
 ### 2. Response parsing and readers
 
@@ -69,7 +77,15 @@ fails with a 400.
   `message_start` already named the requested model and `Stream.build_final_message/1` takes
   `model` only from `message_start`, so `model` names the declining model (F9; RF: "read the
   serving model from the `fallback` block's `to.model`"). Non-streaming: both agree (F4). Sticky
-  routing: no block, `model` is already the fallback model.
+  routing: no block, `model` is already the fallback model. When every model declined
+  (`stop_reason: :refusal`), it names the model whose refusal was returned.
+- **Tool readers skip superseded tool calls (Q, 2026-09-25):** `Response.get_tool_uses/1` and
+  `Claudio.Tools.extract_tool_uses/1` (and so `has_tool_uses?/1`) return only `tool_use` blocks
+  at or after the last `fallback` block. A `tool_use` before it belongs to the declining model and
+  is dropped from the replay (§3), so executing it would produce a `tool_result` for an id the
+  assistant turn no longer contains (400). Shared through one `@doc false` helper,
+  `Response.since_last_fallback/1`, which reads parsed (`:fallback` atom type) and raw
+  (string/atom-keyed) content alike. No fallback block → every block, as today.
 - `:iterations` joins `@usage_keys` — a list of raw (string-keyed) maps, or `nil`. By the S12a
   rule, documented keys always appear, so `usage.iterations` is `nil` on responses without it;
   the existing CHANGELOG "absent documented fields appear as `nil`" line covers this.
@@ -83,9 +99,10 @@ pure echo filter implementing F8 (Q, 2026-09-25: built in, not a separate functi
 function's only purpose is replay, and a separate function would leave the familiar one silently
 wrong in a rare, hard-to-test case).
 
-- Find the **last** `fallback` block. None, or at index 0 → return the list unchanged (every
-  non-streaming response; F9). This invariant is what keeps `Claudio.Agent` and all existing
-  callers byte-identical.
+- Find the **last** `fallback` block. None, or at index 0 → return the list unchanged (the
+  normal non-streaming shape; F9). This invariant is what keeps `Claudio.Agent` and existing
+  callers byte-identical. Non-map entries in `content` are passed through, never crash the
+  filter.
 - Blocks at or after the last `fallback`: keep.
 - Blocks before it:
   - `fallback`, `text` → keep.
@@ -105,7 +122,13 @@ wrong in a rare, hard-to-test case).
 No new stream code: the no-delta `fallback` block goes through `build_final_message/1`'s generic
 `content_block_start`/`_stop` handling. A test pins it: SSE events → `build_final_message/1` →
 `Response.from_map/1` → a typed `:fallback` block at the right index, `model` still names the
-requested (declining) model, and `served_by/1` names the serving model from `to.model`.
+requested (declining) model, `served_by/1` names the serving model from `to.model`, and
+`usage.iterations` sent in the final `message_delta` survives into `Response.usage`.
+
+**Known limitation (pre-existing, not S12b):** `build_final_message/1` keeps `input_json_delta`
+text as `"partial_json"` and never decodes it into `"input"`, so a streamed `server_tool_use` /
+`mcp_tool_use` that the filter keeps is replayed with `"input" => %{}`. Whether the API accepts
+that is unverified. Tracked as a follow-up, not fixed here.
 
 ## Testing
 
@@ -117,15 +140,21 @@ requested (declining) model, and `served_by/1` names the serving model from `to.
   `trigger`); `raw` round-trip; `fallbacks/1` with zero, one, two blocks; `served_by/1`;
   `usage.iterations`; echo filter — no fallback (unchanged), fallback first (unchanged), mid-output
   with every block kind in F8 plus `mcp_tool_use` paired/unpaired and an unknown block type, two
-  fallback blocks (rules apply only before the last).
+  fallback blocks (rules apply only before the last); non-map entries; `get_tool_uses/1` with
+  a `tool_use` before and after the last fallback.
+- **Unit (`tools_test.exs`):** `extract_tool_uses/1` on a raw string-keyed map and on a Response
+  skips `tool_use` before the last fallback.
+- **Unit (`request_test.exs`):** `add_message/3` with content holding a `fallback` block declares
+  the beta; without one, no beta.
 - **Unit (`stream_test.exs`):** mid-output fallback stream → final message → Response as in §4.
 - **Integration (`test/integration/fallbacks_integration_test.exs`):**
   1. `set_fallbacks(:default)` request → 200, `usage.iterations` present (repeats P7).
   2. A Response built with `Response.from_map/1` from a synthetic mid-output-fallback content
      (unpaired `tool_use`, unpaired `server_tool_use`, unpaired `mcp_tool_use`, `text`,
      `fallback`, `text`) → replay `to_assistant_content/1` as the assistant turn → 200. Control:
-     replaying the unfiltered raw blocks → 400. Needs betas `server-side-fallback-2026-07-01` and
-     `mcp-client-2025-11-20` (F10). This validates the echo filter, including the `mcp_tool_use`
+     replaying the unfiltered raw blocks → 400 per unpaired type, message containing
+     `tool_result` (F10's quoted errors). The replay request does **not** call `set_fallbacks/2`:
+     the fallback beta comes from `add_message/3` (F15), `mcp-client-2025-11-20` from `add_beta/2`. This validates the echo filter, including the `mcp_tool_use`
      inference, against the live API without needing a real refusal (F13).
 
 ## Out of scope
