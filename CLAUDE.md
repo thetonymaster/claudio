@@ -132,7 +132,7 @@ The `Claudio.Messages.Response` module parses API responses into structured data
 - **`usage.output_tokens_details`** — raw map (e.g. `thinking_tokens`), `nil` when absent; `:thinking_tokens` also appears in usage telemetry
 - **`usage` keeps every field** — documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`, `iterations`); unknown fields keep the key they arrived with
 - **`diagnostics`** — raw cache-diagnostics map (`cache_miss_reason`), `nil` unless requested via `enable_cache_diagnostics/2`
-- **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`; with fallbacks also `recommended_model`, `fallback_credit_token`), `nil` unless `stop_reason: :refusal`
+- **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`; with fallbacks also `recommended_model`, `fallback_credit_token`, `fallback_has_prefill_claim`), `nil` unless `stop_reason: :refusal`
 - **`fallback` blocks** — `%{type: :fallback, from:, to:, trigger:, raw:}`; `fallbacks/1` lists them, `served_by/1` names the serving model (last block's `to.model`, else `model` — a streamed mid-output fallback keeps the requested model in `model`); `usage.iterations` records each attempt
 - **`to_assistant_content/1`** applies the fallback continuation rules (drops / pairing before the last `fallback` block); a no-op without a mid-output fallback. `get_tool_uses/1` (and `Tools.extract_tool_uses/1`) skip `tool_use` before the last `fallback`; `add_message/3` declares the fallback beta when replaying a `fallback` block
 - Handles both string and atom keys from API responses

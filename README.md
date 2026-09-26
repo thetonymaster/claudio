@@ -140,7 +140,7 @@ end)
 Let Claude use your functions:
 
 ```elixir
-alias Claudio.{Tools, Messages.Request}
+alias Claudio.{Tools, Messages.Request, Messages.Response}
 
 # Define a weather tool
 weather_tool = Tools.define_tool(
@@ -167,24 +167,21 @@ request =
 
 # Check if Claude wants to use the tool
 if Tools.has_tool_uses?(response) do
-  tool_uses = Tools.extract_tool_uses(response)
+  # Execute your function for every tool call, collecting the results
+  tool_results =
+    for tool_use <- Tools.extract_tool_uses(response) do
+      result = get_weather(tool_use.input["location"])
+      Tools.create_tool_result(tool_use.id, Jason.encode!(result))
+    end
 
-  Enum.each(tool_uses, fn tool_use ->
-    # Execute your function
-    result = get_weather(tool_use.input["location"])
+  # Replay Claude's turn, then send all results back in one user turn
+  followup =
+    request
+    |> Request.add_message(:assistant, Response.to_assistant_content(response))
+    |> Request.add_message(:user, tool_results)
 
-    # Send result back to Claude
-    tool_result = Tools.create_tool_result(tool_use.id, Jason.encode!(result))
-
-    request =
-      Request.new("claude-opus-5-5")
-      |> Request.add_messages(response.content)
-      |> Request.add_message(:user, [tool_result])
-      |> Request.set_max_tokens(500)
-
-    {:ok, final_response} = Claudio.Messages.create(client, request)
-    IO.puts(Response.get_text(final_response))
-  end)
+  {:ok, final_response} = Claudio.Messages.create(client, followup)
+  IO.puts(Response.get_text(final_response))
 end
 
 defp get_weather(location) do

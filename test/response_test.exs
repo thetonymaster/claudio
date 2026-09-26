@@ -1128,6 +1128,26 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.to_assistant_content(content(blocks)) == blocks
     end
 
+    test "atom-keyed blocks before the fallback are dropped by the same rules" do
+      fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+
+      response =
+        Response.from_map(%{
+          content: [
+            %{type: :connector_text, text: "atom-valued type"},
+            %{type: "server_tool_use", id: "srv_unpaired", name: "web_fetch", input: %{}},
+            %{type: "thinking", thinking: "t", signature: "s"},
+            %{type: "text", text: "p"},
+            fallback
+          ]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "text", "text" => "p"},
+               fallback
+             ]
+    end
+
     test "atom-keyed input follows the same rules" do
       fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
       connector = %{type: "connector_text", text: "narration"}

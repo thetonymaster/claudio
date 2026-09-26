@@ -33,7 +33,7 @@ defmodule Claudio.Tools do
       |> Request.add_tool(weather_tool)
       |> Request.set_tool_choice(:auto)
 
-      {:ok, response} = Claudio.Messages.create_message(client, request)
+      {:ok, response} = Claudio.Messages.create(client, request)
 
       # Extract tool uses
       tool_uses = Claudio.Tools.extract_tool_uses(response)
@@ -47,7 +47,7 @@ defmodule Claudio.Tools do
       # Continue conversation with tool results
       request2 = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "What's the weather in San Francisco?")
-      |> Request.add_message(:assistant, response.content)
+      |> Request.add_message(:assistant, Claudio.Messages.Response.to_assistant_content(response))
       |> Request.add_message(:user, results)
   """
 
@@ -223,7 +223,7 @@ defmodule Claudio.Tools do
 
       request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Initial question")
-      |> Request.add_message(:assistant, assistant_response.content)
+      |> Request.add_message(:assistant, Claudio.Messages.Response.to_assistant_content(assistant_response))
       |> Request.add_message(:user, message)
   """
   @spec create_tool_result_message(list(tool_result())) :: list(tool_result())
