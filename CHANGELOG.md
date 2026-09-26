@@ -155,6 +155,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names (see Fixed).
 - The Messages streaming path requires a complete stream: a block that never closes is an error
   (see Fixed).
+- Unknown-option errors name the function: `Request.add_web_search_tool/2: unknown option
+  :max_use; allowed: :version, ...` (was `Keyword.validate!/2`'s "unknown keys [...]"). A
+  non-keyword `opts` is an `ArgumentError` naming the function instead of a `FunctionClauseError`
+  from `Keyword`. Still `ArgumentError`; code matching the old message text must update.
 
 ### Added
 
