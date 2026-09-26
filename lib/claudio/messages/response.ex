@@ -87,12 +87,21 @@ defmodule Claudio.Messages.Response do
           content: term()
         }
 
+  @typedoc """
+  Token usage. Documented fields are atom keys (`nil` when the API did not send
+  them); any other field the API returns is kept under the key it arrived with.
+  """
   @type usage :: %{
+          optional(atom() | String.t()) => term(),
           input_tokens: integer(),
           output_tokens: integer(),
           cache_creation_input_tokens: integer() | nil,
           cache_read_input_tokens: integer() | nil,
-          output_tokens_details: map() | nil
+          output_tokens_details: map() | nil,
+          cache_creation: map() | nil,
+          service_tier: String.t() | nil,
+          inference_geo: String.t() | nil,
+          speed: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -450,35 +459,47 @@ defmodule Claudio.Messages.Response do
   defp parse_stop_reason(nil), do: nil
   defp parse_stop_reason(other), do: other
 
-  defp parse_usage(%{input_tokens: input, output_tokens: output} = usage) do
-    %{
-      input_tokens: input,
-      output_tokens: output,
-      cache_creation_input_tokens: usage[:cache_creation_input_tokens],
-      cache_read_input_tokens: usage[:cache_read_input_tokens],
-      output_tokens_details: usage[:output_tokens_details]
-    }
-  end
+  # Documented usage fields become atom keys; every other field keeps the key it
+  # arrived with, so fields Claudio does not know about yet are not dropped.
+  @usage_keys [
+    :input_tokens,
+    :output_tokens,
+    :cache_creation_input_tokens,
+    :cache_read_input_tokens,
+    :output_tokens_details,
+    :cache_creation,
+    :service_tier,
+    :inference_geo,
+    :speed
+  ]
+  @usage_string_keys Enum.map(@usage_keys, &Atom.to_string/1)
 
-  defp parse_usage(%{"input_tokens" => input, "output_tokens" => output} = usage) do
-    %{
-      input_tokens: input,
-      output_tokens: output,
-      cache_creation_input_tokens: usage["cache_creation_input_tokens"],
-      cache_read_input_tokens: usage["cache_read_input_tokens"],
-      output_tokens_details: usage["output_tokens_details"]
-    }
-  end
+  defp parse_usage(%{input_tokens: _, output_tokens: _} = usage), do: normalize_usage(usage)
+
+  defp parse_usage(%{"input_tokens" => _, "output_tokens" => _} = usage),
+    do: normalize_usage(usage)
 
   defp parse_usage(nil) do
-    %{
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_input_tokens: nil,
-      cache_read_input_tokens: nil,
-      output_tokens_details: nil
-    }
+    @usage_keys
+    |> Map.new(&{&1, nil})
+    |> Map.merge(%{input_tokens: 0, output_tokens: 0})
   end
 
   defp parse_usage(other), do: other
+
+  defp normalize_usage(usage) do
+    known = Map.new(@usage_keys, &{&1, usage_value(usage, &1)})
+
+    usage
+    |> Map.drop(@usage_keys ++ @usage_string_keys)
+    |> Map.merge(known)
+  end
+
+  # Atom key wins when a field is present under both key styles.
+  defp usage_value(usage, key) do
+    case Map.fetch(usage, key) do
+      {:ok, value} -> value
+      :error -> Map.get(usage, Atom.to_string(key))
+    end
+  end
 end
