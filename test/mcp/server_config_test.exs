@@ -43,6 +43,28 @@ defmodule Claudio.MCP.ServerConfigTest do
              }
     end
 
+    test "a second call replaces the allowlist instead of adding to it" do
+      config =
+        ServerConfig.new("s", "https://x")
+        |> ServerConfig.allow_tools(["read"])
+        |> ServerConfig.allow_tools(["write"])
+
+      assert config.configs == %{"write" => %{"enabled" => true}}
+    end
+
+    test "replacing the allowlist keeps other per-tool settings but not the old enable" do
+      config =
+        ServerConfig.new("s", "https://x")
+        |> ServerConfig.configure_tool("read", %{"defer_loading" => true})
+        |> ServerConfig.allow_tools(["read"])
+        |> ServerConfig.allow_tools(["write"])
+
+      assert config.configs == %{
+               "read" => %{"defer_loading" => true},
+               "write" => %{"enabled" => true}
+             }
+    end
+
     test "empty allowlist disables everything and emits no configs key" do
       toolset =
         ServerConfig.new("s", "https://mcp.example.com")

@@ -63,7 +63,8 @@ defmodule Claudio.MCP.ServerConfig do
 
   @doc """
   Allowlists tools by **exact name**: disables all tools by default and enables
-  each named one.
+  each named one. A later call replaces the allowlist (tools only an earlier call
+  enabled are no longer enabled); other per-tool settings are kept.
 
   Raises `ArgumentError` on a name containing `*` or `?`. The connector matches
   `configs` keys literally and only logs a server-side warning for unknown
@@ -75,8 +76,33 @@ defmodule Claudio.MCP.ServerConfig do
   def allow_tools(%__MODULE__{} = config, names) when is_list(names) do
     Enum.each(names, &validate_exact_name!/1)
 
-    config = set_default_config(config, %{"enabled" => false})
+    config =
+      config
+      |> set_default_config(%{"enabled" => false})
+      |> drop_previous_enables(names)
+
     Enum.reduce(names, config, &configure_tool(&2, &1, %{"enabled" => true}))
+  end
+
+  # A new allowlist replaces the old one: tools enabled by an earlier call but
+  # absent from `names` lose their `"enabled" => true` (per-tool settings take
+  # precedence over default_config, so leaving it would keep them on). Other
+  # per-tool settings survive; an override left empty is removed.
+  defp drop_previous_enables(%__MODULE__{configs: nil} = config, _names), do: config
+
+  defp drop_previous_enables(%__MODULE__{configs: configs} = config, names) do
+    configs =
+      for {name, settings} <- configs, reduce: %{} do
+        acc ->
+          settings =
+            if name not in names and settings["enabled"] == true,
+              do: Map.delete(settings, "enabled"),
+              else: settings
+
+          if settings == %{}, do: acc, else: Map.put(acc, name, settings)
+      end
+
+    %{config | configs: configs}
   end
 
   @doc """
