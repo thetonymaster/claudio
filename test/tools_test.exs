@@ -25,6 +25,36 @@ defmodule Claudio.ToolsTest do
   end
 
   describe "extract_tool_uses/1" do
+    test "exposes toolset_name and caller (nil when absent), for raw maps and Responses" do
+      raw = %{
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "toolu_1",
+            "name" => "left_click",
+            "input" => %{"coordinate" => [1, 2]},
+            "toolset_name" => "computer",
+            "caller" => %{"type" => "direct"}
+          },
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "x", "input" => %{}}
+        ]
+      }
+
+      expected = [
+        %{
+          id: "toolu_1",
+          name: "left_click",
+          input: %{"coordinate" => [1, 2]},
+          toolset_name: "computer",
+          caller: %{"type" => "direct"}
+        },
+        %{id: "toolu_2", name: "x", input: %{}, toolset_name: nil, caller: nil}
+      ]
+
+      assert Tools.extract_tool_uses(raw) == expected
+      assert Tools.extract_tool_uses(Claudio.Messages.Response.from_map(raw)) == expected
+    end
+
     test "skips tool_use blocks before the last fallback block (raw maps and Response)" do
       raw = %{
         "content" => [
@@ -115,6 +145,21 @@ defmodule Claudio.ToolsTest do
   end
 
   describe "create_tool_result/3" do
+    test "create_tool_result/4 echoes toolset_name" do
+      result = Tools.create_tool_result("toolu_1", "OK", false, toolset_name: "computer")
+
+      assert result == %{
+               "type" => "tool_result",
+               "tool_use_id" => "toolu_1",
+               "content" => "OK",
+               "toolset_name" => "computer"
+             }
+    end
+
+    test "create_tool_result/4 rejects unknown options" do
+      assert_raise ArgumentError, fn -> Tools.create_tool_result("t", "x", false, foo: 1) end
+    end
+
     test "creates tool result with string content" do
       result = Tools.create_tool_result("toolu_123", "The weather is sunny")
 
@@ -144,6 +189,33 @@ defmodule Claudio.ToolsTest do
       assert is_binary(result["content"])
       assert result["content"] =~ "temp"
       assert result["content"] =~ "sunny"
+    end
+  end
+
+  describe "halt_result/1" do
+    test "exact halt text per toolset, is_error, toolset_name echoed" do
+      assert Tools.halt_result(%{id: "toolu_1", toolset_name: "computer"}) == %{
+               "type" => "tool_result",
+               "tool_use_id" => "toolu_1",
+               "content" => "Not executed: an earlier computer action in this turn failed.",
+               "is_error" => true,
+               "toolset_name" => "computer"
+             }
+
+      assert Tools.halt_result(%{id: "toolu_2", toolset_name: "browser"})["content"] ==
+               "Not executed: an earlier action in this turn failed."
+    end
+
+    test "a plain tool use, or a map without toolset_name, raises ArgumentError" do
+      for bad <- [%{id: "toolu_1", toolset_name: nil}, %{id: "toolu_1"}, "x"] do
+        assert_raise ArgumentError, ~r/halt_result\/1/, fn -> Tools.halt_result(bad) end
+      end
+    end
+
+    test "halt_text/1: text for known toolsets, nil otherwise" do
+      assert Tools.halt_text("browser") == "Not executed: an earlier action in this turn failed."
+      assert Tools.halt_text("terminal") == nil
+      assert Tools.halt_text(nil) == nil
     end
   end
 

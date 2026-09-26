@@ -60,7 +60,9 @@ defmodule Claudio.Tools do
   @type tool_use :: %{
           id: String.t(),
           name: String.t(),
-          input: map()
+          input: map(),
+          toolset_name: String.t() | nil,
+          caller: map() | nil
         }
 
   @type tool_result :: %{
@@ -151,6 +153,8 @@ defmodule Claudio.Tools do
   - `tool_use_id` - The ID from the tool_use block
   - `result` - The result of executing the tool (string or structured content)
   - `is_error` - (optional) Whether this represents an error result
+  - `opts` — `toolset_name:` echoes the `tool_use`'s `toolset_name` (required for results
+    answering a client-toolset member call; the API rejects them without it).
 
   ## Example
 
@@ -172,9 +176,12 @@ defmodule Claudio.Tools do
         true
       )
   """
-  @spec create_tool_result(String.t(), String.t() | list(), boolean()) :: tool_result()
-  def create_tool_result(tool_use_id, result, is_error \\ false)
-      when is_binary(tool_use_id) do
+  @spec create_tool_result(String.t(), String.t() | list() | map(), boolean(), keyword()) ::
+          tool_result()
+  def create_tool_result(tool_use_id, result, is_error \\ false, opts \\ [])
+      when is_binary(tool_use_id) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:toolset_name])
+
     base = %{
       "type" => "tool_result",
       "tool_use_id" => tool_use_id
@@ -191,6 +198,40 @@ defmodule Claudio.Tools do
     base
     |> Map.put("content", content)
     |> maybe_put_error(is_error)
+    |> maybe_put_toolset(Keyword.get(opts, :toolset_name))
+  end
+
+  # Exact texts from the computer-use and browser-use tool docs ("Batch actions").
+  @halt_texts %{
+    "computer" => "Not executed: an earlier computer action in this turn failed.",
+    "browser" => "Not executed: an earlier action in this turn failed."
+  }
+
+  @doc """
+  The result for a client-toolset action skipped because an earlier action in the same
+  turn failed: `is_error: true`, the exact text the toolset contract prescribes, and
+  `toolset_name` echoed. Takes a tool use from `extract_tool_uses/1`.
+  """
+  @spec halt_result(tool_use()) :: tool_result()
+  def halt_result(%{id: id, toolset_name: toolset_name} = tool_use) do
+    case halt_text(toolset_name) do
+      nil -> raise_halt_argument(tool_use)
+      text -> create_tool_result(id, text, true, toolset_name: toolset_name)
+    end
+  end
+
+  def halt_result(other), do: raise_halt_argument(other)
+
+  @doc """
+  The halt text a client toolset prescribes for actions skipped after a failure
+  (`"computer"`, `"browser"`), or `nil` for any other toolset name.
+  """
+  @spec halt_text(String.t() | nil) :: String.t() | nil
+  def halt_text(toolset_name), do: Map.get(@halt_texts, toolset_name)
+
+  defp raise_halt_argument(value) do
+    raise ArgumentError,
+          "Tools.halt_result/1 needs a computer or browser toolset tool use; got #{inspect(value)}"
   end
 
   @doc """
@@ -238,19 +279,21 @@ defmodule Claudio.Tools do
   defp is_tool_use?(%{type: :tool_use}), do: true
   defp is_tool_use?(_), do: false
 
-  defp normalize_tool_use(%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}) do
-    %{id: id, name: name, input: input}
+  defp normalize_tool_use(
+         %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} = b
+       ) do
+    %{id: id, name: name, input: input, toolset_name: b["toolset_name"], caller: b["caller"]}
   end
 
-  defp normalize_tool_use(%{type: "tool_use", id: id, name: name, input: input}) do
-    %{id: id, name: name, input: input}
-  end
-
-  defp normalize_tool_use(%{type: :tool_use, id: id, name: name, input: input}) do
-    %{id: id, name: name, input: input}
+  defp normalize_tool_use(%{type: type, id: id, name: name, input: input} = b)
+       when type in ["tool_use", :tool_use] do
+    %{id: id, name: name, input: input, toolset_name: b[:toolset_name], caller: b[:caller]}
   end
 
   defp normalize_tool_use(tool_use), do: tool_use
+
+  defp maybe_put_toolset(map, nil), do: map
+  defp maybe_put_toolset(map, toolset_name), do: Map.put(map, "toolset_name", toolset_name)
 
   defp maybe_put_error(map, false), do: map
 
