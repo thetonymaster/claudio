@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Request.set_context_management/2` also declares `compact-2026-01-12` when its edits hold a
   `compact_20260112` edit; with only `context-management-2025-06-27` the API rejects it. Its
   doc example (`"strategy" => "auto"`) was not a real API shape and is replaced.
+- `Response.to_assistant_content/1` re-emits `toolset_name` and `caller` on `tool_use` (and
+  `caller` on `server_tool_use` / `web_search_tool_result`); replaying a client-toolset call
+  without `toolset_name` was rejected.
 
 ### Changed
 
@@ -65,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Response.stop_reason` is `:compaction` (was the string `"compaction"`).
 - `Request.add_message/3` sends a typed content block that carries `raw:` (e.g. from
   `Response.compaction_block/1`) as its original API map instead of the typed map.
+- Parsed `tool_use` blocks gain `caller` and `toolset_name`, `server_tool_use` gains `caller`,
+  `web_search_tool_result` gains `caller` and `raw` (`nil` when absent). Code matching the
+  whole map with `==` must add them.
+- `Claudio.Agent` resumes `pause_turn` (counts toward `:max_turns`) instead of returning it,
+  carries the response `container` to the next request, and dispatches client-toolset calls
+  to the handler keyed by `toolset_name`. A handler of the wrong arity is now an error result
+  instead of a crash.
 
 ### Added
 
@@ -104,6 +114,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typed `:compaction` content blocks (original under `raw:`, replayed verbatim),
   `Response.compaction_block/1`, `Response.context_management` (raw `applied_edits`; also
   read from the streamed `message_delta`).
+- **Tool extensions** (`Claudio.Messages.Request`): `add_tool/3` (`defer_loading:`,
+  `allowed_callers:` — `:direct` / `:code_execution` → `"code_execution_20260120"`);
+  `add_tool_search_tool/2` (`:regex` / `:bm25`, GA); `add_advisor_tool/3` (declares
+  `advisor-tool-2026-03-01`; `add_message/3` declares it for replayed advisor blocks);
+  `add_computer_toolset/2` / `add_browser_toolset/2` (`computer_toolset_20260801` /
+  `browser_toolset_20260801`, GA); `add_computer_tool/4` `version: :"20251124"`.
+- Shallowly typed server-result blocks (`web_fetch_tool_result`, `code_execution_tool_result`,
+  `bash_code_execution_tool_result`, `text_editor_code_execution_tool_result`,
+  `tool_search_tool_result`, `advisor_tool_result`, `container_upload`; `raw:` replayed
+  verbatim), `Response.get_server_tool_results/1,2`, `Response.container` (also from the
+  stream).
+- `Tools.extract_tool_uses/1` returns `toolset_name` and `caller`; `Tools.create_tool_result/4`
+  (`toolset_name:`); `Tools.halt_result/1`.
 
 ### Docs
 

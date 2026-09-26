@@ -103,6 +103,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
   - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
   - `add_memory_tool/1` — `memory_20250818`; GA, client-side
   - `add_computer_tool/4` — `computer_20250124`; **auto-declares the `computer-use-2025-01-24` beta** via `add_beta/2`
+- **Tool extensions** (`add_tool/3` — `defer_loading:`, `allowed_callers:` (`:code_execution` → `code_execution_20260120`), GA; `add_tool_search_tool/2` — `:regex` / `:bm25`, GA; `add_advisor_tool/3` — declares `advisor-tool-2026-03-01`; `add_computer_toolset/2` / `add_browser_toolset/2` — GA client toolsets, results must echo `toolset_name`; `add_computer_tool/4` `version: :"20251124"` declares `computer-use-2025-11-24`. Opus 5.5 accepts only the computer toolset.)
 - Converts to map via `to_map/1` for API submission
 
 Example:
@@ -117,7 +118,7 @@ Request.new("claude-opus-4-8")
 
 ### Response Handling (lib/claudio/messages/response.ex)
 The `Claudio.Messages.Response` module parses API responses into structured data:
-- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result, fallback, compaction)
+- Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result, fallback, compaction, web_fetch_tool_result, code_execution_tool_result, bash_code_execution_tool_result, text_editor_code_execution_tool_result, tool_search_tool_result, advisor_tool_result, container_upload)
 - Converts stop_reason strings to atoms (:end_turn, :max_tokens, :tool_use, etc.)
 - **Tracks cache metrics** (cache_creation_input_tokens, cache_read_input_tokens)
 - **Preserves citations** on `text` blocks (the raw citation maps — `char_location`, `page_location`, `content_block_location`, `search_result_location`, `web_search_result_location` — kept verbatim for reading; not replayed by `to_assistant_content/1`)
@@ -137,6 +138,7 @@ The `Claudio.Messages.Response` module parses API responses into structured data
 - **`fallback` blocks** — `%{type: :fallback, from:, to:, trigger:, raw:}`; `fallbacks/1` lists them, `served_by/1` names the serving model (last block's `to.model`, else `model` — a streamed mid-output fallback keeps the requested model in `model`); `usage.iterations` records each attempt
 - **`to_assistant_content/1`** applies the fallback continuation rules (drops / pairing before the last `fallback` block); a no-op without a mid-output fallback. `get_tool_uses/1` (and `Tools.extract_tool_uses/1`) skip `tool_use` before the last `fallback`; `add_message/3` declares the fallback beta when replaying a `fallback` block
 - **`compaction` blocks** — `%{type: :compaction, content:, raw:}` (raw replayed byte-exact, keeps the on-demand `signature`); `compaction_block/1`; `stop_reason: :compaction`; `context_management` — raw `applied_edits` map, `nil` unless edits were configured; `add_message/3` declares the compaction replay beta (signed → `compact-2026-09-04`, unsigned → `compact-2026-01-12`)
+- **Tool-use round trip** — `tool_use` keeps `caller` / `toolset_name`, `server_tool_use` keeps `caller`, and `to_assistant_content/1` re-emits them; server-result blocks are typed shallowly (`%{type:, tool_use_id:, content: <raw>, caller:, raw:}`, replayed from `raw`); `get_server_tool_results/1,2`; `container` (raw `%{"id", "expires_at"}`)
 - Handles both string and atom keys from API responses
 
 ### Streaming (lib/claudio/messages/stream.ex)
@@ -158,7 +160,8 @@ Delta types: text_delta, input_json_delta, thinking_delta, signature_delta, cita
 The `Claudio.Tools` module provides utilities for tool use:
 - `define_tool/3`: Creates tool definitions with JSON schemas
 - `extract_tool_uses/1`: Extracts tool use requests from responses
-- `create_tool_result/3`: Creates tool result messages
+- `create_tool_result/4`: Creates tool result messages (`toolset_name:` for client-toolset calls)
+- `halt_result/1` / `halt_text/1`: The documented result for toolset actions skipped after a failure
 - `has_tool_uses?/1`: Checks if response contains tool uses
 
 Tool workflow:
@@ -288,7 +291,7 @@ lib/
 └── claudio/
     ├── a2a/                   # A2A protocol (agent_card, artifact, client, message, part, task, util, transport/{http,grpc})
     ├── admin.ex               # Admin API (organizations/*)
-    ├── agent.ex               # Stateless tool-calling loop (Claudio.Agent)
+    ├── agent.ex               # Stateless tool-calling loop (Claudio.Agent): toolset pair dispatch, container carry, pause_turn resume
     ├── api_error.ex           # Error handling
     ├── batches.ex             # Batches API
     ├── client.ex              # HTTP client setup

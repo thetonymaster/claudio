@@ -49,6 +49,12 @@ defmodule Claudio.Tools do
       |> Request.add_message(:user, "What's the weather in San Francisco?")
       |> Request.add_message(:assistant, Claudio.Messages.Response.to_assistant_content(response))
       |> Request.add_message(:user, results)
+
+  ## Client toolsets
+
+  A call from `Request.add_computer_toolset/2` has a `toolset_name`; answer it with
+  `create_tool_result(tool_use.id, result, false, toolset_name: tool_use.toolset_name)`.
+  If an action in a batch fails, answer the rest with `halt_result/1`.
   """
 
   @type tool_definition :: %{
