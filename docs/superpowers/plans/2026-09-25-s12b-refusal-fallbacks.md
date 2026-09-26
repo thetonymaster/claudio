@@ -1212,7 +1212,7 @@ git commit -m "feat: tool readers skip superseded tool calls; add_message/3 decl
 
 **Files:**
 - Create: `test/integration/fallbacks_integration_test.exs`
-- Modify: `CHANGELOG.md` (`## [Unreleased] — targets 0.7.0`), `CLAUDE.md` (Request builder after line ~95; Response bullets ~133-134)
+- Modify: `CHANGELOG.md` (`## [Unreleased] — targets 0.7.0`), `CLAUDE.md` (Request builder, after the "5.x request surface" bullet; Response bullets — locate every CLAUDE.md edit by its quoted text, not by line number)
 
 **Interfaces:**
 - Consumes: `Request.set_fallbacks/2` (Task 1), `Response.served_by/1` (Task 2), `usage.iterations` (Task 3), filtered `Response.to_assistant_content/1` (Task 4), `add_message/3` declaring the replay beta (Task 5); existing `Request.add_beta/2`, `Claudio.APIError` (`status_code`, `message`).
@@ -1363,13 +1363,13 @@ In `### Added`:
 
 - [ ] **Step 4: CLAUDE.md**
 
-After the "5.x request surface" bullet (~95):
+After the "5.x request surface" bullet:
 
 ```markdown
 - **Refusal fallbacks** (`set_fallbacks/2` — `:default` or a list of model strings / override maps; declares `server-side-fallback-2026-07-01`. Entry cap, distinctness and `allowed_fallback_models` are left to the API; not sent by `count_tokens`; unsupported in Batches.)
 ```
 
-Replace the `stop_details` bullet (~134) and add two after it:
+Replace the `stop_details` bullet and add two after it:
 
 ```markdown
 - **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`; with fallbacks also `recommended_model`, `fallback_credit_token`), `nil` unless `stop_reason: :refusal`
@@ -1378,14 +1378,14 @@ Replace the `stop_details` bullet (~134) and add two after it:
 ```
 
 Also update three existing lines:
-- `CLAUDE.md:121` "Parses content blocks (…)": add `fallback` to the list.
-- `CLAUDE.md:132` "documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`)": add `iterations`.
-- `CLAUDE.md:277` "Content blocks typed by their :type field (…)": add `:fallback`.
+- "Parses content blocks (…)": add `fallback` to the list.
+- "documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`)": add `iterations`.
+- "Content blocks typed by their :type field (…)": add `:fallback`.
 
 - [ ] **Step 5: Final gates and commit**
 
-Run: `mix format --check-formatted && mix compile --warnings-as-errors && mix test 2>&1 | tail -3`
-Expected: format and compile clean; `mix test` → `0 failures` (integration excluded).
+Run: `mix format && mix format --check-formatted && mix compile --warnings-as-errors && mix test 2>&1 | tail -3`
+Expected: format and compile clean (the integration file's code block is not pre-formatted); `mix test` → `0 failures` (integration excluded).
 
 ```bash
 git add test/integration/fallbacks_integration_test.exs
