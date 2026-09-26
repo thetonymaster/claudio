@@ -92,6 +92,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
 - **Thinking & effort** (`enable_adaptive_thinking/2` with `display:` — `:updates` declares `thinking-display-updates-2026-08-18`; `disable_thinking/1`; `set_effort/2` → `output_config.effort`, GA; `set_task_budget/3` → `output_config.task_budget`, declares `task-budgets-2026-03-13`. Output-config helpers merge; `set_output_config/2` replaces. No per-model validation — the API's 400 is authoritative.)
+- **5.x request surface** (`add_system_message/3` — mid-conversation `role: "system"` messages, GA; `clear_at:` declares `mid-conversation-system-clear-at-2026-08-21`, `effort:` declares `mid-conversation-output-config-2026-07-01`. `set_speed/2` always declares `fast-mode-2026-02-01`; `set_inference_geo/2` and `enable_cache_diagnostics/2` are GA. Placement rules are left to the API.)
 - **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
 - **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
   - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
@@ -128,6 +129,8 @@ The `Claudio.Messages.Response` module parses API responses into structured data
   - `get_thinking/1`: Non-empty thinking texts, in order (a list — one per `display: :updates` progress note)
   - `thinking_interrupted?/1`: True for the API's interrupted-update placeholder block
 - **`usage.output_tokens_details`** — raw map (e.g. `thinking_tokens`), `nil` when absent; `:thinking_tokens` also appears in usage telemetry
+- **`usage` keeps every field** — documented fields are atom keys (incl. `cache_creation`, `service_tier`, `inference_geo`, `speed`); unknown fields keep the key they arrived with
+- **`diagnostics`** — raw cache-diagnostics map (`cache_miss_reason`), `nil` unless requested via `enable_cache_diagnostics/2`
 - **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`), `nil` unless `stop_reason: :refusal`
 - Handles both string and atom keys from API responses
 
