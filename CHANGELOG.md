@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Request.add_message/3` declares `server-side-fallback-2026-07-01` when its content holds a
   `fallback` block; the API rejects a replayed `fallback` block without it.
 - `Response.stop_reason` is `:compaction` (was the string `"compaction"`).
+- `Request.add_message/3` sends a typed content block that carries `raw:` (e.g. from
+  `Response.compaction_block/1`) as its original API map instead of the typed map.
 
 ### Added
 

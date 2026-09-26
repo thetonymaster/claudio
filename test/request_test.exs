@@ -99,6 +99,22 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with typed blocks (S13 review)" do
+    test "a typed block carrying raw is sent as its original map" do
+      raw = %{"type" => "compaction", "content" => "s", "signature" => "sig"}
+
+      typed =
+        Claudio.Messages.Response.compaction_block(
+          Claudio.Messages.Response.from_map(%{"content" => [raw]})
+        )
+
+      request = Request.new("m") |> Request.add_message(:assistant, [typed])
+
+      assert request.messages == [%{"role" => "assistant", "content" => [raw]}]
+      assert Request.required_betas(request) == ["compact-2026-09-04"]
+    end
+  end
+
   describe "add_message/3 with advisor blocks (S14)" do
     test "an advisor result or advisor server_tool_use declares the advisor beta" do
       for block <- [
@@ -521,6 +537,10 @@ defmodule Claudio.Messages.RequestTest do
 
       assert_raise ArgumentError, fn -> Request.add_compaction(r, bogus: 1) end
 
+      assert_raise ArgumentError, ~r/add_compaction\/2 :pause_after_compaction/, fn ->
+        Request.add_compaction(r, pause_after_compaction: "yes")
+      end
+
       # false is not "absent": it must be rejected, not sent.
       assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
         Request.add_clear_tool_uses(r, keep: false)
@@ -640,6 +660,20 @@ defmodule Claudio.Messages.RequestTest do
       assert after_.thinking == %{"type" => "adaptive"}
       assert after_.max_tokens == 512
       assert Request.required_betas(after_) == ["x-2026-01-01", "compact-2026-09-04"]
+    end
+
+    test "a failed compaction (content: nil) raises instead of erasing the history" do
+      response =
+        Response.from_map(%{
+          "stop_reason" => "compaction",
+          "content" => [%{"type" => "compaction", "content" => nil}]
+        })
+
+      assert_raise ArgumentError, ~r/apply_compaction\/2 .*compaction failed/, fn ->
+        Request.new("m")
+        |> Request.add_message(:user, "important long history")
+        |> Request.apply_compaction(response)
+      end
     end
 
     test "a response without a compaction block raises" do

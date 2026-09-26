@@ -902,7 +902,7 @@ defmodule Claudio.Messages.Request do
         "trigger",
         map_opt(opts, :trigger, &count_map!("add_compaction/2", :trigger, "input_tokens", &1))
       )
-      |> maybe_put("pause_after_compaction", Keyword.get(opts, :pause_after_compaction))
+      |> maybe_put("pause_after_compaction", pause_after_compaction!(opts))
       |> maybe_put("instructions", opts[:instructions])
 
     request |> put_edit(edit, :last) |> add_beta(@compaction_beta)
@@ -948,7 +948,12 @@ defmodule Claudio.Messages.Request do
   `compact_20260112` edit), betas — is kept. The replay beta is declared by
   `add_message/3`. Add the next user turn after it — also after a
   `pause_after_compaction: true` reply, whose content is only the block (a
-  `[assistant: [block], user: …]` history is accepted, probe P8).
+  `[assistant: [block], user: …]` history is accepted, probe P8). A paused threshold
+  compaction summarized the user turn that triggered it too: re-add that turn after the
+  block if the next reply should still answer it.
+
+  Raises `ArgumentError` for a failed compaction (`content: nil`) — the current history
+  is still the only record of the conversation.
 
   Raises `ArgumentError` when the response has no `compaction` block.
   """
@@ -963,6 +968,16 @@ defmodule Claudio.Messages.Request do
                 "got stop_reason #{inspect(response.stop_reason)}"
 
       index ->
+        block = Enum.at(content, index)
+
+        # A failed compaction returns a block with content: nil — nothing was summarized,
+        # so replacing the history with it would silently lose the conversation.
+        if is_nil(Map.get(block, "content") || Map.get(block, :content)) do
+          raise ArgumentError,
+                "Request.apply_compaction/2 compaction failed (content: nil); nothing was " <>
+                  "summarized — keep the current history"
+        end
+
         %{request | messages: [], compaction: nil}
         |> add_message(:assistant, Enum.drop(content, index))
     end
@@ -974,6 +989,18 @@ defmodule Claudio.Messages.Request do
     |> Enum.reduce(nil, fn {block, index}, last ->
       if compaction_block?(block), do: index, else: last
     end)
+  end
+
+  defp pause_after_compaction!(opts) do
+    case Keyword.get(opts, :pause_after_compaction) do
+      value when is_boolean(value) or is_nil(value) ->
+        value
+
+      other ->
+        raise ArgumentError,
+              "Request.add_compaction/2 :pause_after_compaction must be a boolean; " <>
+                "got #{inspect(other)}"
+    end
   end
 
   # nil means "not given"; any other value (including false) is validated by `fun`.
@@ -1753,8 +1780,13 @@ defmodule Claudio.Messages.Request do
   defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
 
   defp normalize_content(content) when is_binary(content), do: content
-  defp normalize_content(content) when is_list(content), do: content
+  # A typed block from Response (e.g. `Response.compaction_block/1`) keeps the block as
+  # received under :raw; send that, not the typed map.
+  defp normalize_content(content) when is_list(content), do: Enum.map(content, &unwrap_typed/1)
   defp normalize_content(content), do: content
+
+  defp unwrap_typed(%{type: type, raw: raw}) when is_atom(type) and is_map(raw), do: raw
+  defp unwrap_typed(block), do: block
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
