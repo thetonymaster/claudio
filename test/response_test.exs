@@ -466,7 +466,8 @@ defmodule Claudio.Messages.ResponseTest do
                type: :server_tool_use,
                id: "srvtoolu_1",
                name: "web_search",
-               input: %{"query" => "elixir"}
+               input: %{"query" => "elixir"},
+               caller: nil
              }
     end
 
@@ -498,7 +499,9 @@ defmodule Claudio.Messages.ResponseTest do
       assert block == %{
                type: :web_search_tool_result,
                tool_use_id: "srvtoolu_1",
-               content: @web_results
+               content: @web_results,
+               caller: nil,
+               raw: hd(data["content"])
              }
     end
 
@@ -561,9 +564,8 @@ defmodule Claudio.Messages.ResponseTest do
     end
 
     test "tolerates raw/untyped blocks (e.g. code_execution_tool_result) without crashing" do
-      # Dynamic-filtering web_search returns code_execution_tool_result blocks
-      # Claudio does not type — they pass through as raw string-keyed maps with
-      # no atom :type key. Getters must not crash on them.
+      # Dynamic-filtering web_search returns code_execution_tool_result blocks, which
+      # are typed shallowly since S14; getters must still not crash on mixed content.
       data = %{
         "content" => [
           %{"type" => "server_tool_use", "id" => "s1", "name" => "web_search", "input" => %{}},
@@ -1273,6 +1275,178 @@ defmodule Claudio.Messages.ResponseTest do
         ])
 
       assert [%{id: "toolu_1"}, %{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+  end
+
+  describe "tool_use caller and toolset_name (S14)" do
+    @member %{
+      "type" => "tool_use",
+      "id" => "toolu_1",
+      "name" => "screenshot",
+      "input" => %{},
+      "toolset_name" => "computer",
+      "caller" => %{"type" => "direct"}
+    }
+
+    test "parsed and re-emitted by to_assistant_content/1 (a stripped toolset_name is a 400)" do
+      response = Response.from_map(%{"content" => [@member]})
+
+      assert [%{type: :tool_use, toolset_name: "computer", caller: %{"type" => "direct"}}] =
+               response.content
+
+      assert Response.to_assistant_content(response) == [@member]
+    end
+
+    test "absent: keys are nil and the replay is byte-identical to before" do
+      plain = %{"type" => "tool_use", "id" => "toolu_2", "name" => "x", "input" => %{"a" => 1}}
+      response = Response.from_map(%{"content" => [plain]})
+
+      assert [%{toolset_name: nil, caller: nil}] = response.content
+      assert Response.to_assistant_content(response) == [plain]
+    end
+
+    test "hand-built typed blocks without the new keys still replay (Review Focus 1)" do
+      response = %Response{
+        content: [
+          %{type: :tool_use, id: "toolu_3", name: "x", input: %{}},
+          %{type: :server_tool_use, id: "srv_1", name: "web_search", input: %{}},
+          %{type: :web_search_tool_result, tool_use_id: "srv_1", content: []}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "tool_use", "id" => "toolu_3", "name" => "x", "input" => %{}},
+               %{
+                 "type" => "server_tool_use",
+                 "id" => "srv_1",
+                 "name" => "web_search",
+                 "input" => %{}
+               },
+               %{"type" => "web_search_tool_result", "tool_use_id" => "srv_1", "content" => []}
+             ]
+    end
+
+    test "server_tool_use caller round-trips; atom-keyed tool_use reads toolset_name" do
+      srv = %{
+        "type" => "server_tool_use",
+        "id" => "srvtoolu_1",
+        "name" => "code_execution",
+        "input" => %{"code" => "1"},
+        "caller" => %{"type" => "direct"}
+      }
+
+      assert Response.to_assistant_content(Response.from_map(%{"content" => [srv]})) == [srv]
+
+      atom = %{
+        type: "tool_use",
+        id: "t",
+        name: "left_click",
+        input: %{},
+        toolset_name: "computer"
+      }
+
+      assert [%{toolset_name: "computer"}] = Response.from_map(%{content: [atom]}).content
+    end
+  end
+
+  describe "server-result blocks (S14)" do
+    @results [
+      {"web_fetch_tool_result", :web_fetch_tool_result},
+      {"code_execution_tool_result", :code_execution_tool_result},
+      {"bash_code_execution_tool_result", :bash_code_execution_tool_result},
+      {"text_editor_code_execution_tool_result", :text_editor_code_execution_tool_result},
+      {"tool_search_tool_result", :tool_search_tool_result},
+      {"advisor_tool_result", :advisor_tool_result}
+    ]
+
+    for {string, atom} <- @results do
+      @tag string: string, atom: atom
+      test "#{string} parses shallowly and replays raw", %{string: string, atom: atom} do
+        raw = %{
+          "type" => string,
+          "tool_use_id" => "srvtoolu_1",
+          "content" => %{"type" => "some_variant", "x" => 1},
+          "caller" => %{"type" => "direct"}
+        }
+
+        response = Response.from_map(%{"content" => [raw]})
+
+        assert [
+                 %{
+                   type: ^atom,
+                   tool_use_id: "srvtoolu_1",
+                   content: %{"type" => "some_variant", "x" => 1},
+                   caller: %{"type" => "direct"},
+                   raw: ^raw
+                 }
+               ] = response.content
+
+        assert Response.to_assistant_content(response) == [raw]
+      end
+    end
+
+    test "atom-keyed result block" do
+      raw = %{type: "tool_search_tool_result", tool_use_id: "s", content: %{}}
+
+      assert [%{type: :tool_search_tool_result, tool_use_id: "s", caller: nil, raw: ^raw}] =
+               Response.from_map(%{content: [raw]}).content
+    end
+
+    test "container_upload" do
+      raw = %{"type" => "container_upload", "file_id" => "file_1"}
+      response = Response.from_map(%{"content" => [raw]})
+
+      assert [%{type: :container_upload, file_id: "file_1", raw: ^raw}] = response.content
+      assert Response.to_assistant_content(response) == [raw]
+    end
+
+    test "web_search_tool_result caller now round-trips" do
+      raw = %{
+        "type" => "web_search_tool_result",
+        "tool_use_id" => "s",
+        "content" => [],
+        "caller" => %{"type" => "direct"}
+      }
+
+      assert Response.to_assistant_content(Response.from_map(%{"content" => [raw]})) == [raw]
+    end
+
+    test "get_server_tool_results/1,2" do
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{
+              "type" => "server_tool_use",
+              "id" => "a",
+              "name" => "code_execution",
+              "input" => %{}
+            },
+            %{"type" => "code_execution_tool_result", "tool_use_id" => "a", "content" => %{}},
+            %{"type" => "text", "text" => "x"},
+            %{"type" => "web_search_tool_result", "tool_use_id" => "b", "content" => []},
+            %{"type" => "container_upload", "file_id" => "f"}
+          ]
+        })
+
+      assert Enum.map(Response.get_server_tool_results(response), & &1.type) ==
+               [:code_execution_tool_result, :web_search_tool_result, :container_upload]
+
+      assert [%{tool_use_id: "b"}] =
+               Response.get_server_tool_results(response, :web_search_tool_result)
+
+      assert Response.get_server_tool_results(response, :advisor_tool_result) == []
+    end
+  end
+
+  describe "from_map/1 container (S14)" do
+    @container %{"id" => "container_1", "expires_at" => "2026-09-26T18:57:00Z"}
+
+    test "kept raw, string and atom keys; nil when absent" do
+      assert Response.from_map(%{"content" => [], "container" => @container}).container ==
+               @container
+
+      assert Response.from_map(%{content: [], container: @container}).container == @container
+      assert Response.from_map(%{"content" => []}).container == nil
     end
   end
 end

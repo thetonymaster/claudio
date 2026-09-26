@@ -53,6 +53,8 @@ defmodule Claudio.Messages.Response do
           | web_search_tool_result_block()
           | fallback_block()
           | compaction_block()
+          | server_tool_result_block()
+          | container_upload_block()
 
   @type text_block :: %{
           :type => :text,
@@ -75,7 +77,9 @@ defmodule Claudio.Messages.Response do
           type: :tool_use,
           id: String.t(),
           name: String.t(),
-          input: map()
+          input: map(),
+          caller: map() | nil,
+          toolset_name: String.t() | nil
         }
 
   @type tool_result_block :: %{
@@ -104,14 +108,35 @@ defmodule Claudio.Messages.Response do
           type: :server_tool_use,
           id: String.t(),
           name: String.t(),
-          input: map()
+          input: map(),
+          caller: map() | nil
         }
 
   @type web_search_tool_result_block :: %{
           type: :web_search_tool_result,
           tool_use_id: String.t(),
-          content: term()
+          content: term(),
+          caller: map() | nil,
+          raw: map()
         }
+
+  @typedoc """
+  A server-tool result other than web search (`web_fetch_tool_result`,
+  `code_execution_tool_result`, `bash_code_execution_tool_result`,
+  `text_editor_code_execution_tool_result`, `tool_search_tool_result`,
+  `advisor_tool_result`). `content` is the raw nested value (its variants and error codes
+  change over time); `raw` is the block as received and is what
+  `to_assistant_content/1` replays.
+  """
+  @type server_tool_result_block :: %{
+          type: atom(),
+          tool_use_id: String.t(),
+          content: term(),
+          caller: map() | nil,
+          raw: map()
+        }
+
+  @type container_upload_block :: %{type: :container_upload, file_id: String.t(), raw: map()}
 
   @typedoc """
   A server-side fallback handoff (`Request.set_fallbacks/2`). `raw` is the block as
@@ -172,6 +197,7 @@ defmodule Claudio.Messages.Response do
           stop_details: map() | nil,
           diagnostics: map() | nil,
           context_management: map() | nil,
+          container: map() | nil,
           usage: usage()
         }
 
@@ -186,6 +212,7 @@ defmodule Claudio.Messages.Response do
     :stop_details,
     :diagnostics,
     :context_management,
+    :container,
     :usage
   ]
 
@@ -205,6 +232,7 @@ defmodule Claudio.Messages.Response do
       stop_details: data[:stop_details] || data["stop_details"],
       diagnostics: data[:diagnostics] || data["diagnostics"],
       context_management: data[:context_management] || data["context_management"],
+      container: data[:container] || data["container"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end
@@ -272,6 +300,17 @@ defmodule Claudio.Messages.Response do
     |> Enum.flat_map(&Map.get(&1, :citations, []))
   end
 
+  # Server-tool result blocks typed shallowly (S14): content stays raw, raw is replayed.
+  @server_result_types %{
+    "web_fetch_tool_result" => :web_fetch_tool_result,
+    "code_execution_tool_result" => :code_execution_tool_result,
+    "bash_code_execution_tool_result" => :bash_code_execution_tool_result,
+    "text_editor_code_execution_tool_result" => :text_editor_code_execution_tool_result,
+    "tool_search_tool_result" => :tool_search_tool_result,
+    "advisor_tool_result" => :advisor_tool_result
+  }
+  @server_result_atoms Map.values(@server_result_types)
+
   @doc """
   Extracts all server-side tool use requests (`server_tool_use`) from the
   response — e.g. `web_search` / `web_fetch` invocations Claude ran on the
@@ -280,6 +319,24 @@ defmodule Claudio.Messages.Response do
   @spec get_server_tool_uses(t()) :: list(server_tool_use_block())
   def get_server_tool_uses(%__MODULE__{content: content}) do
     Enum.filter(content, &(&1[:type] == :server_tool_use))
+  end
+
+  @doc """
+  Returns server-tool result blocks in content order: `web_search_tool_result`,
+  `web_fetch_tool_result`, `code_execution_tool_result`, `bash_code_execution_tool_result`,
+  `text_editor_code_execution_tool_result`, `tool_search_tool_result`, `advisor_tool_result`
+  and `container_upload`. `content` is the raw nested value.
+  """
+  @spec get_server_tool_results(t()) :: [map()]
+  def get_server_tool_results(%__MODULE__{content: content}) do
+    types = [:web_search_tool_result, :container_upload | @server_result_atoms]
+    Enum.filter(content, &(is_map(&1) and &1[:type] in types))
+  end
+
+  @doc "Returns the server-tool result blocks of one type (e.g. `:code_execution_tool_result`)."
+  @spec get_server_tool_results(t(), atom()) :: [map()]
+  def get_server_tool_results(%__MODULE__{content: content}, type) when is_atom(type) do
+    Enum.filter(content, &(is_map(&1) and &1[:type] == type))
   end
 
   @doc """
@@ -405,7 +462,9 @@ defmodule Claudio.Messages.Response do
       type: :tool_use,
       id: block[:id],
       name: block[:name],
-      input: block[:input]
+      input: block[:input],
+      caller: block[:caller],
+      toolset_name: block[:toolset_name]
     }
   end
 
@@ -414,7 +473,9 @@ defmodule Claudio.Messages.Response do
       type: :tool_use,
       id: block["id"],
       name: block["name"],
-      input: block["input"]
+      input: block["input"],
+      caller: block["caller"],
+      toolset_name: block["toolset_name"]
     }
   end
 
@@ -479,7 +540,8 @@ defmodule Claudio.Messages.Response do
       type: :server_tool_use,
       id: block[:id],
       name: block[:name],
-      input: block[:input]
+      input: block[:input],
+      caller: block[:caller]
     }
   end
 
@@ -488,7 +550,8 @@ defmodule Claudio.Messages.Response do
       type: :server_tool_use,
       id: block["id"],
       name: block["name"],
-      input: block["input"]
+      input: block["input"],
+      caller: block["caller"]
     }
   end
 
@@ -496,7 +559,9 @@ defmodule Claudio.Messages.Response do
     %{
       type: :web_search_tool_result,
       tool_use_id: block[:tool_use_id],
-      content: block[:content]
+      content: block[:content],
+      caller: block[:caller],
+      raw: block
     }
   end
 
@@ -504,7 +569,9 @@ defmodule Claudio.Messages.Response do
     %{
       type: :web_search_tool_result,
       tool_use_id: block["tool_use_id"],
-      content: block["content"]
+      content: block["content"],
+      caller: block["caller"],
+      raw: block
     }
   end
 
@@ -521,6 +588,33 @@ defmodule Claudio.Messages.Response do
 
   defp parse_content_block(%{"type" => "compaction"} = block),
     do: %{type: :compaction, content: block["content"], raw: block}
+
+  defp parse_content_block(%{"type" => type} = block)
+       when is_map_key(@server_result_types, type) do
+    %{
+      type: Map.fetch!(@server_result_types, type),
+      tool_use_id: block["tool_use_id"],
+      content: block["content"],
+      caller: block["caller"],
+      raw: block
+    }
+  end
+
+  defp parse_content_block(%{type: type} = block) when is_map_key(@server_result_types, type) do
+    %{
+      type: Map.fetch!(@server_result_types, type),
+      tool_use_id: block[:tool_use_id],
+      content: block[:content],
+      caller: block[:caller],
+      raw: block
+    }
+  end
+
+  defp parse_content_block(%{"type" => "container_upload"} = block),
+    do: %{type: :container_upload, file_id: block["file_id"], raw: block}
+
+  defp parse_content_block(%{type: "container_upload"} = block),
+    do: %{type: :container_upload, file_id: block[:file_id], raw: block}
 
   defp parse_content_block(block), do: block
 
@@ -548,8 +642,10 @@ defmodule Claudio.Messages.Response do
     %{"type" => "redacted_thinking", "data" => data}
   end
 
-  defp block_to_api(%{type: :tool_use, id: id, name: name, input: input}) do
+  defp block_to_api(%{type: :tool_use, id: id, name: name, input: input} = block) do
     %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+    |> put_present("caller", block[:caller])
+    |> put_present("toolset_name", block[:toolset_name])
   end
 
   defp block_to_api(%{type: :mcp_tool_use} = block) do
@@ -579,7 +675,10 @@ defmodule Claudio.Messages.Response do
       "name" => block.name,
       "input" => block.input
     }
+    |> put_present("caller", block[:caller])
   end
+
+  defp block_to_api(%{type: :web_search_tool_result, raw: raw}) when is_map(raw), do: raw
 
   defp block_to_api(%{type: :web_search_tool_result} = block) do
     %{
@@ -592,6 +691,8 @@ defmodule Claudio.Messages.Response do
   defp block_to_api(%{type: :fallback, raw: raw}), do: raw
 
   defp block_to_api(%{type: :compaction, raw: raw}), do: raw
+  defp block_to_api(%{type: :container_upload, raw: raw}), do: raw
+  defp block_to_api(%{type: type, raw: raw}) when type in @server_result_atoms, do: raw
 
   defp block_to_api(block), do: block
 
@@ -653,6 +754,9 @@ defmodule Claudio.Messages.Response do
   end
 
   defp field(_not_a_map, _key), do: nil
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
 
   defp parse_stop_reason("end_turn"), do: :end_turn
   defp parse_stop_reason("max_tokens"), do: :max_tokens
