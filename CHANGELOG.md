@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Request.add_mcp_server/2` raises `ArgumentError` when `tools` already holds an
   `mcp_toolset` for that server and the new server carries tool config (it would
   otherwise be dropped).
+- `ServerConfig.allow_tools/2` replaces any previous allowlist: tools enabled only by
+  an earlier call are no longer enabled (other per-tool settings are kept).
+  `set_default_config/2` / `configure_tool/3` store setting keys as strings.
+- `Request.add_mcp_server/2` raises `ArgumentError` when a server with the same
+  name is already on the request (the connector requires unique server names).
 - `Request.add_code_execution_tool/2` defaults to `code_execution_20260521`
   (same runtime as `20260120`).
 
@@ -39,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
-- Examples use `claude-opus-5-5`; `enable_thinking/2` and `set_tool_choice/2`
+- Examples use `claude-opus-5-5` (sampling-setter examples use `claude-haiku-4-5`, since Opus 4.7+ and 5.x reject sampling params); `enable_thinking/2` and `set_tool_choice/2`
   document the 400s on current models; Files documented as GA.
 
 ## [0.6.0] - 2026-06-19

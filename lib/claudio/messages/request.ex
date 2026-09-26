@@ -10,7 +10,6 @@ defmodule Claudio.Messages.Request do
       |> Request.add_message(:user, "Hello!")
       |> Request.set_system("You are a helpful assistant")
       |> Request.set_max_tokens(1024)
-      |> Request.set_temperature(0.7)
       |> Request.to_map()
   """
 
@@ -321,8 +320,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5-5")
+      Request.new("claude-haiku-4-5")
       |> Request.set_temperature(0.7)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_temperature(t(), float()) :: t()
   def set_temperature(%__MODULE__{} = request, temperature)
@@ -335,8 +337,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5-5")
+      Request.new("claude-haiku-4-5")
       |> Request.set_top_p(0.9)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_top_p(t(), float()) :: t()
   def set_top_p(%__MODULE__{} = request, top_p)
@@ -349,8 +354,11 @@ defmodule Claudio.Messages.Request do
 
   ## Example
 
-      Request.new("claude-opus-5-5")
+      Request.new("claude-haiku-4-5")
       |> Request.set_top_k(40)
+
+  Sampling parameters return 400 on Claude Opus 4.7+, Opus 5.x, Sonnet 5 and
+  Fable models; use them only with models that accept them (e.g. Claude Haiku 4.5).
   """
   @spec set_top_k(t(), integer()) :: t()
   def set_top_k(%__MODULE__{} = request, top_k) when is_integer(top_k) and top_k > 0 do

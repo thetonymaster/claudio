@@ -16,7 +16,6 @@ defmodule Claudio.Messages do
       request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Hello!")
       |> Request.set_max_tokens(1024)
-      |> Request.set_temperature(0.7)
 
       # Create message
       {:ok, response} = Claudio.Messages.create(client, request)
