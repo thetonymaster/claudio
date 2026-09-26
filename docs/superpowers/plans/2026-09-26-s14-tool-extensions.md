@@ -1502,7 +1502,7 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `mix test test/agent_test.exs`
-Expected: FAIL — toolset calls are looked up by `name` (the custom `screenshot` handler answers `t1`, no `toolset_name` on results); `Unknown tool: navigate` instead of `Unknown toolset: browser`; no halt text; no `container` in the second body; `pause_turn` returns `{:ok, _, _}` after one call (so `assert_received` for the second body fails) and the max-turns test gets `{:ok, …}`; the map-container test gets no `container` key; the unknown-toolset test gets "Unknown tool: run"; the wrong-arity test raises `CaseClauseError` inside the loop (today's `case` has no clause for a non-arity-1 function) — that crash is the failure.
+Expected: FAIL — toolset calls are looked up by `name` (the custom `screenshot` handler answers `t1`, no `toolset_name` on results); `Unknown tool: navigate` instead of `Unknown toolset: browser`; no halt text; no `container` in the second body; `pause_turn` returns `{:ok, _, _}` after one call (so `assert_received` for the second body fails) and the max-turns test gets `{:ok, …}`; the map-container test gets no `container` key; the unknown-toolset test gets "Unknown tool: run"; the wrong-arity test raises `CaseClauseError` inside the loop (today's `case` has no clause for a non-arity-1 function) — that crash is the failure. "pause_turn then tool_use" fails (the first pause returns). "max_turns caps model calls" **passes already** — today's loop already makes exactly N calls; it pins the corrected doc.
 
 - [ ] **Step 3: Implement**
 
