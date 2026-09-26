@@ -472,4 +472,123 @@ defmodule Claudio.Messages.StreamTest do
       assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
     end
   end
+
+  describe "build_final_message/1 threshold compaction" do
+    test "compaction_delta fills the block; context_management and stop_reason survive" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude-opus-5-5","container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":0,"output_tokens":0},"diagnostics":null,"context_management":null}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary of the session."}}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":0,"output_tokens":0,"iterations":[{"type":"compaction","input_tokens":54453,"output_tokens":883}]},"context_management":{"applied_edits":[]}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["content"] == [
+               %{"type" => "compaction", "content" => "Summary of the session."}
+             ]
+
+      assert message["context_management"] == %{"applied_edits" => []}
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      assert response.stop_reason == :compaction
+      assert response.context_management == %{"applied_edits" => []}
+      assert [%{type: :compaction, content: "Summary of the session."}] = response.content
+      assert [%{"type" => "compaction"}] = response.usage.iterations
+
+      # Review Focus 3: the streamed block replays byte-exact.
+      assert Claudio.Messages.Response.to_assistant_content(response) == [
+               %{"type" => "compaction", "content" => "Summary of the session."}
+             ]
+    end
+
+    test "atom-keyed event data: compaction_delta still fills the block" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_start",
+           data: %{index: 0, content_block: %{type: "compaction", content: nil}}
+         }},
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{index: 0, delta: %{type: "compaction_delta", content: "S"}}
+         }},
+        {:ok, %{event: "content_block_stop", data: %{index: 0}}}
+      ]
+
+      assert {:ok, %{"content" => [%{type: "compaction", content: "S"}]}} =
+               ClaudioStream.build_final_message(events)
+    end
+
+    test "on-demand: a whole signed block in content_block_start, no deltas (spec F14)" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0}}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"Sum.","signature":"sig"}}),
+        "",
+        ~s(event: ping),
+        ~s(data: {"type":"ping"}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction"},"usage":{"output_tokens":0}}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      # Byte-exact, signature included — what apply_compaction/2 (Task 4) replays.
+      assert response.stop_reason == :compaction
+
+      assert Claudio.Messages.Response.to_assistant_content(response) == [
+               %{"type" => "compaction", "content" => "Sum.", "signature" => "sig"}
+             ]
+    end
+
+    test "a message_delta without context_management keeps the message_start value" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","context_management":{"applied_edits":[]},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      assert message["context_management"] == %{"applied_edits" => []}
+    end
+  end
 end

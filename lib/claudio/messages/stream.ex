@@ -277,6 +277,8 @@ defmodule Claudio.Messages.Stream do
             |> maybe_update(delta, "stop_sequence")
             |> maybe_update(delta, "stop_details")
             |> maybe_put_usage(usage)
+            # context_management sits at the event's top level, beside delta and usage.
+            |> maybe_update(data, "context_management")
 
           %{state | message: message}
 
@@ -444,6 +446,17 @@ defmodule Claudio.Messages.Stream do
   defp apply_delta(block, %{type: "citations_delta", citation: citation}) do
     current = block[:citations] || block["citations"] || []
     Map.put(block, :citations, current ++ [citation])
+  end
+
+  # Threshold compaction streams the whole summary in one compaction_delta after a
+  # content_block_start with "content": null (probed 2026-09-26). Every delta field but
+  # "type" is written into the block, so encrypted_content/signature survive if sent.
+  defp apply_delta(block, %{"type" => "compaction_delta"} = delta) do
+    Map.merge(block, Map.delete(delta, "type"))
+  end
+
+  defp apply_delta(block, %{type: "compaction_delta"} = delta) do
+    Map.merge(block, Map.delete(delta, :type))
   end
 
   defp apply_delta(block, _delta), do: block
