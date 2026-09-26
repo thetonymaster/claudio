@@ -42,7 +42,8 @@ defmodule Claudio.Messages.Request do
           speed: String.t() | nil,
           inference_geo: String.t() | nil,
           diagnostics: map() | nil,
-          fallbacks: String.t() | [map()] | nil
+          fallbacks: String.t() | [map()] | nil,
+          compaction: map() | nil
         }
 
   defstruct [
@@ -69,7 +70,8 @@ defmodule Claudio.Messages.Request do
     speed: nil,
     inference_geo: nil,
     diagnostics: nil,
-    fallbacks: nil
+    fallbacks: nil,
+    compaction: nil
   ]
 
   # Server-side refusal fallbacks; also needed to replay a `fallback` block (probed 2026-09-25).
@@ -79,6 +81,10 @@ defmodule Claudio.Messages.Request do
   # to replay an unsigned compaction block). Probed 2026-09-26.
   @context_management_beta "context-management-2025-06-27"
   @compaction_beta "compact-2026-01-12"
+
+  # On-demand compaction (top-level `compaction`); also needed on every later request that
+  # replays a signed compaction block (probed 2026-09-26).
+  @on_demand_compaction_beta "compact-2026-09-04"
 
   @doc """
   Creates a new request builder with the specified model.
@@ -104,6 +110,10 @@ defmodule Claudio.Messages.Request do
 
   A list `content` holding a `fallback` block (from `Response.to_assistant_content/1`)
   declares `server-side-fallback-2026-07-01`, which the API requires to accept it.
+
+  A `compaction` block declares its replay beta: `compact-2026-09-04` when it carries a
+  `signature` (on-demand), else `compact-2026-01-12` (threshold — which also needs the
+  `compact_20260112` edit on the request; see `add_compaction/2`).
 
   ## Examples
 
@@ -134,7 +144,12 @@ defmodule Claudio.Messages.Request do
 
     # Replaying a `fallback` block (Response.to_assistant_content/1) needs the beta even
     # on a turn that does not set fallbacks (400 without it, probed 2026-09-25).
-    if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
+    request =
+      if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
+
+    # A replayed compaction block needs its beta: signed (on-demand) blocks need
+    # compact-2026-09-04, unsigned (threshold) blocks compact-2026-01-12 (probed 2026-09-26).
+    add_compaction_replay_betas(request, content)
   end
 
   defp has_fallback_block?(content) when is_list(content) do
@@ -146,6 +161,26 @@ defmodule Claudio.Messages.Request do
   end
 
   defp has_fallback_block?(_content), do: false
+
+  defp add_compaction_replay_betas(request, content) when is_list(content) do
+    Enum.reduce(content, request, fn block, acc ->
+      cond do
+        not compaction_block?(block) -> acc
+        compaction_signature(block) -> add_beta(acc, @on_demand_compaction_beta)
+        true -> add_beta(acc, @compaction_beta)
+      end
+    end)
+  end
+
+  defp add_compaction_replay_betas(request, _content), do: request
+
+  defp compaction_block?(%{"type" => type}), do: type in ["compaction", :compaction]
+  defp compaction_block?(%{type: type}), do: type in ["compaction", :compaction]
+  defp compaction_block?(_block), do: false
+
+  # A typed block (Response) keeps the original under :raw.
+  defp compaction_signature(%{raw: raw}) when is_map(raw), do: compaction_signature(raw)
+  defp compaction_signature(block), do: Map.get(block, "signature") || Map.get(block, :signature)
 
   defp has_compact_edit?(config) do
     case Map.get(config, "edits") || Map.get(config, :edits) do
@@ -807,6 +842,74 @@ defmodule Claudio.Messages.Request do
     request |> put_edit(edit, :last) |> add_beta(@compaction_beta)
   end
 
+  @doc """
+  Asks for an **on-demand** summary of the conversation so far (top-level
+  `compaction: %{"type" => "summarize"}`; declares `compact-2026-09-04`). The reply is only
+  a signed `compaction` block with `stop_reason: :compaction`; continue with
+  `apply_compaction/2`. The API rejects this combined with `context_management`,
+  `stop_sequences`, `output_config.format`, a forced `tool_choice`, or a last assistant
+  turn ending in an unanswered `tool_use` — those are left to its 400. To drop
+  context-management edits set earlier, use `%{request | context_management: nil}`
+  (`set_context_management/2` takes a map, and `%{}` would still be sent).
+
+  ## Options
+
+  - `:instructions` — replaces the default summarization prompt (≤ 16384 characters)
+
+  ## Example
+
+      {:ok, summary} = Messages.create(client, Request.request_compaction(request))
+
+      request =
+        request
+        |> Request.apply_compaction(summary)
+        |> Request.add_message(:user, "Continue")
+  """
+  @spec request_compaction(t(), keyword()) :: t()
+  def request_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:instructions])
+    compaction = maybe_put(%{"type" => "summarize"}, "instructions", opts[:instructions])
+    add_beta(%{request | compaction: compaction}, @on_demand_compaction_beta)
+  end
+
+  @doc """
+  Continues a conversation from a compaction summary, for either kind of compaction.
+
+  Replaces `messages` with a single assistant message holding the response content from
+  its **last** `compaction` block onward (the block first, byte-exact, as the API
+  requires), and clears `compaction` so the next call is a normal turn. Everything else
+  — `system`, `tools`, `thinking`, `context_management` (a threshold replay needs its
+  `compact_20260112` edit), betas — is kept. The replay beta is declared by
+  `add_message/3`. Add the next user turn after it — also after a
+  `pause_after_compaction: true` reply, whose content is only the block (a
+  `[assistant: [block], user: …]` history is accepted, probe P8).
+
+  Raises `ArgumentError` when the response has no `compaction` block.
+  """
+  @spec apply_compaction(t(), Claudio.Messages.Response.t()) :: t()
+  def apply_compaction(%__MODULE__{} = request, %Claudio.Messages.Response{} = response) do
+    content = Claudio.Messages.Response.to_assistant_content(response)
+
+    case last_compaction_index(content) do
+      nil ->
+        raise ArgumentError,
+              "Request.apply_compaction/2 response has no compaction block; " <>
+                "got stop_reason #{inspect(response.stop_reason)}"
+
+      index ->
+        %{request | messages: [], compaction: nil}
+        |> add_message(:assistant, Enum.drop(content, index))
+    end
+  end
+
+  defp last_compaction_index(content) do
+    content
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn {block, index}, last ->
+      if compaction_block?(block), do: index, else: last
+    end)
+  end
+
   # nil means "not given"; any other value (including false) is validated by `fun`.
   defp map_opt(opts, key, fun) do
     case Keyword.get(opts, key) do
@@ -1459,6 +1562,7 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("inference_geo", request.inference_geo)
     |> maybe_put("diagnostics", request.diagnostics)
     |> maybe_put("fallbacks", request.fallbacks)
+    |> maybe_put("compaction", request.compaction)
   end
 
   defp cache_control_map(nil), do: %{"type" => "ephemeral"}

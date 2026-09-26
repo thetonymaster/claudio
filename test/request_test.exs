@@ -65,6 +65,40 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with a compaction block" do
+    test "a signed block declares compact-2026-09-04" do
+      for block <- [
+            %{"type" => "compaction", "content" => "s", "signature" => "sig"},
+            %{type: "compaction", content: "s", signature: "sig"},
+            %{
+              type: :compaction,
+              content: "s",
+              raw: %{"type" => "compaction", "signature" => "sig"}
+            }
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["compact-2026-09-04"]
+      end
+    end
+
+    test "an unsigned block declares compact-2026-01-12" do
+      for block <- [
+            %{"type" => "compaction", "content" => "s"},
+            %{type: :compaction, content: "s", raw: %{"type" => "compaction", "content" => "s"}}
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["compact-2026-01-12"]
+      end
+    end
+
+    test "content without a compaction block declares nothing (Review Focus 4)" do
+      for content <- ["hi", [%{"type" => "text", "text" => "hi"}], ["stray", 42]] do
+        request = Request.new("m") |> Request.add_message(:user, content)
+        assert Request.required_betas(request) == []
+      end
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =
@@ -473,6 +507,129 @@ defmodule Claudio.Messages.RequestTest do
 
       assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
         Request.add_compaction(r, trigger: false)
+      end
+    end
+  end
+
+  describe "request_compaction/2" do
+    test "sets compaction: summarize and declares compact-2026-09-04" do
+      request = Request.new("claude-opus-5-5") |> Request.request_compaction()
+
+      assert Request.to_map(request)["compaction"] == %{"type" => "summarize"}
+      assert Request.required_betas(request) == ["compact-2026-09-04"]
+    end
+
+    test "instructions are passed through" do
+      request =
+        Request.new("claude-opus-5-5") |> Request.request_compaction(instructions: "Keep paths.")
+
+      assert Request.to_map(request)["compaction"] == %{
+               "type" => "summarize",
+               "instructions" => "Keep paths."
+             }
+    end
+
+    test "unset: to_map/1 has no compaction key" do
+      refute Map.has_key?(Request.to_map(Request.new("m")), "compaction")
+    end
+
+    test "unknown options raise" do
+      assert_raise ArgumentError, fn -> Request.request_compaction(Request.new("m"), foo: 1) end
+    end
+  end
+
+  describe "apply_compaction/2" do
+    alias Claudio.Messages.Response
+
+    @signed %{"type" => "compaction", "content" => "Summary.", "signature" => "sig"}
+
+    test "on-demand: history becomes one assistant message holding the block; compaction cleared" do
+      summary = Response.from_map(%{"stop_reason" => "compaction", "content" => [@signed]})
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_message(:user, "a")
+        |> Request.add_message(:assistant, "b")
+        |> Request.request_compaction()
+        |> Request.apply_compaction(summary)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [@signed]}]
+      assert request.compaction == nil
+      refute Map.has_key?(Request.to_map(request), "compaction")
+      assert "compact-2026-09-04" in Request.required_betas(request)
+    end
+
+    test "threshold: keeps content from the block onward, keeps context_management" do
+      thinking = %{"type" => "thinking", "thinking" => "", "signature" => "tsig"}
+      text = %{"type" => "text", "text" => "Answer"}
+      block = %{"type" => "compaction", "content" => "Summary."}
+
+      response =
+        Response.from_map(%{"stop_reason" => "end_turn", "content" => [block, thinking, text]})
+
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_compaction(trigger: 50_000)
+        |> Request.add_message(:user, "long history")
+        |> Request.apply_compaction(response)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [block, thinking, text]}]
+
+      assert Request.to_map(request)["context_management"] == %{
+               "edits" => [
+                 %{
+                   "type" => "compact_20260112",
+                   "trigger" => %{"type" => "input_tokens", "value" => 50_000}
+                 }
+               ]
+             }
+
+      assert Request.required_betas(request) == ["compact-2026-01-12"]
+    end
+
+    test "two compaction blocks: content from the last one" do
+      first = %{"type" => "compaction", "content" => "old"}
+      last = %{"type" => "compaction", "content" => "new"}
+
+      response =
+        Response.from_map(%{"content" => [first, %{"type" => "text", "text" => "x"}, last]})
+
+      request = Request.new("m") |> Request.apply_compaction(response)
+
+      assert request.messages == [%{"role" => "assistant", "content" => [last]}]
+    end
+
+    test "keeps system, tools, thinking, max_tokens and betas (Review Focus 1)" do
+      summary = Response.from_map(%{"stop_reason" => "compaction", "content" => [@signed]})
+      tool = %{"name" => "t", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+      before =
+        Request.new("claude-opus-5-5")
+        |> Request.set_system("sys")
+        |> Request.add_tool(tool)
+        |> Request.enable_adaptive_thinking()
+        |> Request.set_max_tokens(512)
+        |> Request.add_beta("x-2026-01-01")
+        |> Request.add_message(:user, "a")
+
+      after_ = Request.apply_compaction(before, summary)
+
+      assert after_.system == "sys"
+      assert after_.tools == [tool]
+      assert after_.thinking == %{"type" => "adaptive"}
+      assert after_.max_tokens == 512
+      assert Request.required_betas(after_) == ["x-2026-01-01", "compact-2026-09-04"]
+    end
+
+    test "a response without a compaction block raises" do
+      response =
+        Response.from_map(%{
+          "stop_reason" => "end_turn",
+          "content" => [%{"type" => "text", "text" => "x"}]
+        })
+
+      assert_raise ArgumentError, ~r/apply_compaction\/2 .*no compaction block.*:end_turn/, fn ->
+        Request.apply_compaction(Request.new("m"), response)
       end
     end
   end
