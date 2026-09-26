@@ -50,6 +50,7 @@ the documented "interrupted" placeholder.
 | F9 | `usage.output_tokens_details.thinking_tokens` exists; when streaming it appears only on the final `message_delta`. | ST |
 | F10 | `Stream.build_final_message/1` already stores the raw `message_delta` usage map (`stream.ex:216-225`, `maybe_put_usage/2`), so `output_tokens_details` already survives into the streamed final message. | repo |
 | F11 | `Request.add_beta/2` + `required_betas/1` already exist; Messages, count_tokens and Batches merge `required_betas/1` into the header. | repo |
+| F12 | **Live probes, 2026-09-25, `claude-opus-5-5`:** `display: "updates"` + `thinking-display-updates-2026-08-18` → 200; without the beta → 400 `thinking.adaptive.display: Input should be 'summarized', 'omitted'`. `task_budget` + `task-budgets-2026-03-13` → 200; without → 400 `output_config.task_budget: Extra inputs are not permitted`. `total: 19999` → 400 `` `task_budget.total` must be at least 20,000 tokens for this model`` (floor is per-model). `remaining: 0` → **200**. Unknown beta strings → 400 (so the 200s prove both strings are recognised). Effort `low` + trivial prompt → no thinking block, `output_tokens_details.thinking_tokens: 0` (details present even when 0). | probe |
 
 ## Goals / non-goals
 
@@ -231,8 +232,8 @@ TDD, unit tests first (Bypass not needed except where noted):
 
 | Risk | Effect if it bites | Mitigation |
 |------|--------------------|------------|
-| Beta strings change (`thinking-display-updates-2026-08-18`, `task-budgets-2026-03-13`) | 400 from API | Pinned from live docs 2026-09-25; one constant each; re-pin at 0.7.0 release prep. |
+| Beta strings change (`thinking-display-updates-2026-08-18`, `task-budgets-2026-03-13`) | 400 from API | Pinned from live docs and verified by live probe 2026-09-25 (F12); one constant each; re-pin at 0.7.0 release prep. |
 | Effort/display value set grows (e.g. a new level) | Local `ArgumentError` blocks a valid value | `set_output_config/2` / `enable_thinking/2` remain raw escape hatches; add the value in a patch. |
-| `remaining: 0` is actually rejected by the API | 400 instead of local error | Documented as the API's call; test asserts local acceptance only. |
+| `remaining: 0` rejected by the API | — | **Resolved:** live probe (F12) → 200. |
 | Interrupted-placeholder text changes | `thinking_interrupted?/1` returns false | Exact string with provenance comment; one attribute to update. |
 | `output_tokens_details` streamed only on final `message_delta` (F9) and callers read `message_start` usage | Missing `thinking_tokens` | `build_final_message/1` already uses the `message_delta` usage (F10); stream telemetry reads the latest `message_delta`. |
