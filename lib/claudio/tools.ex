@@ -186,7 +186,7 @@ defmodule Claudio.Tools do
           tool_result()
   def create_tool_result(tool_use_id, result, is_error \\ false, opts \\ [])
       when is_binary(tool_use_id) and is_list(opts) do
-    opts = Keyword.validate!(opts, [:toolset_name])
+    opts = Claudio.Options.validate!(opts, [:toolset_name], "Tools.create_tool_result/4")
 
     base = %{
       "type" => "tool_result",

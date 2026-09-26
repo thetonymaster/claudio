@@ -290,4 +290,12 @@ defmodule Claudio.ToolsTest do
                Tools.extract_tool_uses(raw)
     end
   end
+
+  describe "create_tool_result/4 unknown options" do
+    test "the error names the function" do
+      assert_raise ArgumentError,
+                   "Tools.create_tool_result/4: unknown option :toolset; allowed: :toolset_name",
+                   fn -> Tools.create_tool_result("id", "ok", false, toolset: "computer") end
+    end
+  end
 end

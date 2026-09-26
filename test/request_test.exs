@@ -1829,7 +1829,7 @@ defmodule Claudio.Messages.RequestTest do
     end
 
     test "unknown option keys raise" do
-      assert_raise ArgumentError, ~r/unknown keys/, fn ->
+      assert_raise ArgumentError, ~r/add_system_message\/3: unknown option :cache_control/, fn ->
         Request.new("m") |> Request.add_system_message("a", cache_control: %{})
       end
     end
@@ -2139,6 +2139,42 @@ defmodule Claudio.Messages.RequestTest do
                }
              ] =
                request.messages
+    end
+  end
+
+  describe "unknown option errors name the function" do
+    # {function, arguments between the request and opts}
+    @calls [
+      {:add_tool, [%{"name" => "t", "input_schema" => %{"type" => "object"}}]},
+      {:add_tool_with_cache, [%{"name" => "t", "input_schema" => %{"type" => "object"}}]},
+      {:enable_adaptive_thinking, []},
+      {:add_clear_tool_uses, []},
+      {:add_clear_thinking, []},
+      {:add_compaction, []},
+      {:request_compaction, []},
+      {:set_task_budget, [20_000]},
+      {:add_system_message, ["s"]},
+      {:add_advisor_tool, ["claude-opus-5-5"]},
+      {:add_computer_toolset, []},
+      {:add_browser_toolset, []},
+      {:add_web_search_tool, []},
+      {:add_web_fetch_tool, []},
+      {:add_text_editor_tool, []},
+      {:add_computer_tool, [1024, 768]}
+    ]
+
+    for {fun, args} <- @calls do
+      @fun fun
+      @args args
+      @name "Request.#{fun}/#{length(args) + 2}"
+      test @name do
+        error =
+          assert_raise ArgumentError, fn ->
+            apply(Request, @fun, [Request.new("m")] ++ @args ++ [[bogus: true]])
+          end
+
+        assert String.starts_with?(error.message, "#{@name}: unknown option :bogus; allowed: :")
+      end
     end
   end
 end

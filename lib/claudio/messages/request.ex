@@ -538,7 +538,8 @@ defmodule Claudio.Messages.Request do
   @spec add_tool(t(), map(), keyword()) :: t()
   def add_tool(%__MODULE__{tools: tools} = request, tool, opts \\ [])
       when is_map(tool) and is_list(opts) do
-    opts = Keyword.validate!(opts, [:defer_loading, :allowed_callers])
+    opts =
+      Claudio.Options.validate!(opts, [:defer_loading, :allowed_callers], "Request.add_tool/3")
 
     tool =
       tool
@@ -593,7 +594,9 @@ defmodule Claudio.Messages.Request do
   @spec add_tool_with_cache(t(), map(), keyword()) :: t()
   def add_tool_with_cache(%__MODULE__{} = request, tool, opts \\ []) when is_map(tool) do
     # defer_loading is left out on purpose: the API rejects it together with cache_control.
-    opts = Keyword.validate!(opts, [:ttl, :allowed_callers])
+    opts =
+      Claudio.Options.validate!(opts, [:ttl, :allowed_callers], "Request.add_tool_with_cache/3")
+
     tool = put_tool_key(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
     add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
@@ -694,7 +697,12 @@ defmodule Claudio.Messages.Request do
   """
   @spec enable_adaptive_thinking(t(), keyword()) :: t()
   def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:display, :block_binding])
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:display, :block_binding],
+        "Request.enable_adaptive_thinking/2"
+      )
 
     display =
       case Keyword.get(opts, :display) do
@@ -902,13 +910,17 @@ defmodule Claudio.Messages.Request do
   @spec add_clear_tool_uses(t(), keyword()) :: t()
   def add_clear_tool_uses(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
     opts =
-      Keyword.validate!(opts, [
-        :trigger,
-        :keep,
-        :clear_at_least,
-        :exclude_tools,
-        :clear_tool_inputs
-      ])
+      Claudio.Options.validate!(
+        opts,
+        [
+          :trigger,
+          :keep,
+          :clear_at_least,
+          :exclude_tools,
+          :clear_tool_inputs
+        ],
+        "Request.add_clear_tool_uses/2"
+      )
 
     fun = "add_clear_tool_uses/2"
 
@@ -943,7 +955,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_clear_thinking(t(), keyword()) :: t()
   def add_clear_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:keep])
+    opts = Claudio.Options.validate!(opts, [:keep], "Request.add_clear_thinking/2")
 
     keep =
       case Keyword.get(opts, :keep) do
@@ -982,7 +994,12 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_compaction(t(), keyword()) :: t()
   def add_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:trigger, :pause_after_compaction, :instructions])
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:trigger, :pause_after_compaction, :instructions],
+        "Request.add_compaction/2"
+      )
 
     edit =
       %{"type" => "compact_20260112"}
@@ -1021,7 +1038,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec request_compaction(t(), keyword()) :: t()
   def request_compaction(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:instructions])
+    opts = Claudio.Options.validate!(opts, [:instructions], "Request.request_compaction/2")
     compaction = maybe_put(%{"type" => "summarize"}, "instructions", opts[:instructions])
     add_beta(%{request | compaction: compaction}, @on_demand_compaction_beta)
   end
@@ -1315,7 +1332,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec set_task_budget(t(), pos_integer(), keyword()) :: t()
   def set_task_budget(%__MODULE__{} = request, total, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:remaining])
+    opts = Claudio.Options.validate!(opts, [:remaining], "Request.set_task_budget/3")
 
     unless is_integer(total) and total > 0 do
       raise ArgumentError,
@@ -1382,7 +1399,7 @@ defmodule Claudio.Messages.Request do
   @spec add_system_message(t(), String.t() | [map()], keyword()) :: t()
   def add_system_message(%__MODULE__{messages: messages} = request, content, opts \\ [])
       when (is_binary(content) or is_list(content)) and is_list(opts) do
-    opts = Keyword.validate!(opts, [:clear_at, :effort])
+    opts = Claudio.Options.validate!(opts, [:clear_at, :effort], "Request.add_system_message/3")
     clear_at = Keyword.get(opts, :clear_at)
     effort = Keyword.get(opts, :effort)
 
@@ -1573,7 +1590,12 @@ defmodule Claudio.Messages.Request do
   @spec add_advisor_tool(t(), String.t(), keyword()) :: t()
   def add_advisor_tool(%__MODULE__{} = request, model, opts \\ [])
       when is_binary(model) and is_list(opts) do
-    opts = Keyword.validate!(opts, [:max_uses, :max_tokens, :caching])
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:max_uses, :max_tokens, :caching],
+        "Request.add_advisor_tool/3"
+      )
 
     caching =
       case Keyword.get(opts, :caching) do
@@ -1611,7 +1633,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_computer_toolset(t(), keyword()) :: t()
   def add_computer_toolset(%__MODULE__{} = request, opts \\ []),
-    do: add_toolset(request, "computer_toolset_20260801", opts)
+    do: add_toolset(request, "computer_toolset_20260801", opts, "Request.add_computer_toolset/2")
 
   @doc """
   Adds the browser use client toolset (`browser_toolset_20260801`, GA, no beta). Same
@@ -1619,10 +1641,10 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_browser_toolset(t(), keyword()) :: t()
   def add_browser_toolset(%__MODULE__{} = request, opts \\ []),
-    do: add_toolset(request, "browser_toolset_20260801", opts)
+    do: add_toolset(request, "browser_toolset_20260801", opts, "Request.add_browser_toolset/2")
 
-  defp add_toolset(request, type, opts) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:configs, :cache_control])
+  defp add_toolset(request, type, opts, fun) when is_list(opts) do
+    opts = Claudio.Options.validate!(opts, [:configs, :cache_control], fun)
 
     configs =
       case Keyword.get(opts, :configs) do
@@ -1664,13 +1686,17 @@ defmodule Claudio.Messages.Request do
   @spec add_web_search_tool(t(), keyword()) :: t()
   def add_web_search_tool(%__MODULE__{} = request, opts \\ []) do
     opts =
-      Keyword.validate!(opts, [
-        :version,
-        :max_uses,
-        :allowed_domains,
-        :blocked_domains,
-        :user_location
-      ])
+      Claudio.Options.validate!(
+        opts,
+        [
+          :version,
+          :max_uses,
+          :allowed_domains,
+          :blocked_domains,
+          :user_location
+        ],
+        "Request.add_web_search_tool/2"
+      )
 
     tool =
       %{"type" => web_search_type(Keyword.get(opts, :version)), "name" => "web_search"}
@@ -1700,14 +1726,18 @@ defmodule Claudio.Messages.Request do
   @spec add_web_fetch_tool(t(), keyword()) :: t()
   def add_web_fetch_tool(%__MODULE__{} = request, opts \\ []) do
     opts =
-      Keyword.validate!(opts, [
-        :version,
-        :max_uses,
-        :allowed_domains,
-        :blocked_domains,
-        :max_content_tokens,
-        :citations
-      ])
+      Claudio.Options.validate!(
+        opts,
+        [
+          :version,
+          :max_uses,
+          :allowed_domains,
+          :blocked_domains,
+          :max_content_tokens,
+          :citations
+        ],
+        "Request.add_web_fetch_tool/2"
+      )
 
     tool =
       %{"type" => web_fetch_type(Keyword.get(opts, :version)), "name" => "web_fetch"}
@@ -1768,7 +1798,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec add_text_editor_tool(t(), keyword()) :: t()
   def add_text_editor_tool(%__MODULE__{} = request, opts \\ []) do
-    opts = Keyword.validate!(opts, [:max_characters])
+    opts = Claudio.Options.validate!(opts, [:max_characters], "Request.add_text_editor_tool/2")
 
     tool =
       %{"type" => "text_editor_20250728", "name" => "str_replace_based_edit_tool"}
@@ -1808,7 +1838,8 @@ defmodule Claudio.Messages.Request do
   @spec add_computer_tool(t(), pos_integer(), pos_integer(), keyword()) :: t()
   def add_computer_tool(%__MODULE__{} = request, display_width_px, display_height_px, opts \\ [])
       when is_integer(display_width_px) and is_integer(display_height_px) do
-    opts = Keyword.validate!(opts, [:display_number, :version])
+    opts =
+      Claudio.Options.validate!(opts, [:display_number, :version], "Request.add_computer_tool/4")
 
     {type, beta} =
       case Keyword.get(opts, :version) do
