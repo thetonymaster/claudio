@@ -26,7 +26,7 @@ defmodule Claudio.Agent do
       }
 
       # Build request
-      request = Request.new("claude-sonnet-4-5-20250929")
+      request = Request.new("claude-opus-5")
       |> Request.add_message(:user, "What's the weather in SF?")
       |> Request.add_tool(weather_tool)
       |> Request.set_max_tokens(1024)

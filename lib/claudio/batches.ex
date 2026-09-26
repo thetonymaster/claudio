@@ -38,7 +38,7 @@ defmodule Claudio.Batches do
         %{
           custom_id: "req-1",
           params: %{
-            model: "claude-3-5-sonnet-20241022",
+            model: "claude-opus-5",
             max_tokens: 1024,
             messages: [%{role: "user", content: "Hello"}]
           }
@@ -46,7 +46,7 @@ defmodule Claudio.Batches do
         %{
           custom_id: "req-2",
           params: %{
-            model: "claude-3-5-sonnet-20241022",
+            model: "claude-opus-5",
             max_tokens: 1024,
             messages: [%{role: "user", content: "Hi there"}]
           }
@@ -145,7 +145,7 @@ defmodule Claudio.Batches do
         %{
           "custom_id" => "my-request-1",
           "params" => %{
-            "model" => "claude-3-5-sonnet-20241022",
+            "model" => "claude-opus-5",
             "max_tokens" => 1024,
             "messages" => [%{"role" => "user", "content" => "Hello"}]
           }

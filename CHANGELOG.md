@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — targets 0.7.0
+
+### Fixed
+
+- **MCP connector** now emits a valid `mcp-client-2025-11-20` request:
+  `Request.add_mcp_server/2` adds the `mcp_toolset` entry to `tools` and declares
+  the beta. Previously the request had no toolset and no beta header and was rejected.
+
+### Changed
+
+- `Claudio.MCP.ServerConfig`: `:tool_configuration` struct field removed; tool
+  selection lives on the toolset (`:default_config`, `:configs`).
+  `allow_tools/2` now takes **exact tool names** and raises `ArgumentError` on
+  `*`/`?` patterns (the connector matches names literally; a pattern would enable
+  no tools). Raw maps with legacy `tool_configuration` are translated with a warning.
+- `Claudio.Skills` no longer attaches `anthropic-beta: skills-2025-10-02` (Skills API is GA).
+  `Skills.list/2` / `list_versions/3` responses lose `"has_more"` — page with
+  `next_page` → `:page`, or opt back in with
+  `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
+- `Request.add_mcp_server/2` raises `ArgumentError` when `tools` already holds an
+  `mcp_toolset` for that server and the new server carries tool config (it would
+  otherwise be dropped).
+- `Request.add_code_execution_tool/2` defaults to `code_execution_20260521`
+  (same runtime as `20260120`).
+
+### Added
+
+- `ServerConfig.to_toolset/1`, `set_default_config/2`, `configure_tool/3`, `split_raw/1`.
+- `Files.list/2` GA pagination options `:page` and `:ids`.
+- `add_code_execution_tool/2` `:version` option.
+- `Response.stop_details` (also accumulated by `Stream.build_final_message/1`).
+
+### Docs
+
+- Examples use `claude-opus-5`; `enable_thinking/2` and `set_tool_choice/2`
+  document the 400s on current models; Files documented as GA.
+
 ## [0.6.0] - 2026-06-19
 
 A large coverage release closing the gap between Claudio and the current

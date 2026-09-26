@@ -88,14 +88,14 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Vision/image support** (`add_message_with_image/4`, `add_message_with_image_url/3`)
 - **Document support** (`add_message_with_document/5` — opts `:citations` / `:title` / `:context`; backward-compatible with the original `/4` arity)
 - **Citations + search results** (`add_message_with_document/5` with `citations: true` for grounded document citations; `search_result_block/4` builds RAG `search_result` content blocks — both GA, no beta header. ⚠️ Citations are **incompatible with structured outputs** — combining them returns 400.)
-- **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps)
+- **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps; adds the `mcp_toolset` and declares `mcp-client-2025-11-20`)
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
 - **Strict / eager tool flags** (`add_strict_tool/2` sets `strict: true`; `add_tool_with_eager_streaming/2` sets `eager_input_streaming: true` — GA, no beta header)
 - **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
   - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
   - `add_web_fetch_tool/2` — `web_fetch_20260209` (default) / `web_fetch_20250910` (`version: :basic`); `:citations`; GA
-  - `add_code_execution_tool/1` — `code_execution_20260120`; GA (pairs with `set_container/2`)
+  - `add_code_execution_tool/2` — `code_execution_20260521` (default; `version:` `:"20260120"` / `:"20250825"`); GA (pairs with `set_container/2`)
   - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
   - `add_memory_tool/1` — `memory_20250818`; GA, client-side
   - `add_computer_tool/4` — `computer_20250124`; **auto-declares the `computer-use-2025-01-24` beta** via `add_beta/2`
@@ -124,6 +124,7 @@ The `Claudio.Messages.Response` module parses API responses into structured data
   - `get_server_tool_uses/1`: Extracts `server_tool_use` requests (e.g. server-run `web_search`)
   - `get_mcp_tool_uses/1`: Extracts MCP tool use requests
   - `get_mcp_tool_uses/2`: Extracts MCP tool uses for a specific server
+- **`stop_details`** — raw refusal details map (`type`/`category`/`explanation`), `nil` unless `stop_reason: :refusal`
 - Handles both string and atom keys from API responses
 
 ### Streaming (lib/claudio/messages/stream.ex)
@@ -160,7 +161,7 @@ MCP integration is split into two layers:
 
 **Server-side connector (API layer):**
 - `Claudio.MCP.ServerConfig`: Typed struct + builder for MCP server configs in API requests
-- `Request.add_mcp_server/2`: Accepts `ServerConfig` structs or raw maps
+- `Request.add_mcp_server/2`: Accepts `ServerConfig` structs or raw maps; emits the `mcp_servers` entry **and** an `mcp_toolset` in `tools`, and declares `mcp-client-2025-11-20`. `ServerConfig.allow_tools/2` takes exact names (patterns raise); legacy `tool_configuration` in raw maps is translated with a warning.
 - Response parsing handles `mcp_tool_use` and `mcp_tool_result` content blocks
 
 **Client-side behaviour + adapters:**
@@ -219,10 +220,10 @@ One flat module with grouped functions over a shared private request helper:
 
 Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token and are not covered.
 
-### Skills API (lib/claudio/skills.ex) — beta
-The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). Every request carries `anthropic-beta: skills-2025-10-02`, attached automatically via `Claudio.Client.with_betas/2` (callers don't pre-configure the beta).
+### Skills API (lib/claudio/skills.ex) — GA
+The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). GA — no beta header is attached. List responses are `{data, next_page}` (no `has_more`); opt back into the old shape with `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
 - **Read/manage:** `list/2` (`:limit`/`:page`/`:source`), `get/2`, `delete/2`, `list_versions/3`, `get_version/3`, `delete_version/3`
-- **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + beta + multipart transport.
+- **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + multipart transport.
 
 Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. **Prompt-tools** (`/v1/experimental/*`) are intentionally **not** implemented — experimental, access-gated, beta header unverified.
 
@@ -283,6 +284,6 @@ lib/
     ├── messages.ex            # Main Messages API
     ├── messages/              # request.ex (builder), response.ex (parser), stream.ex (SSE)
     ├── models.ex              # Models API
-    ├── skills.ex              # Agent Skills API (beta)
+    ├── skills.ex              # Agent Skills API
     └── tools.ex               # Tool utilities
 ```
