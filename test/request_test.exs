@@ -1997,7 +1997,9 @@ defmodule Claudio.Messages.RequestTest do
             ),
             Request.add_tool_with_cache(
               Request.new("m"),
-              Map.put(base, :cache_control, %{type: "ephemeral"}), ttl: "1h"),
+              Map.put(base, :cache_control, %{type: "ephemeral"}),
+              ttl: "1h"
+            ),
             Request.add_tool(Request.new("m"), Map.put(base, :defer_loading, false),
               defer_loading: true
             )
