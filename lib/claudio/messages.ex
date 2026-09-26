@@ -218,6 +218,7 @@ defmodule Claudio.Messages do
       # The count endpoint rejects these (400 "Extra inputs are not permitted", probed 2026-09-25).
       |> Map.delete("inference_geo")
       |> Map.delete("diagnostics")
+      |> Map.delete("fallbacks")
 
     count_tokens(client, payload)
   end

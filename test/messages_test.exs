@@ -563,7 +563,7 @@ defmodule Claudio.MessagesTest do
       assert {:ok, %{"input_tokens" => 5}} = Claudio.Messages.count_tokens(client, request)
     end
 
-    test "count_tokens/2 strips fields the count endpoint rejects (inference_geo, diagnostics)",
+    test "count_tokens/2 strips fields the count endpoint rejects (inference_geo, diagnostics, fallbacks)",
          %{client: client, bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -574,6 +574,7 @@ defmodule Claudio.MessagesTest do
         # The count endpoint needs the fast-mode beta for `speed` (probed 2026-09-25).
         status =
           if Map.has_key?(payload, "inference_geo") or Map.has_key?(payload, "diagnostics") or
+               Map.has_key?(payload, "fallbacks") or
                not String.contains?(beta_header, "fast-mode-2026-02-01"),
              do: 400,
              else: 200
@@ -592,6 +593,7 @@ defmodule Claudio.MessagesTest do
         |> Request.set_speed(:fast)
         |> Request.set_inference_geo(:us)
         |> Request.enable_cache_diagnostics()
+        |> Request.set_fallbacks(:default)
 
       assert {:ok, %{"input_tokens" => 5, "speed" => "fast"}} =
                Claudio.Messages.count_tokens(client, request)

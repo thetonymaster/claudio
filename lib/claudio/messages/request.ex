@@ -41,7 +41,8 @@ defmodule Claudio.Messages.Request do
           cache_control: map() | nil,
           speed: String.t() | nil,
           inference_geo: String.t() | nil,
-          diagnostics: map() | nil
+          diagnostics: map() | nil,
+          fallbacks: String.t() | [map()] | nil
         }
 
   defstruct [
@@ -67,8 +68,12 @@ defmodule Claudio.Messages.Request do
     cache_control: nil,
     speed: nil,
     inference_geo: nil,
-    diagnostics: nil
+    diagnostics: nil,
+    fallbacks: nil
   ]
+
+  # Server-side refusal fallbacks; also needed to replay a `fallback` block (probed 2026-09-25).
+  @fallback_beta "server-side-fallback-2026-07-01"
 
   @doc """
   Creates a new request builder with the specified model.
@@ -973,6 +978,45 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Sets `fallbacks` — server-side retry of a refused request on another model (beta;
+  declares `server-side-fallback-2026-07-01`).
+
+    * `:default` — the API picks the recommended fallback for the refusal category.
+    * a non-empty list — tried in order; a model string becomes `%{"model" => model}`,
+      a map is sent unchanged (it may override `max_tokens`, `thinking`,
+      `output_config` and `speed` for that attempt).
+
+  The API allows up to three entries, each distinct and listed in the requested
+  model's `allowed_fallback_models`; those rules are left to it. Not supported by the
+  Message Batches API (the item errors). Not sent by `Claudio.Messages.count_tokens/2`
+  when given a `Request` (that endpoint rejects it). See `Claudio.Messages.Response`
+  for the `fallback` block, `Response.served_by/1` and `usage.iterations`.
+  """
+  @spec set_fallbacks(t(), :default | [String.t() | map(), ...]) :: t()
+  def set_fallbacks(%__MODULE__{} = request, :default) do
+    add_beta(%{request | fallbacks: "default"}, @fallback_beta)
+  end
+
+  def set_fallbacks(%__MODULE__{} = request, [_ | _] = entries) do
+    add_beta(%{request | fallbacks: Enum.map(entries, &fallback_entry/1)}, @fallback_beta)
+  end
+
+  def set_fallbacks(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_fallbacks/2 fallbacks must be :default or a non-empty list of " <>
+            "model strings or maps; got #{inspect(other)}"
+  end
+
+  defp fallback_entry(model) when is_binary(model), do: %{"model" => model}
+  defp fallback_entry(entry) when is_map(entry), do: entry
+
+  defp fallback_entry(entry) do
+    raise ArgumentError,
+          "Request.set_fallbacks/2 each entry must be a model string or a map; " <>
+            "got #{inspect(entry)}"
+  end
+
+  @doc """
   Adds a tool with strict schema validation enabled (`strict: true`).
 
   Guarantees the model's `tool_use.input` validates exactly against the schema.
@@ -1230,6 +1274,7 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("speed", request.speed)
     |> maybe_put("inference_geo", request.inference_geo)
     |> maybe_put("diagnostics", request.diagnostics)
+    |> maybe_put("fallbacks", request.fallbacks)
   end
 
   defp cache_control_map(nil), do: %{"type" => "ephemeral"}
