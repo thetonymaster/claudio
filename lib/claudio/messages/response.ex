@@ -430,6 +430,9 @@ defmodule Claudio.Messages.Response do
   `fallback` blocks stay where they are. In practice this only changes a streamed
   response that fell back mid-output; a non-streaming response normally puts the
   `fallback` block first. `response.content` still holds every block.
+
+  If you edit earlier messages before replaying, a `thinking` block's signature may no longer
+  match; see `Request.set_thinking_block_binding/2`.
   """
   @spec to_assistant_content(t()) :: [map()]
   def to_assistant_content(%__MODULE__{content: content}) do

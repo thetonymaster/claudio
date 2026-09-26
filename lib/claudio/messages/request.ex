@@ -1014,6 +1014,10 @@ defmodule Claudio.Messages.Request do
   Raises `ArgumentError` for a failed compaction (`content: nil`) — the current history
   is still the only record of the conversation.
 
+  Editing the history yourself (rather than through this function) can invalidate the
+  signatures of kept `thinking` blocks; `set_thinking_block_binding(:drop_block)` makes the
+  API drop such blocks instead of rejecting the request.
+
   Raises `ArgumentError` when the response has no `compaction` block.
   """
   @spec apply_compaction(t(), Claudio.Messages.Response.t()) :: t()
