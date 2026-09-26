@@ -12,7 +12,8 @@ defmodule Claudio.Messages.Stream do
   The Messages API streaming responses include the following event types:
   - `message_start` - Initial message with empty content
   - `content_block_start` - Beginning of a content block
-  - `content_block_delta` - Incremental content updates (text, JSON, thinking)
+  - `content_block_delta` - Incremental content updates (text, JSON, thinking);
+    read them with `accumulate_text/1` / `accumulate_thinking/1`
   - `content_block_stop` - End of a content block
   - `message_delta` - Top-level message changes (usage updates)
   - `message_stop` - Stream completion
@@ -162,6 +163,40 @@ defmodule Claudio.Messages.Stream do
         data[:delta][:text]
     end)
     |> Stream.reject(&is_nil/1)
+  end
+
+  @doc ~S"""
+  Emits `{block_index, text}` for every `thinking_delta` with non-empty text.
+
+  The index tells one `thinking` block from the next: with `display: :updates` each
+  block is a separate progress note, and a block's first emission is the point the
+  API docs say to treat it as an update. Empty deltas (`display: :omitted`),
+  other deltas, other events and `{:error, _}` items emit nothing.
+
+  ## Example
+
+      response
+      |> Stream.parse_events()
+      |> Stream.accumulate_thinking()
+      |> Enum.each(fn {index, text} -> IO.puts("[#{index}] #{text}") end)
+  """
+  @spec accumulate_thinking(Enumerable.t()) :: Enumerable.t()
+  def accumulate_thinking(event_stream) do
+    Stream.flat_map(event_stream, fn
+      {:ok, %{event: "content_block_delta", data: data}} when is_map(data) ->
+        delta = data["delta"] || data[:delta] || %{}
+        type = delta["type"] || delta[:type]
+        text = delta["thinking"] || delta[:thinking]
+
+        if type == "thinking_delta" and is_binary(text) and text != "" do
+          [{data["index"] || data[:index], text}]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end)
   end
 
   @doc """

@@ -244,4 +244,69 @@ defmodule Claudio.Messages.StreamTest do
       assert response.usage.output_tokens_details == %{"thinking_tokens" => 25}
     end
   end
+
+  describe "accumulate_thinking/1" do
+    test "emits {index, text} for non-empty thinking deltas only" do
+      sse = [
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"a"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"b"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"s0"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":""}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hello"}}),
+        "",
+        ~s(event: content_block_delta),
+        ~s(data: {"type":"content_block_delta","index":3,"delta":{"type":"thinking_delta","thinking":"c"}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
+        ""
+      ]
+
+      result =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.accumulate_thinking()
+        |> Enum.to_list()
+
+      assert result == [{0, "a"}, {0, "b"}, {3, "c"}]
+    end
+
+    test "atom-keyed event data works too" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{index: 4, delta: %{type: "thinking_delta", thinking: "x"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{4, "x"}]
+    end
+
+    test "error items and other events are skipped, not raised on" do
+      events = [
+        {:error, :boom},
+        {:ok, %{event: "ping", data: %{}}},
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{"index" => 0, "delta" => %{"type" => "thinking_delta", "thinking" => "y"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{0, "y"}]
+    end
+  end
 end
