@@ -2084,4 +2084,38 @@ defmodule Claudio.Messages.RequestTest do
                request.context_management["edits"]
     end
   end
+
+  describe "add_message_with_image/5 media type (pre-release audit)" do
+    defp image_media_type(request) do
+      [%{"content" => [%{"source" => %{"media_type" => type}}, _]}] = request.messages
+      type
+    end
+
+    test "without a media type, PNG/GIF/WebP/JPEG are detected from the data" do
+      for {bytes, type} <- [
+            {<<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, 0, 0>>, "image/png"},
+            {"GIF89a" <> <<0, 0>>, "image/gif"},
+            {"RIFF" <> <<0, 0, 0, 0>> <> "WEBPVP8 ", "image/webp"},
+            {<<0xFF, 0xD8, 0xFF, 0xE0, 0, 0>>, "image/jpeg"}
+          ] do
+        request =
+          Request.new("m") |> Request.add_message_with_image(:user, "?", Base.encode64(bytes))
+
+        assert image_media_type(request) == type
+      end
+    end
+
+    test "unrecognized data keeps the documented image/jpeg default; an explicit type wins" do
+      assert Request.new("m")
+             |> Request.add_message_with_image(:user, "?", "abc")
+             |> image_media_type() ==
+               "image/jpeg"
+
+      png = Base.encode64(<<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A>>)
+
+      assert Request.new("m")
+             |> Request.add_message_with_image(:user, "?", png, "image/webp")
+             |> image_media_type() == "image/webp"
+    end
+  end
 end

@@ -227,20 +227,25 @@ defmodule Claudio.Messages.Request do
   @doc """
   Adds a text message with an image from a base64-encoded string.
 
+  Without `media_type`, PNG, GIF, WebP and JPEG are detected from the data's leading
+  bytes (a mismatched type is a 400); anything unrecognized is sent as `"image/jpeg"`.
+
   ## Example
 
       Request.new("claude-opus-5-5")
       |> Request.add_message_with_image(:user, "What's in this image?", base64_data, "image/jpeg")
   """
-  @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t()) :: t()
+  @spec add_message_with_image(t(), role(), String.t(), String.t(), String.t() | nil) :: t()
   def add_message_with_image(
         %__MODULE__{} = request,
         role,
         text,
         base64_data,
-        media_type \\ "image/jpeg"
+        media_type \\ nil
       )
       when role in [:user, :assistant] do
+    media_type = media_type || detect_image_type(base64_data)
+
     content = [
       %{
         "type" => "image",
@@ -1919,6 +1924,18 @@ defmodule Claudio.Messages.Request do
 
   defp cache_control_map(nil), do: %{"type" => "ephemeral"}
   defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
+
+  # Magic bytes of the image formats the API accepts; decodes only the first 16 bytes.
+  defp detect_image_type(base64_data) do
+    case Base.decode64(binary_part(base64_data, 0, min(byte_size(base64_data), 16)),
+           padding: false
+         ) do
+      {:ok, <<0x89, "PNG", _::binary>>} -> "image/png"
+      {:ok, <<"GIF8", _::binary>>} -> "image/gif"
+      {:ok, <<"RIFF", _::binary-size(4), "WEBP", _::binary>>} -> "image/webp"
+      _ -> "image/jpeg"
+    end
+  end
 
   defp normalize_content(content) when is_binary(content), do: content
   defp normalize_content(content) when is_list(content), do: Enum.map(content, &unwrap_typed/1)
