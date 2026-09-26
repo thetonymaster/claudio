@@ -4,7 +4,8 @@ defmodule Claudio.Messages.Stream do
 
   Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
   when `parse_events/1` reaches the terminal `message_stop` event and final usage
-  is available from `message_delta` frames.
+  is available from `message_delta` frames. Metadata carries `:input_tokens`,
+  `:output_tokens`, the cache counters and `:thinking_tokens` when present.
 
   ## Event Types
 
@@ -109,6 +110,21 @@ defmodule Claudio.Messages.Stream do
     |> maybe_put_usage_key(:output_tokens, usage)
     |> maybe_put_usage_key(:cache_creation_input_tokens, usage)
     |> maybe_put_usage_key(:cache_read_input_tokens, usage)
+    |> maybe_put_thinking_tokens(usage)
+  end
+
+  # The final message_delta carries usage.output_tokens_details.thinking_tokens.
+  defp maybe_put_thinking_tokens(metadata, usage) do
+    case usage["output_tokens_details"] || usage[:output_tokens_details] do
+      %{} = details ->
+        case details["thinking_tokens"] || details[:thinking_tokens] do
+          nil -> metadata
+          tokens -> Map.put(metadata, :thinking_tokens, tokens)
+        end
+
+      _ ->
+        metadata
+    end
   end
 
   defp maybe_put_usage_key(metadata, key, usage) do

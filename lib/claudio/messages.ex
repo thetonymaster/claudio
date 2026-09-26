@@ -363,8 +363,17 @@ defmodule Claudio.Messages do
       :cache_creation_input_tokens,
       :cache_read_input_tokens
     ])
+    |> Map.put(:thinking_tokens, thinking_tokens(usage))
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
+  end
+
+  # usage.output_tokens_details is carried raw by Response (atom or string keys).
+  defp thinking_tokens(usage) do
+    case usage[:output_tokens_details] || usage["output_tokens_details"] do
+      %{} = details -> details[:thinking_tokens] || details["thinking_tokens"]
+      _ -> nil
+    end
   end
 
   # Recursively convert atom keys to string keys for backward compatibility
