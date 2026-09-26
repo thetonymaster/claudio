@@ -72,6 +72,20 @@ Inside `describe "enable_adaptive_thinking/2"`, add:
       end
     end
 
+    test "block_binding composes with display: :summarized (spec Testing)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :summarized, block_binding: :drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "summarized",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
     test "block_binding composes with display: :updates — both betas (Review Focus 2)" do
       request =
         Request.new("claude-opus-5-5")
@@ -155,7 +169,16 @@ After that describe, add:
         |> Request.enable_thinking(%{type: "enabled", budget_tokens: 2048})
         |> Request.set_thinking_block_binding(:drop_block)
 
-      assert request.thinking == %{type: "enabled", budget_tokens: 2048, "block_binding" => @binding}
+      assert request.thinking == %{"block_binding" => @binding, type: "enabled", budget_tokens: 2048}
+    end
+
+    test "an atom :block_binding key is replaced, not duplicated" do
+      request =
+        Request.new("m")
+        |> Request.enable_thinking(%{type: "adaptive", block_binding: %{prefix_mismatch_behavior: "error"}})
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert request.thinking == %{"block_binding" => @binding, type: "adaptive"}
     end
 
     test "a later disable_thinking/1 replaces it" do
@@ -266,8 +289,10 @@ Directly after `enable_adaptive_thinking/2`, add:
                 "(enable_adaptive_thinking/2 or enable_thinking/2)"
 
       thinking ->
-        binding = block_binding!("set_thinking_block_binding/2", behavior)
-        add_beta(%{request | thinking: Map.put(thinking, "block_binding", binding)}, @block_binding_beta)
+        binding = %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+        # Drop an atom :block_binding so an atom-keyed raw map can't emit the key twice.
+        thinking = thinking |> Map.delete(:block_binding) |> Map.put("block_binding", binding)
+        add_beta(%{request | thinking: thinking}, @block_binding_beta)
     end
   end
 
@@ -385,6 +410,15 @@ git commit -m "feat(s15): thinking block_binding option and set_thinking_block_b
       assert message["input_transformations"] == []
     end
 
+    test "when both carry it, the event's top level wins (spec §3)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[{"type":"from_delta"}]},"usage":{"output_tokens":1},"input_transformations":[{"type":"from_top"}]})
+        )
+
+      assert message["input_transformations"] == [%{"type" => "from_top"}]
+    end
+
     test "a key inside delta replaces it too (nesting unverified, spec F8)" do
       {:ok, message} =
         binding_stream(
@@ -419,7 +453,7 @@ Moduledoc — append:
   `[]` when nothing changed; `nil` without the beta. Ignore unknown `type`/`reason` values.
 ```
 
-`stream.ex`, in the `message_delta` clause pipeline, add after the usage merge:
+`stream.ex`, in the `message_delta` clause pipeline, add as the last two steps — directly after S13's `|> maybe_update(data, "context_management")` line (post-S13/S14 the pipeline is `stop_reason`, `stop_sequence`, `stop_details`, S14's `container`, `maybe_put_usage`, S13's `context_management`):
 
 ```elixir
             # After a mid-stream fallback the final message_delta repeats input_transformations
@@ -481,14 +515,22 @@ defmodule Claudio.BlockBindingIntegrationTest do
       :ok ->
         client = create_client()
 
+        # Same setup as thinking_integration_test.exs: effort :high so adaptive thinking
+        # actually thinks, and room to finish so the reply has text after the thinking.
         request =
           Request.new(@model)
           |> Request.enable_adaptive_thinking()
+          |> Request.set_effort(:high)
           |> Request.add_message(:user, @question)
-          |> Request.set_max_tokens(1024)
+          |> Request.set_max_tokens(4096)
 
-        {:ok, response} = Messages.create(client, request)
-        {:ok, %{client: client, first: response}}
+        case Messages.create(client, request) do
+          {:ok, %Response{stop_reason: :end_turn} = response} ->
+            {:ok, %{client: client, first: response}}
+
+          other ->
+            raise "block-binding fixture call failed: #{inspect(other)}"
+        end
 
       {:skip, reason} ->
         {:skip, reason}
@@ -506,8 +548,9 @@ defmodule Claudio.BlockBindingIntegrationTest do
     |> Request.set_max_tokens(256)
   end
 
-  test "the first reply carries a signed thinking block", %{first: first} do
+  test "the first reply carries a signed thinking block and text", %{first: first} do
     assert Enum.any?(first.content, &match?(%{type: :thinking, signature: sig} when is_binary(sig), &1))
+    assert Response.get_text(first) != ""
   end
 
   test ":error rejects an edited prefix", %{client: client, first: first} do
@@ -552,7 +595,7 @@ Append to `Response.to_assistant_content/1`'s `@doc`:
 - [ ] **Step 4: Commit**
 
 ```bash
-mix format
+mix format && mix compile --warnings-as-errors
 git add test/integration/block_binding_integration_test.exs lib/claudio/messages/request.ex lib/claudio/messages/response.ex
 git commit -m "test(s15): live block_binding :error and :drop_block; doc pointers"
 ```
