@@ -15,7 +15,7 @@
 - Beta strings, verbatim: `context-management-2025-06-27` (clear_* edits and every `set_context_management/2`), `compact-2026-01-12` (threshold `compact_20260112` edit; unsigned compaction block replay), `compact-2026-09-04` (on-demand `compaction` field; signed compaction block replay).
 - Edit type strings, verbatim: `clear_tool_uses_20250919`, `clear_thinking_20251015`, `compact_20260112`. On-demand field: `%{"type" => "summarize"}`.
 - `clear_thinking_20251015` is always at index 0 of `edits` (API 400 otherwise, spec F4).
-- Model-agnostic, API-authoritative: no local checks of trigger minimums (50000), value ranges, duplicate edits, model support, or the on-demand incompatibilities (spec F13). Local `ArgumentError` only for shapes that can't be meant (spec §1, §2). Unknown option keys raise via `Keyword.validate!/2` (same as `enable_adaptive_thinking/2`).
+- Model-agnostic, API-authoritative: no local checks of trigger minimums (50000), value ranges, duplicate edits, model support, or the on-demand incompatibilities (spec F13). Local `ArgumentError` only for shapes that can't be meant (spec §1, §2). Unknown option keys raise via `Keyword.validate!/2` (same as `enable_adaptive_thinking/2`); its message names the unknown key but not the function — accepted deviation from spec §1's wording (Q to confirm at plan review).
 - Enumerated values are atoms (`:input_tokens`, `:tool_uses`, `:all`); errors name the function, the option and `inspect/1` of the value.
 - Module attributes used by `add_message/3` (~line 121) must be defined **above** it — next to `@fallback_beta` (~line 74).
 - Existing public signatures unchanged. `parse_stop_reason("compaction")` becomes `:compaction` (was the string `"compaction"`) — a CHANGELOG "Changed" entry. No `@version` bump; CHANGELOG under `## [Unreleased] — targets 0.7.0`.
@@ -140,6 +140,10 @@ Then add a new `describe` directly after that block:
                [%{"type" => "clear_thinking_20251015"}]
     end
 
+    test "add_compaction/2 with no options sends only the type" do
+      assert edits(Request.new("m") |> Request.add_compaction()) == [%{"type" => "compact_20260112"}]
+    end
+
     test "add_compaction/2 maps its options and declares compact-2026-01-12" do
       request =
         Request.new("claude-opus-5-5")
@@ -231,6 +235,15 @@ Then add a new `describe` directly after that block:
       end
 
       assert_raise ArgumentError, fn -> Request.add_compaction(r, bogus: 1) end
+
+      # false is not "absent": it must be rejected, not sent.
+      assert_raise ArgumentError, ~r/add_clear_tool_uses\/2 :keep/, fn ->
+        Request.add_clear_tool_uses(r, keep: false)
+      end
+
+      assert_raise ArgumentError, ~r/add_compaction\/2 :trigger/, fn ->
+        Request.add_compaction(r, trigger: false)
+      end
     end
   end
 ```
@@ -238,7 +251,7 @@ Then add a new `describe` directly after that block:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/request_test.exs`
-Expected: FAIL — `UndefinedFunctionError` for `Request.add_clear_tool_uses/1` (and `/2`, `add_clear_thinking`, `add_compaction`); the two new `set_context_management/2` tests fail on `required_betas` (`["context-management-2025-06-27"]` only). The `defp edits/1` inside `describe` compiles (ExUnit allows it) — if the compiler rejects it, move it to module level and ledger the ruling.
+Expected: FAIL — `UndefinedFunctionError` for `Request.add_clear_tool_uses/1` (and `/2`, `add_clear_thinking`, `add_compaction`); the new "a raw compact_20260112 edit also declares compact-2026-01-12" test fails on `required_betas` (`["context-management-2025-06-27"]` only). "without a compact edit only the context-management beta is declared" **passes already** — it is a regression pin. The `defp edits/1` inside `describe` compiles (ExUnit allows it) — if the compiler rejects it, move it to module level and ledger the ruling.
 
 - [ ] **Step 3: Implement**
 
@@ -305,12 +318,11 @@ Replace `set_context_management/2` and its `@doc` (~lines 658-675) with:
 
     edit =
       %{"type" => "clear_tool_uses_20250919"}
-      |> maybe_put("trigger", opts[:trigger] && clear_trigger!(opts[:trigger]))
-      |> maybe_put("keep", opts[:keep] && count_map!(fun, :keep, "tool_uses", opts[:keep]))
+      |> maybe_put("trigger", map_opt(opts, :trigger, &clear_trigger!/1))
+      |> maybe_put("keep", map_opt(opts, :keep, &count_map!(fun, :keep, "tool_uses", &1)))
       |> maybe_put(
         "clear_at_least",
-        opts[:clear_at_least] &&
-          count_map!(fun, :clear_at_least, "input_tokens", opts[:clear_at_least])
+        map_opt(opts, :clear_at_least, &count_map!(fun, :clear_at_least, "input_tokens", &1))
       )
       |> maybe_put("exclude_tools", opts[:exclude_tools])
       |> maybe_put("clear_tool_inputs", Keyword.get(opts, :clear_tool_inputs))
@@ -374,12 +386,20 @@ Replace `set_context_management/2` and its `@doc` (~lines 658-675) with:
       %{"type" => "compact_20260112"}
       |> maybe_put(
         "trigger",
-        opts[:trigger] && count_map!("add_compaction/2", :trigger, "input_tokens", opts[:trigger])
+        map_opt(opts, :trigger, &count_map!("add_compaction/2", :trigger, "input_tokens", &1))
       )
       |> maybe_put("pause_after_compaction", Keyword.get(opts, :pause_after_compaction))
       |> maybe_put("instructions", opts[:instructions])
 
     request |> put_edit(edit, :last) |> add_beta(@compaction_beta)
+  end
+
+  # nil means "not given"; any other value (including false) is validated by `fun`.
+  defp map_opt(opts, key, fun) do
+    case Keyword.get(opts, key) do
+      nil -> nil
+      value -> fun.(value)
+    end
   end
 
   defp clear_trigger!({kind, n}) when kind in [:input_tokens, :tool_uses] and is_integer(n),
@@ -693,6 +713,51 @@ Add at the end of `test/messages/stream_test.exs` (before the final `end`). The 
              ]
     end
 
+    test "atom-keyed event data: compaction_delta still fills the block" do
+      events = [
+        {:ok, %{event: "content_block_start", data: %{index: 0, content_block: %{type: "compaction", content: nil}}}},
+        {:ok, %{event: "content_block_delta", data: %{index: 0, delta: %{type: "compaction_delta", content: "S"}}}},
+        {:ok, %{event: "content_block_stop", data: %{index: 0}}}
+      ]
+
+      assert {:ok, %{"content" => [%{type: "compaction", content: "S"}]}} =
+               ClaudioStream.build_final_message(events)
+    end
+
+    test "on-demand: a whole signed block in content_block_start, no deltas (spec F14)" do
+      sse = [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0}}}),
+        "",
+        ~s(event: content_block_start),
+        ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"Sum.","signature":"sig"}}),
+        "",
+        ~s(event: ping),
+        ~s(data: {"type":"ping"}),
+        "",
+        ~s(event: content_block_stop),
+        ~s(data: {"type":"content_block_stop","index":0}),
+        "",
+        ~s(event: message_delta),
+        ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction"},"usage":{"output_tokens":0}}),
+        ""
+      ]
+
+      {:ok, message} =
+        [Enum.join(sse, "\n") <> "\n"]
+        |> ClaudioStream.parse_events()
+        |> ClaudioStream.build_final_message()
+
+      response = Claudio.Messages.Response.from_map(message)
+
+      # Byte-exact, signature included — what apply_compaction/2 (Task 4) replays.
+      assert response.stop_reason == :compaction
+
+      assert Claudio.Messages.Response.to_assistant_content(response) == [
+               %{"type" => "compaction", "content" => "Sum.", "signature" => "sig"}
+             ]
+    end
+
     test "a message_delta without context_management keeps the message_start value" do
       sse = [
         ~s(event: message_start),
@@ -716,7 +781,7 @@ Add at the end of `test/messages/stream_test.exs` (before the final `end`). The 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `mix test test/messages/stream_test.exs`
-Expected: FAIL in the first test — `message["content"]` is `[%{"type" => "compaction", "content" => nil}]` (the catch-all drops the delta) and `message["context_management"]` is `nil` (message_start carried `null`; the delta's top-level key is ignored). The second test passes already (it pins that the new code doesn't overwrite with `nil`).
+Expected: FAIL in "compaction_delta fills the block…" — `message["content"]` is `[%{"type" => "compaction", "content" => nil}]` (the catch-all drops the delta) and `message["context_management"]` is `nil` (message_start carried `null`; the delta's top-level key is ignored) — and in "atom-keyed event data" (`content: nil`). Already passing (regression pins): "on-demand: a whole signed block…" (no deltas; Task 2 typed the block) and "a message_delta without context_management keeps the message_start value".
 
 - [ ] **Step 3: Implement**
 
@@ -929,7 +994,7 @@ After `describe "context-editing builders"`, add:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `mix test test/request_test.exs`
-Expected: FAIL — `UndefinedFunctionError` for `request_compaction/1,2` and `apply_compaction/2`; the `add_message/3` compaction tests fail on `required_betas` (`[]`). The "declares nothing" test passes already.
+Expected: FAIL — `UndefinedFunctionError` for `request_compaction/1,2` and `apply_compaction/2`; the `add_message/3` compaction tests fail on `required_betas` (`[]`). Two tests pass already (regression pins): "content without a compaction block declares nothing" and "unset: to_map/1 has no compaction key".
 
 - [ ] **Step 3: Implement**
 
@@ -996,7 +1061,9 @@ and append to its `@doc` (after the fallback sentence):
   a signed `compaction` block with `stop_reason: :compaction`; continue with
   `apply_compaction/2`. The API rejects this combined with `context_management`,
   `stop_sequences`, `output_config.format`, a forced `tool_choice`, or a last assistant
-  turn ending in an unanswered `tool_use` — those are left to its 400.
+  turn ending in an unanswered `tool_use` — those are left to its 400. To drop
+  context-management edits set earlier, use `%{request | context_management: nil}`
+  (`set_context_management/2` takes a map, and `%{}` would still be sent).
 
   ## Options
 
@@ -1026,7 +1093,9 @@ and append to its `@doc` (after the fallback sentence):
   requires), and clears `compaction` so the next call is a normal turn. Everything else
   — `system`, `tools`, `thinking`, `context_management` (a threshold replay needs its
   `compact_20260112` edit), betas — is kept. The replay beta is declared by
-  `add_message/3`. Add the next user turn after it.
+  `add_message/3`. Add the next user turn after it — also after a
+  `pause_after_compaction: true` reply, whose content is only the block (a
+  `[assistant: [block], user: …]` history is accepted, probe P8).
 
   Raises `ArgumentError` when the response has no `compaction` block.
   """
@@ -1124,6 +1193,7 @@ defmodule Claudio.ContextManagementIntegrationTest do
   end
 
   test "on-demand compaction round trip", %{client: client} do
+    # History ending in an assistant turn is the exact shape probe P1 sent (→ 200).
     history =
       Request.new(@model)
       |> Request.add_message(:user, "My name is Q. Remember the file lib/claudio/messages.ex.")
@@ -1144,7 +1214,8 @@ defmodule Claudio.ContextManagementIntegrationTest do
       |> Request.set_max_tokens(64)
 
     assert next.compaction == nil
-    assert {:ok, %Response{stop_reason: :end_turn}} = Messages.create(client, next)
+    assert {:ok, %Response{stop_reason: stop}} = Messages.create(client, next)
+    assert stop in [:end_turn, :max_tokens]
   end
 
   defp threshold_summary do
@@ -1189,7 +1260,7 @@ Expected: 4 tests, 0 failures (needs `ANTHROPIC_API_KEY`; without it the module 
 - [ ] **Step 3: Commit**
 
 ```bash
-mix format
+mix format && mix compile --warnings-as-errors
 git add test/integration/context_management_integration_test.exs
 git commit -m "test(s13): live context management and compaction round trips"
 ```
