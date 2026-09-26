@@ -870,10 +870,11 @@ with
   `message_delta.delta` next to `stop_reason`; that location is unconfirmed in
   Anthropic's streaming docs.
 
-  `diagnostics` is carried raw: `nil`, or a map whose `"cache_miss_reason"` is `nil`
-  (no miss, or the comparison is still pending) or a reason map such as
-  `%{"type" => "system_changed", "cache_missed_input_tokens" => n}` (see
-  `Request.enable_cache_diagnostics/2`).
+  `diagnostics` is carried raw (see `Request.enable_cache_diagnostics/2`):
+  `nil` when diagnostics were not requested, there was nothing to compare, or the
+  comparison found no divergence; `%{"cache_miss_reason" => nil}` when the comparison
+  was still pending (inconclusive — check the next turn); otherwise a reason map such
+  as `%{"cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => n}}`.
 
   `usage` keeps every field the API returns: documented fields are atom keys; any
   other field keeps the key it arrived with (so it may be a string key).

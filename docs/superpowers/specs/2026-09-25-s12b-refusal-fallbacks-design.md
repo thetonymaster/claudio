@@ -59,3 +59,13 @@ the serving model, `usage.iterations`, and new `stop_details` fields.
    is there a documented test trigger, or do we rely on fixtures from REF/RF examples?
 4. `Claudio.Batches`: fallbacks are not supported there (F9) — raise locally when a request
    with `fallbacks` goes into a batch, or leave it to the API?
+5. **Continuation contract (from PR #20 CodeRabbit review — unverified):** CodeRabbit claims
+   that when continuing after a fallback, blocks produced *before* the final fallback
+   (`thinking`, `redacted_thinking`, `connector_text`, client `tool_use`) must be dropped, and
+   `server_tool_use` kept only when its matching result is present — while `fallback` blocks
+   stay in place. If RF confirms this, `to_assistant_content/1`'s raw passthrough (F10) is
+   **not** sufficient and S12b must implement the rule, with tests. Verify against RF first.
+6. **Multiple fallback hops (same source — unverified):** can one response contain several
+   `fallback` blocks (up to three fallback models, F1)? If so, the reader should be
+   `Response.fallbacks/1` returning all blocks in content order, and `served_by/1` should
+   report the final model (top-level `model`, F4).

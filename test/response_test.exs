@@ -811,4 +811,24 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.from_map(%{"content" => [], "diagnostics" => nil}).diagnostics == nil
     end
   end
+
+  describe "from_map/1 usage with mixed token-key styles" do
+    test "string input_tokens + atom output_tokens is normalised, not passed through raw" do
+      usage =
+        Response.from_map(%{
+          "content" => [],
+          "usage" => %{"input_tokens" => 4, :output_tokens => 9, "inference_geo" => "us"}
+        }).usage
+
+      assert usage.input_tokens == 4
+      assert usage.output_tokens == 9
+      assert usage.inference_geo == "us"
+      refute Map.has_key?(usage, "input_tokens")
+    end
+
+    test "a usage map missing a token count is still returned as-is" do
+      assert Response.from_map(%{"content" => [], "usage" => %{"output_tokens" => 3}}).usage ==
+               %{"output_tokens" => 3}
+    end
+  end
 end

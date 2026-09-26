@@ -955,8 +955,10 @@ defmodule Claudio.Messages.Request do
   @doc """
   Asks for cache diagnostics (GA, no beta): the response's `diagnostics` explains a
   prompt-cache miss against `previous_message_id` (the `id` of an earlier response in
-  the same conversation), or is `nil` when there is nothing to compare. Not sent by
-  `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
+  the same conversation). It is `nil` when there is nothing to compare or no divergence
+  was found, and `%{"cache_miss_reason" => nil}` when the comparison was still pending.
+  Not sent by `Claudio.Messages.count_tokens/2` when given a `Request` (that endpoint
+  rejects it).
   """
   @spec enable_cache_diagnostics(t(), String.t() | nil) :: t()
   def enable_cache_diagnostics(%__MODULE__{} = request, previous_message_id \\ nil) do
