@@ -333,7 +333,7 @@ defmodule Claudio.Messages.ResponseTest do
                %{
                  "type" => "mcp_tool_result",
                  "tool_use_id" => "mcp_1",
-                  "content" => "ok",
+                 "content" => "ok",
                  "is_error" => false
                }
              ]
