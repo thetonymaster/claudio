@@ -831,4 +831,121 @@ defmodule Claudio.Messages.ResponseTest do
                %{"output_tokens" => 3}
     end
   end
+
+  # RF's documented example block (refusals-and-fallback, fetched 2026-09-25).
+  @fallback_block %{
+    "type" => "fallback",
+    "from" => %{"model" => "claude-fable-5"},
+    "to" => %{"model" => "claude-opus-4-8"}
+  }
+
+  describe "from_map/1 fallback blocks" do
+    test "string-keyed block parses to a typed map that keeps the original" do
+      [block] = Response.from_map(%{"content" => [@fallback_block]}).content
+
+      assert block == %{
+               type: :fallback,
+               from: %{"model" => "claude-fable-5"},
+               to: %{"model" => "claude-opus-4-8"},
+               trigger: nil,
+               raw: @fallback_block
+             }
+    end
+
+    test "optional trigger is kept" do
+      trigger = %{"type" => "refusal", "category" => "cyber"}
+
+      [block] =
+        Response.from_map(%{"content" => [Map.put(@fallback_block, "trigger", trigger)]}).content
+
+      assert block.trigger == trigger
+    end
+
+    test "atom-keyed block parses too" do
+      raw = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+      [block] = Response.from_map(%{content: [raw]}).content
+
+      assert %{type: :fallback, from: %{model: "a"}, to: %{model: "b"}, raw: ^raw} = block
+    end
+
+    test "to_assistant_content/1 re-emits the original block, unknown sub-fields included" do
+      raw = Map.put(@fallback_block, "future", %{"x" => 1})
+
+      response =
+        Response.from_map(%{
+          "content" => [raw, %{"type" => "text", "text" => "Hi"}]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               raw,
+               %{"type" => "text", "text" => "Hi"}
+             ]
+    end
+  end
+
+  describe "fallbacks/1" do
+    test "returns [] without fallback blocks" do
+      response = Response.from_map(%{"content" => [%{"type" => "text", "text" => "x"}]})
+      assert Response.fallbacks(response) == []
+    end
+
+    test "returns every fallback block in content order" do
+      second = %{
+        "type" => "fallback",
+        "from" => %{"model" => "claude-opus-4-8"},
+        "to" => %{"model" => "claude-opus-5"}
+      }
+
+      response =
+        Response.from_map(%{
+          "content" => [
+            @fallback_block,
+            %{"type" => "text", "text" => "x"},
+            second
+          ]
+        })
+
+      assert [%{raw: @fallback_block}, %{raw: ^second}] = Response.fallbacks(response)
+    end
+  end
+
+  describe "served_by/1" do
+    test "is the top-level model when there is no fallback block" do
+      response = Response.from_map(%{"model" => "claude-opus-5-5", "content" => []})
+      assert Response.served_by(response) == "claude-opus-5-5"
+    end
+
+    test "is the last fallback block's to.model, even when model names the declining model" do
+      second = %{
+        "type" => "fallback",
+        "from" => %{"model" => "claude-opus-4-8"},
+        "to" => %{"model" => "claude-opus-5"}
+      }
+
+      response =
+        Response.from_map(%{
+          "model" => "claude-fable-5",
+          "content" => [@fallback_block, second]
+        })
+
+      assert Response.served_by(response) == "claude-opus-5"
+    end
+
+    test "reads an atom-keyed to.model" do
+      response =
+        Response.from_map(%{
+          model: "a",
+          content: [%{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}]
+        })
+
+      assert Response.served_by(response) == "b"
+    end
+
+    test "falls back to model when the block has no to.model" do
+      response =
+        Response.from_map(%{"model" => "m", "content" => [%{"type" => "fallback"}]})
+
+      assert Response.served_by(response) == "m"
+    end
+  end
 end

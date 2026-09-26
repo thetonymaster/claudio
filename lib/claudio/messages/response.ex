@@ -38,6 +38,7 @@ defmodule Claudio.Messages.Response do
           | mcp_tool_result_block()
           | server_tool_use_block()
           | web_search_tool_result_block()
+          | fallback_block()
 
   @type text_block :: %{
           :type => :text,
@@ -96,6 +97,18 @@ defmodule Claudio.Messages.Response do
           type: :web_search_tool_result,
           tool_use_id: String.t(),
           content: term()
+        }
+
+  @typedoc """
+  A server-side fallback handoff (`Request.set_fallbacks/2`). `raw` is the block as
+  received; `Response.to_assistant_content/1` re-emits it unchanged.
+  """
+  @type fallback_block :: %{
+          type: :fallback,
+          from: map() | nil,
+          to: map() | nil,
+          trigger: map() | nil,
+          raw: map()
         }
 
   @typedoc """
@@ -244,6 +257,32 @@ defmodule Claudio.Messages.Response do
   @spec get_mcp_tool_uses(t(), String.t()) :: list(mcp_tool_use_block())
   def get_mcp_tool_uses(%__MODULE__{content: content}, server_name) when is_binary(server_name) do
     Enum.filter(content, &(&1[:type] == :mcp_tool_use && &1[:server_name] == server_name))
+  end
+
+  @doc """
+  Returns every `fallback` block, in content order (`[]` when the request was not
+  retried on a fallback model). One block marks each handoff between models.
+  """
+  @spec fallbacks(t()) :: [fallback_block()]
+  def fallbacks(%__MODULE__{content: content}) do
+    for %{type: :fallback} = block <- content, do: block
+  end
+
+  @doc """
+  Returns the model that produced the returned message: the last `fallback` block's
+  `to.model`, else `model`.
+
+  Not simply `model`: a streamed response that fell back mid-output keeps the
+  requested (declining) model from `message_start` in `model`. When every model in
+  the chain declined (`stop_reason: :refusal`), it names the model whose refusal was
+  returned.
+  """
+  @spec served_by(t()) :: String.t() | nil
+  def served_by(%__MODULE__{model: model} = response) do
+    case List.last(fallbacks(response)) do
+      %{to: to} when is_map(to) -> Map.get(to, "model") || Map.get(to, :model) || model
+      _ -> model
+    end
   end
 
   @doc """
@@ -399,10 +438,22 @@ defmodule Claudio.Messages.Response do
     }
   end
 
+  defp parse_content_block(%{type: "fallback"} = block) do
+    fallback_block(block, block[:from], block[:to], block[:trigger])
+  end
+
+  defp parse_content_block(%{"type" => "fallback"} = block) do
+    fallback_block(block, block["from"], block["to"], block["trigger"])
+  end
+
   defp parse_content_block(block), do: block
 
   defp text_block(text, nil), do: %{type: :text, text: text}
   defp text_block(text, citations), do: %{type: :text, text: text, citations: citations}
+
+  defp fallback_block(raw, from, to, trigger) do
+    %{type: :fallback, from: from, to: to, trigger: trigger, raw: raw}
+  end
 
   defp block_to_api(%{type: :text, text: text}) do
     %{"type" => "text", "text" => text}
@@ -461,6 +512,8 @@ defmodule Claudio.Messages.Response do
       "content" => block.content
     }
   end
+
+  defp block_to_api(%{type: :fallback, raw: raw}), do: raw
 
   defp block_to_api(block), do: block
 
