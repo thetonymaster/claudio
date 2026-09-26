@@ -13,8 +13,10 @@ defmodule Claudio.Messages.Response do
   was still pending (inconclusive — check the next turn); otherwise a reason map such
   as `%{"cache_miss_reason" => %{"type" => "system_changed", "cache_missed_input_tokens" => n}}`.
 
-  `usage` keeps every field the API returns: documented fields are atom keys; any
-  other field keeps the key it arrived with (so it may be a string key).
+  `usage` keeps every field the API returns: documented fields are atom keys (`nil`
+  when absent); any other field keeps the key it arrived with (so it may be a string
+  key). This applies when both `input_tokens` and `output_tokens` are present (either
+  key style); a usage map missing one of them is returned as received.
   """
 
   @type stop_reason ::
@@ -99,6 +101,7 @@ defmodule Claudio.Messages.Response do
   @typedoc """
   Token usage. Documented fields are atom keys (`nil` when the API did not send
   them); any other field the API returns is kept under the key it arrived with.
+  A usage map missing `input_tokens` or `output_tokens` is returned as received.
   """
   @type usage :: %{
           optional(atom() | String.t()) => term(),

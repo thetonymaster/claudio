@@ -569,10 +569,14 @@ defmodule Claudio.MessagesTest do
         {:ok, body, conn} = Plug.Conn.read_body(conn)
         payload = Jason.decode!(body)
 
+        [beta_header] = Plug.Conn.get_req_header(conn, "anthropic-beta")
+
+        # The count endpoint needs the fast-mode beta for `speed` (probed 2026-09-25).
         status =
-          if Map.has_key?(payload, "inference_geo") or Map.has_key?(payload, "diagnostics"),
-            do: 400,
-            else: 200
+          if Map.has_key?(payload, "inference_geo") or Map.has_key?(payload, "diagnostics") or
+               not String.contains?(beta_header, "fast-mode-2026-02-01"),
+             do: 400,
+             else: 200
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")

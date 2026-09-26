@@ -939,7 +939,8 @@ defmodule Claudio.Messages.Request do
   @doc """
   Sets `inference_geo` — where the request is processed (`:global` or `:us`; GA, no
   beta). Without it the workspace default applies. `:us` is billed at 1.1× standard
-  pricing. Not sent by `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
+  pricing. Not sent by `Claudio.Messages.count_tokens/2` when given a `Request`
+  (that endpoint rejects it).
   The response's `usage.inference_geo` reports where it ran.
   """
   @spec set_inference_geo(t(), :global | :us) :: t()

@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (same runtime as `20260120`).
 - `Response.usage` keeps every field the API returns: documented fields are atom keys
   (new: `cache_creation`, `service_tier`, `inference_geo`, `speed`); any other field is kept
-  under the key it arrived with instead of being dropped.
+  under the key it arrived with instead of being dropped. Documented fields the API did not
+  send now appear as `nil`, so exact `usage == %{...}` comparisons need the new keys.
 - `Claudio.Messages.count_tokens/2` (Request form) also drops `inference_geo` and `diagnostics`,
   which the count endpoint rejects.
 
