@@ -1449,4 +1449,29 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.from_map(%{"content" => []}).container == nil
     end
   end
+
+  describe "from_map/1 input_transformations (S15)" do
+    @dropped [
+      %{
+        "type" => "thinking_dropped",
+        "path" => "messages.1.content.0",
+        "reason" => "prefix_binding_mismatch"
+      }
+    ]
+
+    test "kept raw: one entry, empty list, atom top-level key" do
+      assert Response.from_map(%{"content" => [], "input_transformations" => @dropped}).input_transformations ==
+               @dropped
+
+      assert Response.from_map(%{"content" => [], "input_transformations" => []}).input_transformations ==
+               []
+
+      assert Response.from_map(%{content: [], input_transformations: @dropped}).input_transformations ==
+               @dropped
+    end
+
+    test "nil when absent — the beta was not sent (Review Focus 5)" do
+      assert Response.from_map(%{"content" => []}).input_transformations == nil
+    end
+  end
 end

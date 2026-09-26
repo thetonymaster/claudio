@@ -626,4 +626,61 @@ defmodule Claudio.Messages.StreamTest do
       assert message["container"] == %{"id" => "container_1", "expires_at" => "t2"}
     end
   end
+
+  describe "build_final_message/1 input_transformations (S15)" do
+    @start_entry ~s([{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}])
+
+    defp binding_stream(delta_event) do
+      [
+        ~s(event: message_start),
+        ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","input_transformations":#{@start_entry},"usage":{"input_tokens":1,"output_tokens":0}}}),
+        "",
+        ~s(event: message_delta),
+        "data: " <> delta_event,
+        ""
+      ]
+      |> Enum.join("\n")
+      |> Kernel.<>("\n")
+      |> List.wrap()
+      |> ClaudioStream.parse_events()
+      |> ClaudioStream.build_final_message()
+    end
+
+    test "message_start value survives a delta without the key (Review Focus 4)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}})
+        )
+
+      assert [%{"type" => "thinking_dropped"}] =
+               Claudio.Messages.Response.from_map(message).input_transformations
+    end
+
+    test "a top-level key on message_delta replaces it (post-fallback copy)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1},"input_transformations":[]})
+        )
+
+      assert message["input_transformations"] == []
+    end
+
+    test "when both carry it, the event's top level wins (spec §3)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[{"type":"from_delta"}]},"usage":{"output_tokens":1},"input_transformations":[{"type":"from_top"}]})
+        )
+
+      assert message["input_transformations"] == [%{"type" => "from_top"}]
+    end
+
+    test "a key inside delta replaces it too (nesting unverified, spec F8)" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[{"type":"thinking_dropped","path":"messages.3.content.0","reason":"model_binding_mismatch"}]},"usage":{"output_tokens":1}})
+        )
+
+      assert [%{"reason" => "model_binding_mismatch"}] = message["input_transformations"]
+    end
+  end
 end

@@ -25,6 +25,12 @@ defmodule Claudio.Messages.Response do
   when the reply is only that block (on-demand compaction, or `pause_after_compaction`).
   Continue with `Request.apply_compaction/2`.
 
+  `input_transformations` (only with the `thinking-binding-controls-2026-08-01` beta, see
+  `Request.set_thinking_block_binding/2`) is the raw list of what the API changed in the
+  input: entries `%{"type" => "thinking_dropped" | "thinking_mismatch_allowed", "path" =>
+  "messages.N.content.M", "reason" => "prefix_binding_mismatch" | "model_binding_mismatch"}`.
+  `[]` when nothing changed; `nil` without the beta. Ignore unknown `type`/`reason` values.
+
   `usage` keeps every field the API returns: documented fields are atom keys (`nil`
   when absent); any other field keeps the key it arrived with (so it may be a string
   key). This applies when both `input_tokens` and `output_tokens` are present (either
@@ -198,6 +204,7 @@ defmodule Claudio.Messages.Response do
           diagnostics: map() | nil,
           context_management: map() | nil,
           container: map() | nil,
+          input_transformations: [map()] | nil,
           usage: usage()
         }
 
@@ -213,6 +220,7 @@ defmodule Claudio.Messages.Response do
     :diagnostics,
     :context_management,
     :container,
+    :input_transformations,
     :usage
   ]
 
@@ -233,6 +241,7 @@ defmodule Claudio.Messages.Response do
       diagnostics: data[:diagnostics] || data["diagnostics"],
       context_management: data[:context_management] || data["context_management"],
       container: data[:container] || data["container"],
+      input_transformations: data[:input_transformations] || data["input_transformations"],
       usage: parse_usage(data[:usage] || data["usage"])
     }
   end
