@@ -3,6 +3,200 @@ defmodule Claudio.Messages.StreamTest do
 
   alias Claudio.Messages.Stream, as: ClaudioStream
 
+  describe "parse_events/1 SSE framing (pre-release audit)" do
+    # A realistic stream with a multi-byte character, so byte-level splits can land inside
+    # a UTF-8 sequence and inside every line of every event.
+    @sse_stream Enum.join(
+                  [
+                    ~s(event: message_start),
+                    ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":3,"output_tokens":0}}}),
+                    "",
+                    ~s(event: content_block_start),
+                    ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                    "",
+                    ~s(event: ping),
+                    ~s(data: {"type":"ping"}),
+                    "",
+                    ~s(event: content_block_delta),
+                    ~s(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Olá, café ☕"}}),
+                    "",
+                    ~s(event: content_block_stop),
+                    ~s(data: {"type":"content_block_stop","index":0}),
+                    "",
+                    ~s(event: message_delta),
+                    ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}),
+                    "",
+                    ~s(event: message_stop),
+                    ~s(data: {"type":"message_stop"}),
+                    "",
+                    ""
+                  ],
+                  "\n"
+                )
+
+    defp split_at(binary, offset) do
+      <<a::binary-size(offset), b::binary>> = binary
+      [a, b]
+    end
+
+    test "an event split across two chunks at ANY byte offset parses identically" do
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      assert [%{"text" => "Olá, café ☕"}] = expected["content"]
+
+      for offset <- 1..(byte_size(@sse_stream) - 1) do
+        assert {:ok, ^expected} =
+                 @sse_stream
+                 |> split_at(offset)
+                 |> ClaudioStream.parse_events()
+                 |> ClaudioStream.build_final_message(),
+               "split at byte #{offset}"
+      end
+    end
+
+    test "one byte per chunk parses identically" do
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      chunks = for <<byte::binary-size(1) <- @sse_stream>>, do: byte
+
+      assert {:ok, ^expected} =
+               chunks |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "CRLF line endings are accepted" do
+      crlf = String.replace(@sse_stream, "\n", "\r\n")
+
+      {:ok, expected} =
+        [@sse_stream] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+
+      assert {:ok, ^expected} =
+               [crlf] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "multiple data: lines in one event are joined with a newline (SSE spec)" do
+      events =
+        ["event: ping\ndata: {\"type\":\ndata: \"ping\"}\n\n"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+
+    test "a final event without a trailing blank line is still emitted" do
+      events =
+        ["event: ping\ndata: {\"type\":\"ping\"}"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+
+    test "an event with no data line is not dispatched (SSE spec)" do
+      events =
+        ["event: ping\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\n"]
+        |> ClaudioStream.parse_events()
+        |> Enum.to_list()
+
+      assert events == [{:ok, %{event: "ping", data: %{"type" => "ping"}}}]
+    end
+  end
+
+  describe "build_final_message/1 robustness (pre-release audit)" do
+    defp ev(event, data), do: {:ok, %{event: event, data: data}}
+
+    defp start(i, block),
+      do:
+        ev("content_block_start", %{
+          "type" => "content_block_start",
+          "index" => i,
+          "content_block" => block
+        })
+
+    defp text_delta(i, text),
+      do:
+        ev("content_block_delta", %{
+          "index" => i,
+          "delta" => %{"type" => "text_delta", "text" => text}
+        })
+
+    defp stop(i), do: ev("content_block_stop", %{"index" => i})
+
+    test "interleaved blocks are kept, in index order" do
+      events = [
+        start(0, %{"type" => "text", "text" => ""}),
+        start(1, %{"type" => "text", "text" => ""}),
+        text_delta(1, "one"),
+        text_delta(0, "zero"),
+        stop(1),
+        stop(0)
+      ]
+
+      assert {:ok, %{"content" => [%{"text" => "zero"}, %{"text" => "one"}]}} =
+               ClaudioStream.build_final_message(events)
+    end
+
+    test "a block that never closes is an error, not silently dropped content" do
+      events = [start(0, %{"type" => "text", "text" => ""}), text_delta(0, "partial")]
+
+      assert {:error, {:incomplete_stream, [0]}} = ClaudioStream.build_final_message(events)
+    end
+
+    test "hand-built events with nil data don't crash" do
+      events = [
+        ev("message_start", nil),
+        ev("message_delta", nil),
+        start(0, %{"type" => "text", "text" => "x"}),
+        stop(0)
+      ]
+
+      assert {:ok, %{"content" => [%{"text" => "x"}]}} = ClaudioStream.build_final_message(events)
+    end
+  end
+
+  describe "stream usage telemetry (pre-release audit)" do
+    def forward_usage(_name, _measurements, metadata, pid), do: send(pid, {:usage, metadata})
+
+    test "message_start usage is merged with message_delta usage (delta wins)" do
+      id = "stream-usage-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:claudio, :messages, :stream, :usage],
+          &__MODULE__.forward_usage/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      sse =
+        Enum.join(
+          [
+            ~s(event: message_start),
+            ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":1}}}),
+            "",
+            ~s(event: message_delta),
+            ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}),
+            "",
+            ~s(event: message_stop),
+            ~s(data: {"type":"message_stop"}),
+            "",
+            ""
+          ],
+          "\n"
+        )
+
+      [sse] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:usage, metadata}
+      assert metadata.input_tokens == 10
+      assert metadata.cache_read_input_tokens == 4
+      assert metadata.output_tokens == 9
+    end
+  end
+
   describe "parse_events/1 key convention" do
     # Earlier Claudio versions decoded event data with `Poison.decode(keys: :atoms)`,
     # producing atom-keyed data maps. Downstream consumers (e.g. Normandy's
