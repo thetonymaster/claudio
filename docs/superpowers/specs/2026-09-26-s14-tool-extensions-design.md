@@ -47,6 +47,7 @@ dispatches by name only, never echoes `toolset_name`, never carries the containe
 | F15 | Earlier computer versions: `computer_20251124` (beta `computer-use-2025-11-24`; 5.x, Opus 4.5–4.8, Sonnet 4.6); `computer_20250124` (beta `computer-use-2025-01-24`; Sonnet 4.5, Haiku 4.5). | CU, TR |
 | F16 | Server-result blocks (all arrive whole in `content_block_start`, no deltas): `web_fetch_tool_result`, `code_execution_tool_result`, `bash_code_execution_tool_result`, `text_editor_code_execution_tool_result`, `tool_search_tool_result`, `advisor_tool_result` — each `{type, tool_use_id, content, caller?}` with type-specific nested variants and error codes; `container_upload{file_id}`. | REF, TS, ADV |
 | F17 | `count_tokens` accepts the computer toolset (T1e → 200), deferred tools with tool search (T2c → 200), and the advisor tool with the beta (T4e → 200). | T1e, T2c, T4e |
+| F19 | Two consecutive assistant messages are accepted: `[user, assistant, assistant, user]` → 200, same outcome as the single-assistant control (T6). This is the history `Agent` builds for `pause_turn` followed by `tool_use`. | T6 |
 | F18 | Claudio today: `parse_content_block/1` types `tool_use` (`id/name/input`), `server_tool_use` (`id/name/input`), `web_search_tool_result` (`tool_use_id/content`) and rebuilds them in `block_to_api/1` (`response.ex:511,535,544`), dropping every other field; other result blocks pass through raw. `add_computer_tool/4` sends only `computer_20250124` (`request.ex:1198`). `Tools.extract_tool_uses/1` returns `%{id, name, input}`; `create_tool_result/3` has no `toolset_name`. `Agent` looks handlers up by `tool_use.name` only (`agent.ex:121`), never sets a container, and returns on any non-`:tool_use` stop reason. Streamed `tool_use` keeps `partial_json` undecoded (pre-existing). | code |
 
 ## Design
@@ -138,8 +139,9 @@ and overwrites it with a non-nil `message_delta.delta.container` (F5). Result bl
   otherwise `set_container(req, id)`. (Plan review, 2026-09-26: a bare id would drop skills.)
 - **`pause_turn`:** append the assistant content and call again (no user message); counts as a
   turn toward `max_turns`, so endless pausing ends in `:max_turns_exceeded`.
-- Return shapes, `max_turns` meaning for tool round trips, and `on_tool_call`'s signature are
-  unchanged.
+- Return shapes, `max_turns` counting, and `on_tool_call`'s signature are unchanged.
+  `run/4`'s doc is corrected (Q, 2026-09-26): `max_turns` caps **model calls** (verified:
+  `max_turns: N` → N calls); it previously claimed N+1 calls.
 
 ### 6. `count_tokens` and Batches
 

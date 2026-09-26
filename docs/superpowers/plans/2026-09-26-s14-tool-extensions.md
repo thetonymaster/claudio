@@ -1451,6 +1451,44 @@ Add after `describe "run/4"` in `test/agent_test.exs`. The Bypass handler sends 
       assert %{"role" => "assistant", "content" => ^paused} = List.last(second["messages"])
     end
 
+    test "max_turns caps model calls: max_turns: 2 → exactly 2 calls (doc fix)", %{
+      client: client,
+      bypass: bypass
+    } do
+      serve(bypass, List.duplicate(message([plain("t", "lookup")], "tool_use"), 5))
+
+      assert {:error, :max_turns_exceeded, _, _} =
+               Agent.run(client, base_request(), %{"lookup" => fn _ -> {:ok, "x"} end}, max_turns: 2)
+
+      assert_received {:request_body, _}
+      assert_received {:request_body, _}
+      refute_received {:request_body, _}
+    end
+
+    test "pause_turn then tool_use: the history keeps both assistant turns in order", %{
+      client: client,
+      bypass: bypass
+    } do
+      paused = [%{"type" => "server_tool_use", "id" => "srv_1", "name" => "advisor", "input" => %{}}]
+
+      serve(bypass, [
+        message(paused, "pause_turn"),
+        message([plain("t1", "lookup")], "tool_use"),
+        message([%{"type" => "text", "text" => "done"}], "end_turn")
+      ])
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), %{"lookup" => fn _ -> {:ok, "x"} end})
+      assert_received {:request_body, _}
+      assert_received {:request_body, _}
+      assert_received {:request_body, third}
+
+      # Two consecutive assistant messages are accepted by the API (probe T6, spec F19).
+      assert Enum.map(third["messages"], & &1["role"]) ==
+               ["user", "assistant", "assistant", "user"]
+
+      assert [_, %{"content" => ^paused}, %{"content" => [%{"id" => "t1"}]}, _] = third["messages"]
+    end
+
     test "endless pause_turn stops at max_turns (Review Focus 5)", %{client: client, bypass: bypass} do
       paused = message([%{"type" => "text", "text" => "…"}], "pause_turn")
       serve(bypass, List.duplicate(paused, 5))
@@ -1606,7 +1644,18 @@ In `lib/claudio/agent.ex`:
 
    (`Exception.normalize/3` turns Erlang error terms such as `:badarith` into exception structs; the old `Exception.message(e)` crashed on them.)
 
-4. `run/4` `@doc` — after the `max_turns` paragraph, add: `A \`pause_turn\` resume counts as a round trip too.` While there, check the paragraph's claim ("With \`max_turns: 2\`, the model is called up to 3 times") against `loop/6` (`turn + 1 >= max_turns` stops on the 2nd call): if they disagree, fix the doc to match the code and ledger it — do not change the loop's counting.
+4. `run/4` `@doc` — the `max_turns` paragraph is wrong today (verified 2026-09-26 with a
+   scratch Bypass run: `max_turns: 1/2/3` → exactly 1/2/3 model calls). Q chose to fix the doc,
+   not the loop. Replace the paragraph with:
+
+```
+  `max_turns` caps the number of model calls. With `max_turns: 2` the model is called at
+  most twice — the initial call plus one tool-result (or `pause_turn`) follow-up; if the
+  second call still requests tools or pauses, the loop stops with `:max_turns_exceeded`.
+```
+
+   and `@default_max_turns`'s meaning is unchanged. Also update the moduledoc's
+   `:max_turns` option line to "Maximum model calls (default: 10)".
 
 5. Moduledoc — after the handlers example, add:
 
