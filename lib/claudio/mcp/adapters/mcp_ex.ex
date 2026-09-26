@@ -2,7 +2,7 @@ defmodule Claudio.MCP.Adapters.MCPEx do
   @moduledoc """
   Adapter for the mcp_ex library.
 
-  Requires `{:mcp_ex, "~> 0.3"}` in your dependencies.
+  Requires `{:mcp_ex, "~> 0.1"}` in your dependencies.
 
   ## Usage
 
@@ -79,11 +79,12 @@ defmodule Claudio.MCP.Adapters.MCPEx do
     end
   end
 
+  # Availability is checked up front; rescuing UndefinedFunctionError would also hide bugs
+  # inside the library.
   defp do_call(function, args) do
-    apply(MCPEx.Client, function, args)
-  rescue
-    UndefinedFunctionError ->
-      {:error, :mcp_ex_not_available}
+    if Code.ensure_loaded?(MCPEx.Client),
+      do: apply(MCPEx.Client, function, args),
+      else: {:error, :mcp_ex_not_available}
   end
 
   defp normalize_tool(tool) when is_map(tool) do
@@ -92,7 +93,7 @@ defmodule Claudio.MCP.Adapters.MCPEx do
       description: get_field(tool, :description, "description"),
       input_schema:
         get_field(tool, :inputSchema, "inputSchema") ||
-          get_field(tool, :input_schema, "input_schema") || %{}
+          get_field(tool, :input_schema, "input_schema") || %{"type" => "object"}
     }
   end
 

@@ -233,6 +233,8 @@ defmodule Claudio.ClientTest do
       assert client.headers["anthropic-beta"] == ["x-2026-01-01"]
     end
 
+    # Req logs each retry at :warning.
+    @tag :capture_log
     test "retry: [...] retries a POST on a retryable status" do
       bypass = Bypass.open()
       count = :counters.new(1, [:atomics])
