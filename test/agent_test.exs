@@ -705,6 +705,34 @@ defmodule Claudio.AgentTest do
       assert second["container"] == %{"id" => "container_01", "skills" => skills}
     end
 
+    test "an atom-keyed container keeps a single id key", %{client: client, bypass: bypass} do
+      test_pid = self()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:raw_body, body})
+        :counters.add(count, 1, 1)
+
+        response =
+          if :counters.get(count, 1) == 1,
+            do: message([plain("t1", "lookup")], "tool_use", %{"container" => %{"id" => "new"}}),
+            else: message([%{"type" => "text", "text" => "ok"}], "end_turn")
+
+        json_response(conn, response)
+      end)
+
+      request = Request.set_container(base_request(), %{id: "old", skills: []})
+
+      assert {:ok, _, _} = Agent.run(client, request, %{"lookup" => fn _ -> {:ok, "x"} end})
+      assert_received {:raw_body, _}
+      assert_received {:raw_body, second}
+
+      [_, container_json] = Regex.run(~r/"container":(\{[^}]*\})/, second)
+      assert length(Regex.scan(~r/"id"/, container_json)) == 1
+      assert Jason.decode!(container_json) == %{"id" => "new", "skills" => []}
+    end
+
     test "an unknown toolset's failures don't halt it (no halt contract) and don't crash", %{
       client: client,
       bypass: bypass

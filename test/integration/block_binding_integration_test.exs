@@ -72,7 +72,13 @@ defmodule Claudio.BlockBindingIntegrationTest do
     assert {:ok, %Response{input_transformations: transformations}} =
              Messages.create(client, edited_history(first, :drop_block))
 
-    assert [%{"type" => "thinking_dropped", "reason" => "prefix_binding_mismatch"}] =
-             transformations
+    # The failing block and every later thinking block are dropped (spec F4), so there may
+    # be more than one entry; each must be a prefix-mismatch drop.
+    assert [_ | _] = transformations
+
+    assert Enum.all?(
+             transformations,
+             &match?(%{"type" => "thinking_dropped", "reason" => "prefix_binding_mismatch"}, &1)
+           )
   end
 end

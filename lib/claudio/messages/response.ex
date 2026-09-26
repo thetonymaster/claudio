@@ -703,8 +703,23 @@ defmodule Claudio.Messages.Response do
   defp block_to_api(%{type: :fallback, raw: raw}), do: raw
 
   defp block_to_api(%{type: :compaction, raw: raw}), do: raw
-  defp block_to_api(%{type: :container_upload, raw: raw}), do: raw
-  defp block_to_api(%{type: type, raw: raw}) when type in @server_result_atoms, do: raw
+  defp block_to_api(%{type: :container_upload, raw: raw}) when is_map(raw), do: raw
+
+  defp block_to_api(%{type: :container_upload} = block),
+    do: %{"type" => "container_upload", "file_id" => block[:file_id]}
+
+  defp block_to_api(%{type: type, raw: raw}) when type in @server_result_atoms and is_map(raw),
+    do: raw
+
+  # Hand-built typed result without its original map: rebuild the API shape.
+  defp block_to_api(%{type: type} = block) when type in @server_result_atoms do
+    %{
+      "type" => Atom.to_string(type),
+      "tool_use_id" => block[:tool_use_id],
+      "content" => block[:content]
+    }
+    |> put_present("caller", block[:caller])
+  end
 
   defp block_to_api(block), do: block
 

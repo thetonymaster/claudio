@@ -70,7 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Response.compaction_block/1`) as its original API map instead of the typed map.
 - Parsed `tool_use` blocks gain `caller` and `toolset_name`, `server_tool_use` gains `caller`,
   `web_search_tool_result` gains `caller` and `raw` (`nil` when absent). Code matching the
-  whole map with `==` must add them.
+  whole map with `==` must add them. The same holds for the maps `Tools.extract_tool_uses/1`
+  returns (now with `toolset_name` and `caller`).
+- `Request.add_computer_tool/4` raises `ArgumentError` on unknown options (they were ignored).
 - `Claudio.Agent` resumes `pause_turn` (counts toward `:max_turns`) instead of returning it,
   carries the response `container` to the next request, and dispatches client-toolset calls
   to the handler keyed by `toolset_name`. A handler of the wrong arity is now an error result
@@ -125,8 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tool_search_tool_result`, `advisor_tool_result`, `container_upload`; `raw:` replayed
   verbatim), `Response.get_server_tool_results/1,2`, `Response.container` (also from the
   stream).
-- `Tools.extract_tool_uses/1` returns `toolset_name` and `caller`; `Tools.create_tool_result/4`
-  (`toolset_name:`); `Tools.halt_result/1`.
+- `Tools.create_tool_result/4` (`toolset_name:`); `Tools.halt_result/1`, `Tools.halt_text/1`.
 - **Thinking block binding:** `enable_adaptive_thinking/2` `block_binding:` and
   `Request.set_thinking_block_binding/2` (`:error` / `:drop_block`; declare
   `thinking-binding-controls-2026-08-01`); `Response.input_transformations` (raw list, `nil`

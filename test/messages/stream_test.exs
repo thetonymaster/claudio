@@ -674,6 +674,15 @@ defmodule Claudio.Messages.StreamTest do
       assert message["input_transformations"] == [%{"type" => "from_top"}]
     end
 
+    test "an empty list inside delta replaces a non-empty start value" do
+      {:ok, message} =
+        binding_stream(
+          ~s({"type":"message_delta","delta":{"stop_reason":"end_turn","input_transformations":[]},"usage":{"output_tokens":1}})
+        )
+
+      assert message["input_transformations"] == []
+    end
+
     test "a key inside delta replaces it too (nesting unverified, spec F8)" do
       {:ok, message} =
         binding_stream(

@@ -1392,6 +1392,26 @@ defmodule Claudio.Messages.ResponseTest do
                Response.from_map(%{content: [raw]}).content
     end
 
+    test "typed result blocks without a raw map replay rebuilt, not as nil" do
+      response = %Response{
+        content: [
+          %{
+            type: :code_execution_tool_result,
+            tool_use_id: "s",
+            content: %{},
+            caller: nil,
+            raw: nil
+          },
+          %{type: :container_upload, file_id: "f", raw: nil}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "code_execution_tool_result", "tool_use_id" => "s", "content" => %{}},
+               %{"type" => "container_upload", "file_id" => "f"}
+             ]
+    end
+
     test "container_upload" do
       raw = %{"type" => "container_upload", "file_id" => "file_1"}
       response = Response.from_map(%{"content" => [raw]})

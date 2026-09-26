@@ -720,6 +720,18 @@ defmodule Claudio.Messages.Request do
   and declares `thinking-binding-controls-2026-08-01`. Raises if no thinking config is set.
   A later thinking setter replaces the whole map (the beta stays declared). The API rejects
   `block_binding` on `"disabled"` thinking.
+
+  `:error` rejects a request whose `thinking` block no longer matches the conversation
+  prefix it was produced under (400); `:drop_block` drops that block and every later
+  thinking block and reports it in `Response.input_transformations`. Unset, accounts
+  created on/after 2026-08-31 behave as `:error` and older accounts are not enforced — set
+  it explicitly to get the same behavior everywhere.
+
+  ## Example
+
+      Request.new("claude-sonnet-4-6")
+      |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 2048})
+      |> Request.set_thinking_block_binding(:drop_block)
   """
   @spec set_thinking_block_binding(t(), :error | :drop_block) :: t()
   def set_thinking_block_binding(%__MODULE__{} = request, behavior)
@@ -740,7 +752,7 @@ defmodule Claudio.Messages.Request do
 
   def set_thinking_block_binding(%__MODULE__{}, other) do
     raise ArgumentError,
-          "Request.set_thinking_block_binding/2 :block_binding must be :error or :drop_block; " <>
+          "Request.set_thinking_block_binding/2 behavior must be :error or :drop_block; " <>
             "got #{inspect(other)}"
   end
 
@@ -1573,7 +1585,9 @@ defmodule Claudio.Messages.Request do
           nil
 
         configs ->
-          Map.new(configs, fn {member, conf} -> {to_string(member), stringify_keys(conf)} end)
+          Map.new(configs, fn {member, conf} ->
+            {to_string(member), member_config!(type, conf)}
+          end)
       end
 
     tool =
@@ -1855,6 +1869,27 @@ defmodule Claudio.Messages.Request do
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp stringify_keys(map) when is_map(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
+
+  defp member_config!(_type, conf) when is_map(conf), do: stringify_keys(conf)
+
+  defp member_config!(type, conf) when is_list(conf) do
+    if Keyword.keyword?(conf),
+      do: stringify_keys(Map.new(conf)),
+      else: bad_member_config!(type, conf)
+  end
+
+  defp member_config!(type, conf), do: bad_member_config!(type, conf)
+
+  defp bad_member_config!(type, conf) do
+    fun =
+      if type == "browser_toolset_20260801",
+        do: "add_browser_toolset/2",
+        else: "add_computer_toolset/2"
+
+    raise ArgumentError,
+          "Request.#{fun} :configs member values must be maps or keyword lists " <>
+            "(enabled:, defer_loading:); got #{inspect(conf)}"
+  end
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map

@@ -55,7 +55,8 @@ defmodule Claudio.Agent do
   ## Options
 
     - `:max_turns` — Maximum model calls (default: 10)
-    - `:on_tool_call` — Optional callback `fn tool_use, result -> :ok end` for logging/observability
+    - `:on_tool_call` — Optional callback `fn tool_use, result -> :ok end` for logging/observability.
+      Not called for client-toolset actions skipped by a batch halt (they never ran).
   """
 
   alias Claudio.Messages
@@ -79,6 +80,8 @@ defmodule Claudio.Agent do
   `max_turns` caps the number of model calls. With `max_turns: 2` the model is called at
   most twice — the initial call plus one tool-result (or `pause_turn`) follow-up; if the
   second call still requests tools or pauses, the loop stops with `:max_turns_exceeded`.
+  To resume a programmatic run from there, read the container from `last_response.container`
+  (it is not in `messages`).
 
   Returns `{:ok, final_response, messages}` on success, where `messages` is the
   full conversation history including all tool calls and results.
@@ -153,6 +156,10 @@ defmodule Claudio.Agent do
   end
 
   defp carry_container(request, _response), do: request
+
+  # Keep the caller's key style: an atom :id map gets :id, so the JSON has one "id".
+  defp merge_container_id(%{id: _} = current, id) when not is_map_key(current, "id"),
+    do: Map.put(current, :id, id)
 
   defp merge_container_id(current, id) when is_map(current), do: Map.put(current, "id", id)
   defp merge_container_id(_current, id), do: id

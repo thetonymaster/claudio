@@ -1328,6 +1328,18 @@ defmodule Claudio.Messages.RequestTest do
              ]
     end
 
+    test "member configs may be keyword lists; other shapes raise naming :configs" do
+      request =
+        Request.new("m") |> Request.add_computer_toolset(configs: %{zoom: [enabled: false]})
+
+      assert [%{"configs" => %{"zoom" => %{"enabled" => false}}}] =
+               Request.to_map(request)["tools"]
+
+      assert_raise ArgumentError, ~r/add_computer_toolset\/2 :configs/, fn ->
+        Request.add_computer_toolset(Request.new("m"), configs: %{zoom: :off})
+      end
+    end
+
     test "unknown options raise" do
       assert_raise ArgumentError, fn ->
         Request.add_computer_toolset(Request.new("m"), name: "x")
@@ -1549,7 +1561,7 @@ defmodule Claudio.Messages.RequestTest do
       end
 
       assert_raise ArgumentError,
-                   ~r/set_thinking_block_binding\/2 :block_binding must be :error or :drop_block; got/,
+                   ~r/set_thinking_block_binding\/2 behavior must be :error or :drop_block; got/,
                    fn ->
                      Request.new("m")
                      |> Request.enable_adaptive_thinking()
