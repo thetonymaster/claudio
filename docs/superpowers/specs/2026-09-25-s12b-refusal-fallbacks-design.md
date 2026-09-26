@@ -25,7 +25,7 @@ fails with a 400.
 | F1 | Request: `"fallbacks": "default"` or a list of up to three entries `[{"model": …}, …]`. Entries are tried in order, must be distinct from each other and from the requested model, and each can override `max_tokens`, `thinking`, `output_config`, `speed`. | RF; P8 → 400 "List should have at most 3 items" |
 | F2 | Beta header `server-side-fallback-2026-07-01` (supports `"default"` and lists). `2026-06-01` is list-only; not used. | RF; P7 → 200 |
 | F3 | Allowed targets: `allowed_fallback_models` on the model's Models API entry (with the beta header). `claude-opus-5-5` → `["claude-opus-4-8", "claude-opus-5"]`. | RF; probe |
-| F4 | Top-level `model` is always the model that produced the returned message. | RF |
+| F4 | Top-level `model` is the model that produced the returned message — except on a streamed mid-output decline, where `message_start` already named the requested (declining) model; the serving model is then the `fallback` block's `to.model` (RF "Streaming"; see §2 `served_by/1`). | RF |
 | F5 | A `fallback` block `{"type":"fallback","from":{"model":…},"to":{"model":…}}` marks **each** handoff point — one response can contain several. REF's `BetaFallbackBlock` adds optional `trigger: {type: "refusal", category}`. | RF, REF |
 | F6 | `usage.iterations`: `"message"` entries = declined attempts, `"fallback_message"` = serving attempt. Present whenever `fallbacks` is set (P7: even with no refusal). Top-level usage covers only the returned attempt. | RF; P7 |
 | F7 | `stop_details` adds `recommended_model` (only when `fallbacks` set; `null` unless the fallback attempt was skipped), and REF lists `fallback_credit_token`, `fallback_has_prefill_claim`. | RF, REF |
