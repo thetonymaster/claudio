@@ -513,8 +513,8 @@ defmodule Claudio.Messages.Request do
 
   ## Options
 
-  - `:display` — `:summarized`, `:omitted` or `:updates`. Omit it to use the
-    model's default. `:updates` (progress notes as separate `thinking` blocks)
+  - `:display` — `:summarized`, `:omitted` or `:updates`. Omit it (or pass `nil`)
+    to use the model's default. `:updates` (progress notes as separate `thinking` blocks)
     also declares the `thinking-display-updates-2026-08-18` beta. A beta declared
     here stays declared if `thinking` is later replaced.
 
@@ -529,7 +529,7 @@ defmodule Claudio.Messages.Request do
     opts = Keyword.validate!(opts, [:display])
 
     case Keyword.fetch(opts, :display) do
-      :error ->
+      missing when missing in [:error, {:ok, nil}] ->
         %{request | thinking: %{"type" => "adaptive"}}
 
       {:ok, display} when display in @thinking_displays ->

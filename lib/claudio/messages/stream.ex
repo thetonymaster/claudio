@@ -173,6 +173,9 @@ defmodule Claudio.Messages.Stream do
   API docs say to treat it as an update. Empty deltas (`display: :omitted`),
   other deltas, other events and `{:error, _}` items emit nothing.
 
+  The index is `nil` only for a malformed frame with no `"index"` (the API always
+  sends one); its text is still emitted rather than dropped.
+
   ## Example
 
       response

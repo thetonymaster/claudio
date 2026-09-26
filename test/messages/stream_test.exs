@@ -295,6 +295,18 @@ defmodule Claudio.Messages.StreamTest do
       assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{4, "x"}]
     end
 
+    test "a thinking delta without an index keeps its text, as {nil, text}" do
+      events = [
+        {:ok,
+         %{
+           event: "content_block_delta",
+           data: %{"delta" => %{"type" => "thinking_delta", "thinking" => "z"}}
+         }}
+      ]
+
+      assert events |> ClaudioStream.accumulate_thinking() |> Enum.to_list() == [{nil, "z"}]
+    end
+
     test "error items and other events are skipped, not raised on" do
       events = [
         {:error, :boom},

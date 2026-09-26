@@ -789,7 +789,7 @@ defmodule Claudio.Messages.RequestTest do
     end
 
     test "unknown display values raise" do
-      for bad <- [:full, "omitted", nil] do
+      for bad <- [:full, "omitted"] do
         assert_raise ArgumentError,
                      ~r/enable_adaptive_thinking\/2 :display must be one of :summarized, :omitted, :updates; got/,
                      fn ->
@@ -797,6 +797,13 @@ defmodule Claudio.Messages.RequestTest do
                        |> Request.enable_adaptive_thinking(display: bad)
                      end
       end
+    end
+
+    test "display: nil means the model default (supports display: opts[:display] passthrough)" do
+      request = Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(display: nil)
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
     end
 
     test "unknown option keys raise" do
