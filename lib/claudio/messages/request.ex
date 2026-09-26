@@ -86,6 +86,9 @@ defmodule Claudio.Messages.Request do
   # replays a signed compaction block (probed 2026-09-26).
   @on_demand_compaction_beta "compact-2026-09-04"
 
+  # Advisor tool; also needed to replay advisor blocks (probed 2026-09-26).
+  @advisor_beta "advisor-tool-2026-03-01"
+
   @doc """
   Creates a new request builder with the specified model.
 
@@ -114,6 +117,9 @@ defmodule Claudio.Messages.Request do
   A `compaction` block declares its replay beta: `compact-2026-09-04` when it carries a
   `signature` (on-demand), else `compact-2026-01-12` (threshold — which also needs the
   `compact_20260112` edit on the request; see `add_compaction/2`).
+
+  Advisor blocks (`advisor_tool_result`, or a `server_tool_use` named `"advisor"`) declare
+  `advisor-tool-2026-03-01`.
 
   ## Examples
 
@@ -149,7 +155,10 @@ defmodule Claudio.Messages.Request do
 
     # A replayed compaction block needs its beta: signed (on-demand) blocks need
     # compact-2026-09-04, unsigned (threshold) blocks compact-2026-01-12 (probed 2026-09-26).
-    add_compaction_replay_betas(request, content)
+    request = add_compaction_replay_betas(request, content)
+
+    # Replaying advisor blocks needs the advisor beta even without the tool (probed 2026-09-26).
+    if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
   end
 
   defp has_fallback_block?(content) when is_list(content) do
@@ -181,6 +190,21 @@ defmodule Claudio.Messages.Request do
   # A typed block (Response) keeps the original under :raw.
   defp compaction_signature(%{raw: raw}) when is_map(raw), do: compaction_signature(raw)
   defp compaction_signature(block), do: Map.get(block, "signature") || Map.get(block, :signature)
+
+  defp has_advisor_block?(content) when is_list(content),
+    do: Enum.any?(content, &advisor_block?/1)
+
+  defp has_advisor_block?(_content), do: false
+
+  defp advisor_block?(block) when is_map(block) do
+    type = Map.get(block, "type") || Map.get(block, :type)
+    name = Map.get(block, "name") || Map.get(block, :name)
+
+    type in ["advisor_tool_result", :advisor_tool_result] or
+      (type in ["server_tool_use", :server_tool_use] and name == "advisor")
+  end
+
+  defp advisor_block?(_block), do: false
 
   defp has_compact_edit?(config) do
     case Map.get(config, "edits") || Map.get(config, :edits) do
@@ -492,11 +516,53 @@ defmodule Claudio.Messages.Request do
 
       Request.new("claude-opus-5-5")
       |> Request.add_tool(tool)
+
+  ## Options
+
+  - `:defer_loading` — `true` keeps the tool out of the initial prompt until a tool search
+    tool (`add_tool_search_tool/2`) returns a reference to it. At least one tool must stay
+    non-deferred.
+  - `:allowed_callers` — who may call the tool: `:direct` (the model; the default when
+    omitted), `:code_execution` (code inside a `code_execution_20260120`+ sandbox —
+    programmatic tool calling), or a raw string.
   """
-  @spec add_tool(t(), map()) :: t()
-  def add_tool(%__MODULE__{tools: tools} = request, tool) when is_map(tool) do
-    current_tools = tools || []
-    %{request | tools: current_tools ++ [tool]}
+  @spec add_tool(t(), map(), keyword()) :: t()
+  def add_tool(%__MODULE__{tools: tools} = request, tool, opts \\ [])
+      when is_map(tool) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:defer_loading, :allowed_callers])
+
+    tool =
+      tool
+      |> maybe_put("defer_loading", defer_loading!(Keyword.get(opts, :defer_loading)))
+      |> maybe_put("allowed_callers", allowed_callers!(Keyword.get(opts, :allowed_callers)))
+
+    %{request | tools: (tools || []) ++ [tool]}
+  end
+
+  defp defer_loading!(value) when is_boolean(value) or is_nil(value), do: value
+
+  defp defer_loading!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :defer_loading must be a boolean; got #{inspect(other)}"
+  end
+
+  defp allowed_callers!(nil), do: nil
+  defp allowed_callers!(callers) when is_list(callers), do: Enum.map(callers, &allowed_caller!/1)
+
+  defp allowed_callers!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :allowed_callers must be a list; got #{inspect(other)}"
+  end
+
+  defp allowed_caller!(:direct), do: "direct"
+  # Responses always tag programmatic calls as code_execution_20260120 (tool-reference).
+  defp allowed_caller!(:code_execution), do: "code_execution_20260120"
+  defp allowed_caller!(caller) when is_binary(caller), do: caller
+
+  defp allowed_caller!(other) do
+    raise ArgumentError,
+          "Request.add_tool/3 :allowed_callers entries must be :direct, :code_execution " <>
+            "or a string; got #{inspect(other)}"
   end
 
   @doc """
@@ -1329,6 +1395,106 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
+  Adds a tool search tool (GA, no beta) so tools added with `defer_loading: true` are
+  found on demand: `:regex` (`tool_search_tool_regex_20251119`) or `:bm25`
+  (`tool_search_tool_bm25_20251119`).
+  """
+  @spec add_tool_search_tool(t(), :regex | :bm25) :: t()
+  def add_tool_search_tool(%__MODULE__{} = request, variant) when variant in [:regex, :bm25] do
+    name = "tool_search_tool_#{variant}"
+    add_tool(request, %{"type" => "#{name}_20251119", "name" => name})
+  end
+
+  def add_tool_search_tool(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.add_tool_search_tool/2 variant must be :regex or :bm25; got #{inspect(other)}"
+  end
+
+  @advisor_cache_ttls ["5m", "1h"]
+
+  @doc """
+  Adds the advisor tool (`advisor_20260301`; declares `advisor-tool-2026-03-01`): the model
+  can consult `model` mid-task. Replaying advisor blocks later also needs the beta —
+  `add_message/3` declares it.
+
+  ## Options
+
+  - `:max_uses` — advisor calls per request
+  - `:max_tokens` — advisor output cap (API minimum 1024)
+  - `:caching` — `"5m"` or `"1h"`: caches the advisor's context
+  """
+  @spec add_advisor_tool(t(), String.t(), keyword()) :: t()
+  def add_advisor_tool(%__MODULE__{} = request, model, opts \\ [])
+      when is_binary(model) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:max_uses, :max_tokens, :caching])
+
+    caching =
+      case Keyword.get(opts, :caching) do
+        nil ->
+          nil
+
+        ttl when ttl in @advisor_cache_ttls ->
+          %{"type" => "ephemeral", "ttl" => ttl}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_advisor_tool/3 :caching must be \"5m\" or \"1h\"; got #{inspect(other)}"
+      end
+
+    tool =
+      %{"type" => "advisor_20260301", "name" => "advisor", "model" => model}
+      |> maybe_put("max_uses", Keyword.get(opts, :max_uses))
+      |> maybe_put("max_tokens", Keyword.get(opts, :max_tokens))
+      |> maybe_put("caching", caching)
+
+    request |> add_tool(tool) |> add_beta(@advisor_beta)
+  end
+
+  @doc """
+  Adds the computer use client toolset (`computer_toolset_20260801`, GA, no beta) — the
+  computer tool Claude Opus 5.5 accepts. Each action arrives as its own `tool_use` whose
+  `name` is the member (`"screenshot"`, `"left_click"`, …) and whose `toolset_name` is
+  `"computer"`; every `tool_result` must echo `toolset_name`
+  (`Claudio.Tools.create_tool_result/4`). See `Claudio.Agent` for a loop that does this.
+
+  ## Options
+
+  - `:configs` — `%{member => %{enabled: boolean, defer_loading: boolean}}`
+  - `:cache_control` — cache breakpoint on the entry
+  """
+  @spec add_computer_toolset(t(), keyword()) :: t()
+  def add_computer_toolset(%__MODULE__{} = request, opts \\ []),
+    do: add_toolset(request, "computer_toolset_20260801", opts)
+
+  @doc """
+  Adds the browser use client toolset (`browser_toolset_20260801`, GA, no beta). Same
+  mechanics and options as `add_computer_toolset/2`, with `toolset_name` `"browser"`.
+  """
+  @spec add_browser_toolset(t(), keyword()) :: t()
+  def add_browser_toolset(%__MODULE__{} = request, opts \\ []),
+    do: add_toolset(request, "browser_toolset_20260801", opts)
+
+  defp add_toolset(request, type, opts) when is_list(opts) do
+    opts = Keyword.validate!(opts, [:configs, :cache_control])
+
+    configs =
+      case Keyword.get(opts, :configs) do
+        nil ->
+          nil
+
+        configs ->
+          Map.new(configs, fn {member, conf} -> {to_string(member), stringify_keys(conf)} end)
+      end
+
+    tool =
+      %{"type" => type}
+      |> maybe_put("configs", configs)
+      |> maybe_put("cache_control", Keyword.get(opts, :cache_control))
+
+    add_tool(request, tool)
+  end
+
+  @doc """
   Adds the server-side `web_search` tool. GA — no beta header.
 
   ## Options
@@ -1463,13 +1629,31 @@ defmodule Claudio.Messages.Request do
   ## Options
 
   - `:display_number` — X11 display number for the environment.
+  - `:version` — `:"20251124"` for `computer_20251124` (declares `computer-use-2025-11-24`).
+    Claude Opus 5.5 accepts only the toolset: use `add_computer_toolset/2`.
   """
   @spec add_computer_tool(t(), pos_integer(), pos_integer(), keyword()) :: t()
   def add_computer_tool(%__MODULE__{} = request, display_width_px, display_height_px, opts \\ [])
       when is_integer(display_width_px) and is_integer(display_height_px) do
+    opts = Keyword.validate!(opts, [:display_number, :version])
+
+    {type, beta} =
+      case Keyword.get(opts, :version) do
+        v when v in [nil, :"20250124"] ->
+          {"computer_20250124", "computer-use-2025-01-24"}
+
+        :"20251124" ->
+          {"computer_20251124", "computer-use-2025-11-24"}
+
+        other ->
+          raise ArgumentError,
+                "Request.add_computer_tool/4 :version must be :\"20250124\" or :\"20251124\"; " <>
+                  "got #{inspect(other)} (use add_computer_toolset/2 for computer_toolset_20260801)"
+      end
+
     tool =
       %{
-        "type" => "computer_20250124",
+        "type" => type,
         "name" => "computer",
         "display_width_px" => display_width_px,
         "display_height_px" => display_height_px
@@ -1477,7 +1661,7 @@ defmodule Claudio.Messages.Request do
       |> maybe_put("display_number", Keyword.get(opts, :display_number))
 
     request
-    |> add_beta("computer-use-2025-01-24")
+    |> add_beta(beta)
     |> add_tool(tool)
   end
 
@@ -1574,6 +1758,8 @@ defmodule Claudio.Messages.Request do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp stringify_keys(map) when is_map(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
   defp maybe_put_citations(map, true), do: Map.put(map, "citations", %{"enabled" => true})
   defp maybe_put_citations(map, _), do: map

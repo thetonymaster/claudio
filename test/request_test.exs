@@ -99,6 +99,27 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with advisor blocks (S14)" do
+    test "an advisor result or advisor server_tool_use declares the advisor beta" do
+      for block <- [
+            %{"type" => "advisor_tool_result", "tool_use_id" => "s", "content" => %{}},
+            %{"type" => "server_tool_use", "id" => "s", "name" => "advisor", "input" => %{}},
+            %{type: :server_tool_use, id: "s", name: "advisor", input: %{}},
+            %{type: :advisor_tool_result, tool_use_id: "s", content: %{}, caller: nil, raw: %{}}
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["advisor-tool-2026-03-01"]
+      end
+    end
+
+    test "other server tools declare nothing" do
+      block = %{"type" => "server_tool_use", "id" => "s", "name" => "web_search", "input" => %{}}
+
+      assert Request.required_betas(Request.add_message(Request.new("m"), :assistant, [block])) ==
+               []
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =
@@ -1109,6 +1130,174 @@ defmodule Claudio.Messages.RequestTest do
 
       [tool] = Request.to_map(request)["tools"]
       assert tool["display_number"] == 1
+    end
+
+    test "version: :\"20251124\" emits computer_20251124 with its beta" do
+      request =
+        Request.new("claude-opus-4-8")
+        |> Request.add_computer_tool(1280, 800, version: :"20251124")
+
+      assert [%{"type" => "computer_20251124", "name" => "computer"}] =
+               Request.to_map(request)["tools"]
+
+      assert Request.required_betas(request) == ["computer-use-2025-11-24"]
+    end
+
+    test "an unknown version or option raises; the default may be passed explicitly" do
+      assert_raise ArgumentError, ~r/add_computer_tool\/4 :version/, fn ->
+        Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20260801")
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_computer_tool(Request.new("m"), 1, 1, versoin: 1)
+      end
+
+      assert [%{"type" => "computer_20250124"}] =
+               Request.to_map(
+                 Request.add_computer_tool(Request.new("m"), 1, 1, version: :"20250124")
+               )["tools"]
+    end
+  end
+
+  describe "add_tool/3 (S14)" do
+    @tool %{"name" => "t", "description" => "d", "input_schema" => %{"type" => "object"}}
+
+    test "defer_loading and allowed_callers" do
+      request =
+        Request.new("m")
+        |> Request.add_tool(@tool,
+          defer_loading: true,
+          allowed_callers: [:direct, :code_execution, "code_execution_20260521"]
+        )
+
+      assert Request.to_map(request)["tools"] == [
+               Map.merge(@tool, %{
+                 "defer_loading" => true,
+                 "allowed_callers" => [
+                   "direct",
+                   "code_execution_20260120",
+                   "code_execution_20260521"
+                 ]
+               })
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "add_tool/2 and add_tool/3 with [] leave the tool unchanged" do
+      assert Request.to_map(Request.add_tool(Request.new("m"), @tool))["tools"] == [@tool]
+      assert Request.to_map(Request.add_tool(Request.new("m"), @tool, []))["tools"] == [@tool]
+    end
+
+    test "invalid options raise" do
+      r = Request.new("m")
+      assert_raise ArgumentError, fn -> Request.add_tool(r, @tool, bogus: 1) end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :defer_loading/, fn ->
+        Request.add_tool(r, @tool, defer_loading: "yes")
+      end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :allowed_callers/, fn ->
+        Request.add_tool(r, @tool, allowed_callers: :direct)
+      end
+
+      assert_raise ArgumentError, ~r/add_tool\/3 :allowed_callers/, fn ->
+        Request.add_tool(r, @tool, allowed_callers: [:sandbox])
+      end
+    end
+  end
+
+  describe "add_tool_search_tool/2 (S14)" do
+    test "regex and bm25 variants, no beta" do
+      for {variant, type, name} <- [
+            {:regex, "tool_search_tool_regex_20251119", "tool_search_tool_regex"},
+            {:bm25, "tool_search_tool_bm25_20251119", "tool_search_tool_bm25"}
+          ] do
+        request = Request.new("m") |> Request.add_tool_search_tool(variant)
+        assert Request.to_map(request)["tools"] == [%{"type" => type, "name" => name}]
+        assert Request.required_betas(request) == []
+      end
+    end
+
+    test "other variants raise" do
+      assert_raise ArgumentError, ~r/add_tool_search_tool\/2/, fn ->
+        Request.add_tool_search_tool(Request.new("m"), :fuzzy)
+      end
+    end
+  end
+
+  describe "add_advisor_tool/3 (S14)" do
+    test "minimal: type, name, model, beta" do
+      request = Request.new("claude-sonnet-5") |> Request.add_advisor_tool("claude-opus-5-5")
+
+      assert Request.to_map(request)["tools"] == [
+               %{"type" => "advisor_20260301", "name" => "advisor", "model" => "claude-opus-5-5"}
+             ]
+
+      assert Request.required_betas(request) == ["advisor-tool-2026-03-01"]
+    end
+
+    test "all options" do
+      request =
+        Request.new("m")
+        |> Request.add_advisor_tool("claude-opus-5-5",
+          max_uses: 3,
+          max_tokens: 2048,
+          caching: "1h"
+        )
+
+      assert [
+               %{
+                 "max_uses" => 3,
+                 "max_tokens" => 2048,
+                 "caching" => %{"type" => "ephemeral", "ttl" => "1h"}
+               }
+             ] = Request.to_map(request)["tools"]
+    end
+
+    test "bad caching and unknown options raise" do
+      assert_raise ArgumentError, ~r/add_advisor_tool\/3 :caching/, fn ->
+        Request.add_advisor_tool(Request.new("m"), "x", caching: "2h")
+      end
+
+      assert_raise ArgumentError, fn ->
+        Request.add_advisor_tool(Request.new("m"), "x", foo: 1)
+      end
+    end
+  end
+
+  describe "client toolsets (S14)" do
+    test "add_computer_toolset/1: bare entry, no name, no beta" do
+      request = Request.new("claude-opus-5-5") |> Request.add_computer_toolset()
+
+      assert Request.to_map(request)["tools"] == [%{"type" => "computer_toolset_20260801"}]
+      assert Request.required_betas(request) == []
+    end
+
+    test "configs keys are stringified; cache_control passes through" do
+      request =
+        Request.new("m")
+        |> Request.add_browser_toolset(
+          configs: %{"zoom" => %{"defer_loading" => false}, javascript_exec: %{enabled: true}},
+          cache_control: %{"type" => "ephemeral"}
+        )
+
+      assert Request.to_map(request)["tools"] == [
+               %{
+                 "type" => "browser_toolset_20260801",
+                 "configs" => %{
+                   "javascript_exec" => %{"enabled" => true},
+                   "zoom" => %{"defer_loading" => false}
+                 },
+                 "cache_control" => %{"type" => "ephemeral"}
+               }
+             ]
+    end
+
+    test "unknown options raise" do
+      assert_raise ArgumentError, fn ->
+        Request.add_computer_toolset(Request.new("m"), name: "x")
+      end
     end
   end
 
