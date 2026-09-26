@@ -969,4 +969,112 @@ defmodule Claudio.Messages.RequestTest do
              |> length() == 2
     end
   end
+
+  describe "add_system_message/3" do
+    @clear_at_beta "mid-conversation-system-clear-at-2026-08-21"
+    @msg_effort_beta "mid-conversation-output-config-2026-07-01"
+
+    test "string content appends a system message, no beta" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.add_message(:user, "Hi")
+        |> Request.add_message(:assistant, "Hello")
+        |> Request.add_message(:user, "Continue")
+        |> Request.add_system_message("Reply in French.")
+
+      assert Request.to_map(request)["messages"] == [
+               %{"role" => "user", "content" => "Hi"},
+               %{"role" => "assistant", "content" => "Hello"},
+               %{"role" => "user", "content" => "Continue"},
+               %{"role" => "system", "content" => "Reply in French."}
+             ]
+
+      assert Request.required_betas(request) == []
+    end
+
+    test "block content is passed through unchanged" do
+      blocks = [%{"type" => "text", "text" => "Be brief."}]
+      request = Request.new("m") |> Request.add_system_message(blocks)
+
+      assert [%{"role" => "system", "content" => ^blocks}] = Request.to_map(request)["messages"]
+    end
+
+    test "clear_at emits the field and declares its beta once" do
+      for clear_at <- [:next_user_message, :never] do
+        request =
+          Request.new("m")
+          |> Request.add_system_message("a", clear_at: clear_at)
+          |> Request.add_system_message("b", clear_at: clear_at)
+
+        [first, _] = Request.to_map(request)["messages"]
+        assert first["clear_at"] == Atom.to_string(clear_at)
+        assert Request.required_betas(request) == [@clear_at_beta]
+      end
+    end
+
+    test "effort emits output_config and declares its beta" do
+      for level <- [:low, :medium, :high, :xhigh, :max] do
+        request = Request.new("m") |> Request.add_system_message([], effort: level)
+
+        assert Request.to_map(request)["messages"] == [
+                 %{
+                   "role" => "system",
+                   "content" => [],
+                   "output_config" => %{"effort" => Atom.to_string(level)}
+                 }
+               ]
+
+        assert Request.required_betas(request) == [@msg_effort_beta]
+      end
+    end
+
+    test "content plus effort is allowed (not turn-scoped)" do
+      request = Request.new("m") |> Request.add_system_message("Be brief.", effort: :low)
+
+      assert [%{"content" => "Be brief.", "output_config" => %{"effort" => "low"}}] =
+               Request.to_map(request)["messages"]
+    end
+
+    test "nil options behave as if absent" do
+      request =
+        Request.new("m") |> Request.add_system_message("a", clear_at: nil, effort: nil)
+
+      assert Request.to_map(request)["messages"] == [%{"role" => "system", "content" => "a"}]
+      assert Request.required_betas(request) == []
+    end
+
+    test "unknown clear_at and effort values raise" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 :clear_at must be one of :next_user_message, :never; got/,
+                   fn -> Request.new("m") |> Request.add_system_message("a", clear_at: :later) end
+
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 :effort must be one of :low, :medium, :high, :xhigh, :max; got/,
+                   fn -> Request.new("m") |> Request.add_system_message("a", effort: "low") end
+    end
+
+    test "a turn-scoped message cannot carry effort" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 clear_at: :next_user_message cannot be combined with :effort/,
+                   fn ->
+                     Request.new("m")
+                     |> Request.add_system_message("a",
+                       clear_at: :next_user_message,
+                       effort: :low
+                     )
+                   end
+    end
+
+    test "empty content needs effort" do
+      assert_raise ArgumentError,
+                   ~r/add_system_message\/3 empty content \[\] requires :effort/,
+                   fn -> Request.new("m") |> Request.add_system_message([]) end
+    end
+
+    test "unknown option keys raise" do
+      assert_raise ArgumentError, ~r/unknown keys/, fn ->
+        Request.new("m") |> Request.add_system_message("a", cache_control: %{})
+      end
+    end
+  end
 end

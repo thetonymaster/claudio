@@ -837,6 +837,78 @@ defmodule Claudio.Messages.Request do
     %{request | output_config: Map.put(base, key, value)}
   end
 
+  @clear_at_values [:next_user_message, :never]
+  @clear_at_beta "mid-conversation-system-clear-at-2026-08-21"
+  @message_effort_beta "mid-conversation-output-config-2026-07-01"
+
+  @doc """
+  Appends a mid-conversation `role: "system"` message (GA — no beta header).
+
+  `content` is a string or a list of content blocks, passed through unchanged. Where
+  the message may sit (after a `user` turn, not first when it carries content, …) is
+  checked by the API, not here.
+
+  ## Options
+
+  - `:clear_at` — `:next_user_message` (the message stops rendering once a later
+    `user` message exists) or `:never`. Declares the
+    `mid-conversation-system-clear-at-2026-08-21` beta.
+  - `:effort` — `:low` … `:max`: per-message effort from the next `user` turn on
+    (`"output_config" => %{"effort" => ...}`). Declares the
+    `mid-conversation-output-config-2026-07-01` beta. With `content: []` this is an
+    effort-only message, which the API accepts anywhere, including first.
+
+  Raises `ArgumentError` for combinations the API always rejects:
+  `clear_at: :next_user_message` with `:effort`, and `[]` content without `:effort`.
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.add_system_message([], effort: :low)
+      |> Request.add_message(:user, "Name a primary color.")
+      |> Request.add_system_message("Answer in one word.", clear_at: :next_user_message)
+  """
+  @spec add_system_message(t(), String.t() | [map()], keyword()) :: t()
+  def add_system_message(%__MODULE__{messages: messages} = request, content, opts \\ [])
+      when (is_binary(content) or is_list(content)) and is_list(opts) do
+    opts = Keyword.validate!(opts, [:clear_at, :effort])
+    clear_at = Keyword.get(opts, :clear_at)
+    effort = Keyword.get(opts, :effort)
+
+    unless is_nil(clear_at) or clear_at in @clear_at_values do
+      raise ArgumentError,
+            "Request.add_system_message/3 :clear_at must be one of :next_user_message, :never; " <>
+              "got #{inspect(clear_at)}"
+    end
+
+    unless is_nil(effort) or effort in @effort_levels do
+      raise ArgumentError,
+            "Request.add_system_message/3 :effort must be one of :low, :medium, :high, :xhigh, :max; " <>
+              "got #{inspect(effort)}"
+    end
+
+    if clear_at == :next_user_message and effort do
+      raise ArgumentError,
+            "Request.add_system_message/3 clear_at: :next_user_message cannot be combined with " <>
+              ":effort (a turn-scoped system message cannot carry output_config)"
+    end
+
+    if content == [] and is_nil(effort) do
+      raise ArgumentError,
+            "Request.add_system_message/3 empty content [] requires :effort " <>
+              "(a system message needs content or output_config)"
+    end
+
+    message =
+      %{"role" => "system", "content" => content}
+      |> maybe_put("clear_at", clear_at && Atom.to_string(clear_at))
+      |> maybe_put("output_config", effort && %{"effort" => Atom.to_string(effort)})
+
+    request = %{request | messages: messages ++ [message]}
+    request = if clear_at, do: add_beta(request, @clear_at_beta), else: request
+    if effort, do: add_beta(request, @message_effort_beta), else: request
+  end
+
   @doc """
   Adds a tool with strict schema validation enabled (`strict: true`).
 
