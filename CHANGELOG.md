@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Response.to_assistant_content/1` re-emits `toolset_name` and `caller` on `tool_use` (and
   `caller` on `server_tool_use` / `web_search_tool_result`); replaying a client-toolset call
   without `toolset_name` was rejected.
+- `Stream.build_final_message/1` decodes streamed tool input (`input_json_delta` chunks on
+  `tool_use` / `server_tool_use` / `mcp_tool_use`) into the block's `"input"`; it was left as an
+  undecoded `"partial_json"` string with an empty `input`. Invalid JSON (e.g. cut off by
+  `max_tokens`) returns `{:error, {:invalid_tool_input_json, index, partial_json}}`.
 
 ### Changed
 
@@ -77,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the response `container` to the next request, and dispatches client-toolset calls
   to the handler keyed by `toolset_name`. A handler of the wrong arity is now an error result
   instead of a crash.
+- `Claudio.Agent` continues after `stop_reason: :compaction` (`Request.apply_compaction/2`, then
+  another call with no user turn; counts toward `:max_turns`) instead of returning the summary
+  as the final reply. A handler returning anything other than `{:ok, _}` / `{:error, _}` raises
+  `ArgumentError` naming the handler (was a `CaseClauseError`).
 
 ### Added
 

@@ -95,4 +95,18 @@ defmodule Claudio.ContextManagementIntegrationTest do
 
     assert message =~ "compact_20260112"
   end
+
+  test "Agent.run/4 continues after an on-demand compaction and answers", %{client: client} do
+    request =
+      Request.new(@model)
+      |> Request.add_message(:user, "My name is Q. What is 2+2? Answer with the number.")
+      |> Request.set_max_tokens(2048)
+      |> Request.request_compaction()
+
+    assert {:ok, %Response{stop_reason: :end_turn} = final, [first | _]} =
+             Claudio.Agent.run(client, request, %{}, max_turns: 3)
+
+    assert %{"role" => "assistant", "content" => [%{"type" => "compaction"}]} = first
+    assert Response.get_text(final) =~ "4"
+  end
 end

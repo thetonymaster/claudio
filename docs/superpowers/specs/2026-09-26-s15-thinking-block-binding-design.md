@@ -29,7 +29,7 @@ hand-set one) and can't see what the API did (`input_transformations` is dropped
 | F5 | Unset: accounts created on/after 2026-08-31 00:00 UTC behave as `"error"`; older accounts aren't enforced — with the beta the mismatch is reported as `thinking_mismatch_allowed` (B4). **The probe key is an older account** (B4, S13 P13), so integration tests must set `:error` explicitly to observe enforcement. | PT, B4 |
 | F6 | `input_transformations`: top-level array on every response **when the beta is sent** (`[]` when nothing happened, B0); **absent** (no key) without the beta (B1). Entry `{type, path, reason}`; `type` ∈ `thinking_dropped`, `thinking_mismatch_allowed`; `reason` ∈ `prefix_binding_mismatch`, `model_binding_mismatch`; docs: ignore unknown `type`/`reason` values. | PT, B0, B1 |
 | F7 | Model binding (Fable 5.1 / Mythos 5.1 blocks read by earlier models, e.g. after a fallback) always drops, regardless of `prefix_mismatch_behavior`; reported as `model_binding_mismatch` with the beta. | PT |
-| F8 | Streaming: the array is on `message_start.message` (B9). PT: "After a mid-stream server-side fallback, the final `message_delta` event carries it again with the serving model's entries." A normal `message_delta` carries no such key (B9: event keys `type, delta, usage`). The post-fallback nesting (event top level vs `delta`) is **unverified** — a refusal can't be triggered on purpose (S12b F13). | PT, B9 |
+| F8 | Streaming: the array is on `message_start.message` (B9). After a mid-stream server-side fallback, the final `message_delta` event carries it again at the **event's top level** (not inside `delta`) with the serving model's entries, replacing the `message_start` value — verified 2026-09-26 in the official Python SDK type `BetaRawMessageDeltaEvent.input_transformations` (field of the event; `Delta` holds only `container`, `stop_details`, `stop_reason`, `stop_sequence`). A normal `message_delta` carries no such key (B9). | PT, B9, SDK |
 | F9 | `count_tokens` runs the same check: `"error"` → the same 400 (B7); `"drop_block"` → 200 `{"input_tokens": 123}` with no `input_transformations` (B8). | PT, B7, B8 |
 | F10 | Batches: an item failing under explicit `"error"` resolves `errored`; unset items don't fail (enforced accounts drop instead). | PT |
 | F11 | Safe edits (no mismatch): appending, removing blocks from the start or end, server-side compaction/editing. Pruning before a threshold `compaction` block keeps the kept `thinking` block valid (S13 P12 → `[]`); editing the summary text is reported (S13 P13). | PT, S13 P12/P13 |
@@ -66,9 +66,9 @@ hand-set one) and can't see what the API did (`input_transformations` is dropped
 ### 3. Streaming
 
 - `message_start`: no code — the stored message carries the key into `from_map/1` (F8, B9).
-- `message_delta`: when the event has `"input_transformations"` at its top level, or else in
-  `"delta"`, it replaces the stored value (the serving model's entries after a fallback, F8). The
-  two-location read is deliberate: the nesting is unverified (F8); the code comment says so.
+- `message_delta`: when the event has `"input_transformations"` at its **top level**, it replaces
+  the stored value (the serving model's entries after a fallback, F8). A key inside `"delta"` is
+  ignored (post-review fix: SDK-verified location).
 
 ### 4. Docs
 
@@ -89,8 +89,8 @@ hand-set one) and can't see what the API did (`input_transformations` is dropped
 - **Unit (`response_test.exs`):** field present (`[]` and one entry) and absent (`nil`), string and
   atom top-level keys.
 - **Unit (`messages/stream_test.exs`):** `message_start` with one entry → field set; a
-  `message_delta` carrying the key at the top level replaces it; one carrying it inside `delta`
-  replaces it; a `message_delta` without it keeps the `message_start` value.
+  `message_delta` carrying the key at the top level replaces it; one carrying it only inside
+  `delta` is ignored; a `message_delta` without it keeps the `message_start` value.
 - **Integration (`test/integration/block_binding_integration_test.exs`):** one live call to get a
   signed thinking block (adaptive thinking, tiny prompt), then the same history with the first
   user message edited:

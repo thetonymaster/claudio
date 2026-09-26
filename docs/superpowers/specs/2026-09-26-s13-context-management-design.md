@@ -49,6 +49,7 @@ dropped, and `stop_reason: "compaction"` stays a string.
 | F17 | `count_tokens`: accepts `context_management` and returns `context_management.original_input_tokens` (P6e → 200); applies existing compaction blocks, does not trigger new ones; accepts and ignores top-level `compaction`. A replayed block without its beta → 400, same as messages (P2d). | CT, REFC, P2d, P6e |
 | F18 | Batches: an item with a `compact_20260112` edit and an item with top-level `compaction` both **succeed** (P7; the on-demand item returns `stop_reason: "compaction"`, content `[compaction]`). | P7 |
 | F19 | Claudio today: `Request.set_context_management/2` (`request.ex:672`) stores the raw map and declares `context-management-2025-06-27` only; `Response` has no `context_management` field; `parse_stop_reason/1` passes `"compaction"` through as a string (`response.ex:623`); unknown blocks pass through `parse_content_block/1` / `block_to_api/1` raw; `Stream.apply_delta/2` has no `compaction_delta` clause; `add_message/3` already scans content for `fallback` blocks (`request.ex:132`). | code |
+| F20 | A history ending in `[assistant: [compaction block]]` (no trailing user turn) continues and answers the pending request from the summary — threshold block + `compact_20260112` edit (F1 → 200, "2 + 2 = **4**") and signed on-demand block alone (F2 → 200, "Hi Q! 2 + 2 = **4**."). Basis for `Claudio.Agent` continuing after `stop_reason: :compaction` (post-review fix, Q 2026-09-26). | F1, F2 |
 
 ## Design
 

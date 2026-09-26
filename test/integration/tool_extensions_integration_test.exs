@@ -176,4 +176,19 @@ defmodule Claudio.ToolExtensionsIntegrationTest do
 
     assert Response.get_text(final) =~ "Paris"
   end
+
+  test "three consecutive assistant messages are accepted (the Agent can build them)", %{
+    client: client
+  } do
+    request =
+      Request.new(@model)
+      |> Request.add_message(:user, "What is the capital of France?")
+      |> Request.add_message(:assistant, "The capital")
+      |> Request.add_message(:assistant, " of France")
+      |> Request.add_message(:assistant, " is Paris.")
+      |> Request.add_message(:user, "And of Spain? One word.")
+      |> Request.set_max_tokens(512)
+
+    assert {:ok, %Response{}} = Messages.create(client, request)
+  end
 end

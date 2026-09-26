@@ -279,6 +279,7 @@ The `Claudio.APIError` exception provides structured error handling:
 - SSE parsing handles incomplete chunks via buffer accumulation
 - Events extracted by parsing `event:` and `data:` lines
 - Supports graceful handling of unknown event types (forward compatibility)
+- Streamed tool input (`input_json_delta`) is decoded into `"input"` at `content_block_stop`; invalid JSON → `{:error, {:invalid_tool_input_json, index, partial_json}}`
 
 ### Type Safety
 - Extensive use of `@type` and `@spec` for documentation and Dialyzer
