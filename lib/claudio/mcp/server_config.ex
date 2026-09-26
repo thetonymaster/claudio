@@ -113,11 +113,8 @@ defmodule Claudio.MCP.ServerConfig do
   The `mcp_toolset` entry (for `tools`) that references this server.
   """
   @spec to_toolset(t()) :: map()
-  def to_toolset(%__MODULE__{} = config) do
-    %{"type" => "mcp_toolset", "mcp_server_name" => config.name}
-    |> maybe_put("default_config", config.default_config)
-    |> maybe_put("configs", empty_to_nil(config.configs))
-  end
+  def to_toolset(%__MODULE__{} = config),
+    do: build_toolset(config.name, config.default_config, config.configs)
 
   @doc """
   Splits a raw server map into `{server_entry, toolset}`.
@@ -136,7 +133,7 @@ defmodule Claudio.MCP.ServerConfig do
                 "by name); got keys #{inspect(Map.keys(server))}"
 
     {legacy, server} = pop_legacy(server)
-    toolset = %__MODULE__{name: name} |> apply_legacy(legacy) |> to_toolset()
+    toolset = legacy_toolset(name, legacy)
     {server, toolset}
   end
 
@@ -147,11 +144,11 @@ defmodule Claudio.MCP.ServerConfig do
     end
   end
 
-  defp apply_legacy(config, nil), do: config
+  defp legacy_toolset(name, nil), do: build_toolset(name, nil, nil)
 
-  defp apply_legacy(config, legacy) when is_map(legacy) do
+  defp legacy_toolset(name, legacy) when is_map(legacy) do
     Logger.warning(
-      "MCP server #{inspect(config.name)}: tool_configuration is deprecated " <>
+      "MCP server #{inspect(name)}: tool_configuration is deprecated " <>
         "(mcp-client-2025-04-04); translated to an mcp_toolset entry. " <>
         "Use Claudio.MCP.ServerConfig.allow_tools/2 or set_default_config/2 instead."
     )
@@ -160,10 +157,23 @@ defmodule Claudio.MCP.ServerConfig do
     allowed = Map.get(legacy, "allowed_tools", Map.get(legacy, :allowed_tools))
 
     cond do
-      enabled == false -> set_default_config(config, %{"enabled" => false})
-      is_list(allowed) -> allow_tools(config, allowed)
-      true -> config
+      enabled == false ->
+        build_toolset(name, %{"enabled" => false}, nil)
+
+      is_list(allowed) ->
+        Enum.each(allowed, &validate_exact_name!/1)
+        configs = Map.new(allowed, &{&1, %{"enabled" => true}})
+        build_toolset(name, %{"enabled" => false}, configs)
+
+      true ->
+        build_toolset(name, nil, nil)
     end
+  end
+
+  defp build_toolset(name, default_config, configs) do
+    %{"type" => "mcp_toolset", "mcp_server_name" => name}
+    |> maybe_put("default_config", default_config)
+    |> maybe_put("configs", empty_to_nil(configs))
   end
 
   defp validate_exact_name!(name) when is_binary(name) do

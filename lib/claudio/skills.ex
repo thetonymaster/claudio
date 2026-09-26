@@ -3,15 +3,17 @@ defmodule Claudio.Skills do
   Anthropic **Agent Skills API** client (`/v1/skills`) — manage custom skills
   (packaged `SKILL.md` + files) and their versions.
 
-  **GA — no beta header.** Without the header, `list/2` responses are
+  **GA — no beta header.**
+
+      client = Claudio.Client.new(%{token: "sk-ant-...", version: "2023-06-01"})
+      {:ok, %{"data" => skills}} = Claudio.Skills.list(client, source: "custom")
+
+  Without the header, `list/2` responses are
   `%{"data" => [...], "next_page" => cursor | nil}` — page by passing
   `next_page` back as `:page`. The old beta shape also carried `"has_more"`;
   callers that depend on it can opt back in:
 
       client = Claudio.Client.with_betas(client, ["skills-2025-10-02"])
-
-      client = Claudio.Client.new(%{token: "sk-ant-...", version: "2023-06-01"})
-      {:ok, %{"data" => skills}} = Claudio.Skills.list(client, source: "custom")
 
   Returns the raw decoded body (`{:ok, map()}`); a non-2xx response maps to
   `{:error, %Claudio.APIError{}}`, consistent with `Claudio.Admin` / `Claudio.Models`.

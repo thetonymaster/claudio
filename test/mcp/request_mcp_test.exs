@@ -66,6 +66,17 @@ defmodule Claudio.Messages.Request.MCPTest do
 
       assert [%{"name" => "local"}, %{"type" => "mcp_toolset"}] = map["tools"]
     end
+
+    test "raises instead of dropping config when a toolset already exists (struct path)" do
+      assert_raise ArgumentError, ~r/already has an mcp_toolset for "s"/, fn ->
+        Request.new("claude-opus-5")
+        |> Request.add_tool(%{"type" => "mcp_toolset", "mcp_server_name" => "s"})
+        |> Request.add_mcp_server(
+          ServerConfig.new("s", "https://x")
+          |> ServerConfig.allow_tools(["only_this"])
+        )
+      end
+    end
   end
 
   describe "add_mcp_server/2 with a raw map" do
@@ -103,17 +114,6 @@ defmodule Claudio.Messages.Request.MCPTest do
         |> Request.to_map()
 
       assert map["tools"] == [hand_built]
-    end
-
-    test "raises instead of dropping config when a toolset already exists (struct path)" do
-      assert_raise ArgumentError, ~r/already has an mcp_toolset for "s"/, fn ->
-        Request.new("claude-opus-5")
-        |> Request.add_tool(%{"type" => "mcp_toolset", "mcp_server_name" => "s"})
-        |> Request.add_mcp_server(
-          ServerConfig.new("s", "https://x")
-          |> ServerConfig.allow_tools(["only_this"])
-        )
-      end
     end
 
     test "raises instead of dropping translated legacy config when a toolset already exists" do
