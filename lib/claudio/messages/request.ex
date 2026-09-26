@@ -653,6 +653,8 @@ defmodule Claudio.Messages.Request do
 
   @thinking_displays [:summarized, :omitted, :updates]
   @thinking_display_updates_beta "thinking-display-updates-2026-08-18"
+  @block_binding_behaviors [:error, :drop_block]
+  @block_binding_beta "thinking-binding-controls-2026-08-01"
 
   @doc """
   Enables adaptive thinking (`thinking: %{"type" => "adaptive"}`), replacing any
@@ -665,6 +667,13 @@ defmodule Claudio.Messages.Request do
     to use the model's default. `:updates` (progress notes as separate `thinking` blocks)
     also declares the `thinking-display-updates-2026-08-18` beta. A beta declared
     here stays declared if `thinking` is later replaced.
+  - `:block_binding` — `:error` or `:drop_block`: what the API does with a `thinking` block
+    whose conversation prefix changed since it was produced (an edited earlier message, a
+    block removed from the middle). `:error` rejects the request (400); `:drop_block` drops
+    that block and every later thinking block and reports it in
+    `Response.input_transformations`. Declares `thinking-binding-controls-2026-08-01`.
+    Unset: accounts created on/after 2026-08-31 behave as `:error`; older accounts are not
+    enforced. See `set_thinking_block_binding/2`.
 
   ## Example
 
@@ -674,25 +683,75 @@ defmodule Claudio.Messages.Request do
   """
   @spec enable_adaptive_thinking(t(), keyword()) :: t()
   def enable_adaptive_thinking(%__MODULE__{} = request, opts \\ []) when is_list(opts) do
-    opts = Keyword.validate!(opts, [:display])
+    opts = Keyword.validate!(opts, [:display, :block_binding])
 
-    case Keyword.fetch(opts, :display) do
-      missing when missing in [:error, {:ok, nil}] ->
-        %{request | thinking: %{"type" => "adaptive"}}
+    display =
+      case Keyword.get(opts, :display) do
+        nil ->
+          nil
 
-      {:ok, display} when display in @thinking_displays ->
-        thinking = %{"type" => "adaptive", "display" => Atom.to_string(display)}
-        request = %{request | thinking: thinking}
+        display when display in @thinking_displays ->
+          display
 
-        if display == :updates,
-          do: add_beta(request, @thinking_display_updates_beta),
-          else: request
+        other ->
+          raise ArgumentError,
+                "Request.enable_adaptive_thinking/2 :display must be one of " <>
+                  ":summarized, :omitted, :updates; got #{inspect(other)}"
+      end
 
-      {:ok, other} ->
+    binding = block_binding!("enable_adaptive_thinking/2", Keyword.get(opts, :block_binding))
+
+    thinking =
+      %{"type" => "adaptive"}
+      |> maybe_put("display", display && Atom.to_string(display))
+      |> maybe_put("block_binding", binding)
+
+    request = %{request | thinking: thinking}
+
+    request =
+      if display == :updates, do: add_beta(request, @thinking_display_updates_beta), else: request
+
+    if binding, do: add_beta(request, @block_binding_beta), else: request
+  end
+
+  @doc """
+  Sets `thinking.block_binding.prefix_mismatch_behavior` (`:error` or `:drop_block`) on the
+  thinking config already set — adaptive or a raw `enable_thinking/2` `"enabled"` map —
+  and declares `thinking-binding-controls-2026-08-01`. Raises if no thinking config is set.
+  A later thinking setter replaces the whole map (the beta stays declared). The API rejects
+  `block_binding` on `"disabled"` thinking.
+  """
+  @spec set_thinking_block_binding(t(), :error | :drop_block) :: t()
+  def set_thinking_block_binding(%__MODULE__{} = request, behavior)
+      when behavior in @block_binding_behaviors do
+    case request.thinking do
+      nil ->
         raise ArgumentError,
-              "Request.enable_adaptive_thinking/2 :display must be one of " <>
-                ":summarized, :omitted, :updates; got #{inspect(other)}"
+              "Request.set_thinking_block_binding/2 needs thinking set first " <>
+                "(enable_adaptive_thinking/2 or enable_thinking/2)"
+
+      thinking ->
+        binding = %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+        # Drop an atom :block_binding so an atom-keyed raw map can't emit the key twice.
+        thinking = thinking |> Map.delete(:block_binding) |> Map.put("block_binding", binding)
+        add_beta(%{request | thinking: thinking}, @block_binding_beta)
     end
+  end
+
+  def set_thinking_block_binding(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_thinking_block_binding/2 :block_binding must be :error or :drop_block; " <>
+            "got #{inspect(other)}"
+  end
+
+  defp block_binding!(_fun, nil), do: nil
+
+  defp block_binding!(_fun, behavior) when behavior in @block_binding_behaviors,
+    do: %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+
+  defp block_binding!(fun, other) do
+    raise ArgumentError,
+          "Request.#{fun} :block_binding must be :error or :drop_block; got #{inspect(other)}"
   end
 
   @doc """

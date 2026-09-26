@@ -1402,6 +1402,160 @@ defmodule Claudio.Messages.RequestTest do
         Request.new("claude-opus-5-5") |> Request.enable_adaptive_thinking(budget_tokens: 1024)
       end
     end
+
+    test "block_binding: puts prefix_mismatch_behavior in thinking and declares the beta" do
+      for behavior <- [:error, :drop_block] do
+        request =
+          Request.new("claude-opus-5-5")
+          |> Request.enable_adaptive_thinking(block_binding: behavior)
+
+        assert Request.to_map(request)["thinking"] == %{
+                 "type" => "adaptive",
+                 "block_binding" => %{"prefix_mismatch_behavior" => Atom.to_string(behavior)}
+               }
+
+        assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+      end
+    end
+
+    test "block_binding composes with display: :summarized (spec Testing)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :summarized, block_binding: :drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "summarized",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "block_binding composes with display: :updates — both betas (Review Focus 2)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :updates, block_binding: :drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "updates",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert Request.required_betas(request) == [
+               "thinking-display-updates-2026-08-18",
+               "thinking-binding-controls-2026-08-01"
+             ]
+    end
+
+    test "re-calling without block_binding drops it; the beta stays (Review Focus 3)" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(block_binding: :error)
+        |> Request.enable_adaptive_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "block_binding: nil is the same as omitting it" do
+      request = Request.new("m") |> Request.enable_adaptive_thinking(block_binding: nil)
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "adaptive"}
+      assert Request.required_betas(request) == []
+    end
+
+    test "unknown block_binding values raise" do
+      for bad <- [:strict, "drop_block"] do
+        assert_raise ArgumentError,
+                     ~r/enable_adaptive_thinking\/2 :block_binding must be :error or :drop_block; got/,
+                     fn ->
+                       Request.enable_adaptive_thinking(Request.new("m"), block_binding: bad)
+                     end
+      end
+    end
+  end
+
+  describe "set_thinking_block_binding/2" do
+    @binding %{"prefix_mismatch_behavior" => "drop_block"}
+
+    test "merges into adaptive thinking set earlier, keeping display" do
+      request =
+        Request.new("claude-opus-5-5")
+        |> Request.enable_adaptive_thinking(display: :summarized)
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "adaptive",
+               "display" => "summarized",
+               "block_binding" => @binding
+             }
+
+      assert Request.required_betas(request) == ["thinking-binding-controls-2026-08-01"]
+    end
+
+    test "merges into a raw enabled thinking map" do
+      request =
+        Request.new("claude-sonnet-4-6")
+        |> Request.enable_thinking(%{"type" => "enabled", "budget_tokens" => 2048})
+        |> Request.set_thinking_block_binding(:error)
+
+      assert Request.to_map(request)["thinking"] == %{
+               "type" => "enabled",
+               "budget_tokens" => 2048,
+               "block_binding" => %{"prefix_mismatch_behavior" => "error"}
+             }
+    end
+
+    test "an atom-keyed raw map gains the string key only (Review Focus 1)" do
+      request =
+        Request.new("m")
+        |> Request.enable_thinking(%{type: "enabled", budget_tokens: 2048})
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert request.thinking == %{
+               "block_binding" => @binding,
+               type: "enabled",
+               budget_tokens: 2048
+             }
+    end
+
+    test "an atom :block_binding key is replaced, not duplicated" do
+      request =
+        Request.new("m")
+        |> Request.enable_thinking(%{
+          type: "adaptive",
+          block_binding: %{prefix_mismatch_behavior: "error"}
+        })
+        |> Request.set_thinking_block_binding(:drop_block)
+
+      assert request.thinking == %{"block_binding" => @binding, type: "adaptive"}
+    end
+
+    test "a later disable_thinking/1 replaces it" do
+      request =
+        Request.new("m")
+        |> Request.enable_adaptive_thinking()
+        |> Request.set_thinking_block_binding(:error)
+        |> Request.disable_thinking()
+
+      assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "no thinking set, or a bad value, raises" do
+      assert_raise ArgumentError, ~r/set_thinking_block_binding\/2 needs thinking/, fn ->
+        Request.set_thinking_block_binding(Request.new("m"), :error)
+      end
+
+      assert_raise ArgumentError,
+                   ~r/set_thinking_block_binding\/2 :block_binding must be :error or :drop_block; got/,
+                   fn ->
+                     Request.new("m")
+                     |> Request.enable_adaptive_thinking()
+                     |> Request.set_thinking_block_binding(:strict)
+                   end
+    end
   end
 
   describe "disable_thinking/1" do
