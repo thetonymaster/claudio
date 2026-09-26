@@ -441,6 +441,12 @@ defmodule Claudio.Messages.Response do
     |> apply_fallback_continuation_rules()
   end
 
+  # API-shaped (string-keyed) map for one parsed block, as to_assistant_content/1 emits it;
+  # shared with Request.add_message/3 so typed blocks passed there are sent the same way.
+  @doc false
+  @spec to_api_block(map()) :: map()
+  def to_api_block(block), do: block_to_api(block)
+
   defp parse_content(content) when is_list(content) do
     Enum.map(content, &parse_content_block/1)
   end
@@ -670,14 +676,16 @@ defmodule Claudio.Messages.Response do
     }
   end
 
+  # The API rejects `server_name` on a replayed mcp_tool_result and a null `is_error`
+  # (probed 2026-09-26), so only the fields it returned are sent back.
   defp block_to_api(%{type: :mcp_tool_result} = block) do
-    %{
+    base = %{
       "type" => "mcp_tool_result",
       "tool_use_id" => block.tool_use_id,
-      "server_name" => block.server_name,
-      "content" => block.content,
-      "is_error" => block.is_error
+      "content" => block.content
     }
+
+    if is_boolean(block[:is_error]), do: Map.put(base, "is_error", block.is_error), else: base
   end
 
   defp block_to_api(%{type: :server_tool_use} = block) do

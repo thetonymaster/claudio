@@ -1857,12 +1857,14 @@ defmodule Claudio.Messages.Request do
   defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
 
   defp normalize_content(content) when is_binary(content), do: content
-  # A typed block from Response (e.g. `Response.compaction_block/1`) keeps the block as
-  # received under :raw; send that, not the typed map.
   defp normalize_content(content) when is_list(content), do: Enum.map(content, &unwrap_typed/1)
   defp normalize_content(content), do: content
 
-  defp unwrap_typed(%{type: type, raw: raw}) when is_atom(type) and is_map(raw), do: raw
+  # Any atom-typed block came from Response parsing: send its API shape (the original map
+  # when kept under :raw), never the typed map with nil fields the API rejects.
+  defp unwrap_typed(%{type: type} = block) when is_atom(type) and not is_nil(type),
+    do: Claudio.Messages.Response.to_api_block(block)
+
   defp unwrap_typed(block), do: block
 
   defp maybe_put(map, _key, nil), do: map

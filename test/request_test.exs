@@ -1966,4 +1966,22 @@ defmodule Claudio.Messages.RequestTest do
       assert map == %{"model" => "m", "messages" => [%{"role" => "user", "content" => "hi"}]}
     end
   end
+
+  describe "add_message/3 with parsed Response content (pre-release audit)" do
+    # Live probe G2 (2026-09-26): "caller": null is rejected ("Input should be an object").
+    test "typed blocks are sent in API shape, without nil fields" do
+      raw = [
+        %{"type" => "text", "text" => "Checking"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => %{"a" => 1}},
+        %{"type" => "server_tool_use", "id" => "srv_1", "name" => "web_search", "input" => %{}}
+      ]
+
+      response = Claudio.Messages.Response.from_map(%{"content" => raw})
+      request = Request.new("m") |> Request.add_message(:assistant, response.content)
+
+      assert request.messages == [%{"role" => "assistant", "content" => raw}]
+      assert Jason.encode!(request.messages) =~ ~s("toolu_1")
+      refute Jason.encode!(request.messages) =~ "null"
+    end
+  end
 end

@@ -316,7 +316,7 @@ defmodule Claudio.Messages.ResponseTest do
              ]
     end
 
-    test "serializes mcp_tool_result blocks to API shape" do
+    test "serializes mcp_tool_result blocks to API shape (no server_name: the API rejects it)" do
       response = %Response{
         content: [
           %{
@@ -333,8 +333,7 @@ defmodule Claudio.Messages.ResponseTest do
                %{
                  "type" => "mcp_tool_result",
                  "tool_use_id" => "mcp_1",
-                 "server_name" => "srv",
-                 "content" => "ok",
+                  "content" => "ok",
                  "is_error" => false
                }
              ]
@@ -1124,7 +1123,6 @@ defmodule Claudio.Messages.ResponseTest do
       mcp_result = %{
         "type" => "mcp_tool_result",
         "tool_use_id" => "mcp_1",
-        "server_name" => "s",
         "content" => [],
         "is_error" => false
       }
@@ -1492,6 +1490,38 @@ defmodule Claudio.Messages.ResponseTest do
 
     test "nil when absent — the beta was not sent (Review Focus 5)" do
       assert Response.from_map(%{"content" => []}).input_transformations == nil
+    end
+  end
+
+  describe "mcp_tool_result replay (pre-release audit)" do
+    # Live probe G7 (2026-09-26): the API rejects `server_name` on a replayed
+    # mcp_tool_result ("Extra inputs are not permitted") and a null `is_error`.
+    test "replays exactly the API's block: no server_name, no null is_error" do
+      use_block = %{
+        "type" => "mcp_tool_use",
+        "id" => "mcptoolu_01",
+        "name" => "x",
+        "server_name" => "s",
+        "input" => %{}
+      }
+
+      result = %{
+        "type" => "mcp_tool_result",
+        "tool_use_id" => "mcptoolu_01",
+        "is_error" => false,
+        "content" => [%{"type" => "text", "text" => "ok"}]
+      }
+
+      response = Response.from_map(%{"content" => [use_block, result]})
+      assert Response.to_assistant_content(response) == [use_block, result]
+    end
+
+    test "a missing is_error is never sent as null" do
+      result = %{"type" => "mcp_tool_result", "tool_use_id" => "m", "content" => []}
+      [replayed] = Response.to_assistant_content(Response.from_map(%{"content" => [result]}))
+
+      refute Enum.any?(Map.values(replayed), &is_nil/1)
+      refute Map.has_key?(replayed, "server_name")
     end
   end
 end
