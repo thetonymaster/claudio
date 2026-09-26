@@ -49,6 +49,12 @@ defmodule Claudio.Client do
   Without `retry:`, Req's default applies: only GET/HEAD requests are retried.
   `retry: false` disables retries entirely. Streaming requests are never retried.
 
+  Retries can duplicate work. After an ambiguous failure — a timeout, a closed connection,
+  a 5xx — the API may already have processed the request, and the retry sends it again:
+  a second message is generated and billed, and a create call (a batch, a file upload,
+  an Admin invite) can run twice. None of these endpoints take an idempotency key, so
+  leave `retry:` off where a duplicate is unacceptable and retry in your own code instead.
+
   ## Usage
 
       # Simple client with defaults

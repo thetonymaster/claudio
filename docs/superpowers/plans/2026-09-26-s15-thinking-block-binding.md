@@ -453,15 +453,18 @@ Moduledoc — append:
   `[]` when nothing changed; `nil` without the beta. Ignore unknown `type`/`reason` values.
 ```
 
-`stream.ex`, in the `message_delta` clause pipeline, add as the last two steps — directly after S13's `|> maybe_update(data, "context_management")` line (post-S13/S14 the pipeline is `stop_reason`, `stop_sequence`, `stop_details`, S14's `container`, `maybe_put_usage`, S13's `context_management`):
+`stream.ex`, in the `message_delta` clause pipeline, add as the last step — directly after S13's `|> maybe_update(data, "context_management")` line (post-S13/S14 the pipeline is `stop_reason`, `stop_sequence`, `stop_details`, S14's `container`, `maybe_put_usage`, S13's `context_management`):
 
 ```elixir
             # After a mid-stream fallback the final message_delta repeats input_transformations
-            # with the serving model's entries (preserved-thinking docs). Its nesting is not
-            # observable on demand, so read delta first and let the event's top level win.
-            |> maybe_update(delta, "input_transformations")
+            # with the serving model's entries (preserved-thinking docs). It sits at the event's
+            # top level (SDK BetaRawMessageDeltaEvent), never inside delta.
             |> maybe_update(data, "input_transformations")
 ```
+
+(Post-review fix: the first draft also read `delta`; spec F8 was verified against the SDK and
+the `delta` read removed. A key only inside `delta` is ignored — the stream test asserts the
+`message_start` value is kept.)
 
 (`maybe_update/3` skips only `nil`, so `[]` replaces.)
 
