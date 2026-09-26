@@ -458,13 +458,19 @@ defmodule Claudio.Messages.Stream do
   defp maybe_put_usage(map, nil), do: map
 
   # message_delta usage is cumulative but may omit fields message_start carried
-  # (e.g. input_tokens): merge, delta wins.
+  # (e.g. input_tokens): merge, delta wins. Top-level keys are stringified first so
+  # an atom-keyed start and a string-keyed delta cannot keep both copies of a field.
   defp maybe_put_usage(map, usage) do
     case Map.get(map, "usage") do
-      %{} = current -> Map.put(map, "usage", Map.merge(current, usage))
-      _ -> Map.put(map, "usage", usage)
+      %{} = current ->
+        Map.put(map, "usage", Map.merge(stringify_keys(current), stringify_keys(usage)))
+
+      _ ->
+        Map.put(map, "usage", usage)
     end
   end
+
+  defp stringify_keys(%{} = map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
   # Convert a map with atom keys to string keys (shallow conversion for top level only)
   defp atomize_to_stringify(map) when is_map(map) do

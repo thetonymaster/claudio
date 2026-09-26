@@ -254,6 +254,35 @@ defmodule Claudio.Messages.StreamTest do
     end
   end
 
+  describe "build_final_message/1 usage merge with mixed key styles" do
+    test "delta wins when message_start usage is atom-keyed and delta usage string-keyed" do
+      events = [
+        {:ok,
+         %{
+           event: "message_start",
+           data: %{
+             "message" => %{
+               "id" => "m",
+               "content" => [],
+               "usage" => %{input_tokens: 5, output_tokens: 1}
+             }
+           }
+         }},
+        {:ok,
+         %{
+           event: "message_delta",
+           data: %{"delta" => %{"stop_reason" => "end_turn"}, "usage" => %{"output_tokens" => 3}}
+         }},
+        {:ok, %{event: "message_stop", data: %{}}}
+      ]
+
+      {:ok, message} = ClaudioStream.build_final_message(events)
+
+      assert message["usage"] == %{"input_tokens" => 5, "output_tokens" => 3}
+      assert Claudio.Messages.Response.from_map(message).usage.output_tokens == 3
+    end
+  end
+
   describe "output_tokens_details through build_final_message/1 → Response.from_map/1" do
     test "final message_delta usage details survive into the parsed Response" do
       sse = [
