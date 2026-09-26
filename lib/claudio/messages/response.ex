@@ -221,11 +221,15 @@ defmodule Claudio.Messages.Response do
   def thinking_interrupted?(_block), do: false
 
   @doc """
-  Extracts all tool use requests from the response.
+  Extracts the tool use requests to execute. After a server-side fallback, `tool_use`
+  blocks before the last `fallback` block came from the model that declined; they are
+  skipped here, as `to_assistant_content/1` drops them from the replay.
   """
   @spec get_tool_uses(t()) :: list(tool_use_block())
   def get_tool_uses(%__MODULE__{content: content}) do
-    Enum.filter(content, &(&1[:type] == :tool_use))
+    content
+    |> since_last_fallback()
+    |> Enum.filter(&(&1[:type] == :tool_use))
   end
 
   @doc """
@@ -292,6 +296,18 @@ defmodule Claudio.Messages.Response do
     case List.last(fallbacks(response)) do
       %{to: to} when is_map(to) -> Map.get(to, "model") || Map.get(to, :model) || model
       _ -> model
+    end
+  end
+
+  # Blocks from the last `fallback` block on — every block when there is none. Earlier
+  # blocks belong to a model that declined (see to_assistant_content/1). Reads parsed
+  # and raw (string- or atom-keyed) content alike; shared with Claudio.Tools.
+  @doc false
+  @spec since_last_fallback(list()) :: list()
+  def since_last_fallback(blocks) when is_list(blocks) do
+    case last_fallback_index(blocks) do
+      nil -> blocks
+      index -> Enum.drop(blocks, index)
     end
   end
 

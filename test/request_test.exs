@@ -42,6 +42,29 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with a fallback block" do
+    test "declares the fallback beta (the API rejects a replayed fallback block without it)" do
+      for block <- [
+            %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+            %{type: "fallback"},
+            %{type: :fallback}
+          ] do
+        request =
+          Request.new("m")
+          |> Request.add_message(:assistant, [block, %{"type" => "text", "text" => "hi"}])
+
+        assert Request.required_betas(request) == ["server-side-fallback-2026-07-01"]
+      end
+    end
+
+    test "content without a fallback block declares nothing" do
+      for content <- ["hi", [%{"type" => "text", "text" => "hi"}], ["stray"]] do
+        request = Request.new("m") |> Request.add_message(:user, content)
+        assert Request.required_betas(request) == []
+      end
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =

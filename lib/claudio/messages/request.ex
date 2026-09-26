@@ -97,6 +97,9 @@ defmodule Claudio.Messages.Request do
   - A string for simple text messages
   - A list of content blocks for multimodal messages (text, images, documents)
 
+  A list `content` holding a `fallback` block (from `Response.to_assistant_content/1`)
+  declares `server-side-fallback-2026-07-01`, which the API requires to accept it.
+
   ## Examples
 
       # Simple text message
@@ -122,8 +125,22 @@ defmodule Claudio.Messages.Request do
       "content" => normalize_content(content)
     }
 
-    %{request | messages: messages ++ [message]}
+    request = %{request | messages: messages ++ [message]}
+
+    # Replaying a `fallback` block (Response.to_assistant_content/1) needs the beta even
+    # on a turn that does not set fallbacks (400 without it, probed 2026-09-25).
+    if has_fallback_block?(content), do: add_beta(request, @fallback_beta), else: request
   end
+
+  defp has_fallback_block?(content) when is_list(content) do
+    Enum.any?(content, fn
+      %{"type" => type} -> type in ["fallback", :fallback]
+      %{type: type} -> type in ["fallback", :fallback]
+      _ -> false
+    end)
+  end
+
+  defp has_fallback_block?(_content), do: false
 
   @doc """
   Adds a text message with an image from a base64-encoded string.

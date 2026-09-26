@@ -121,16 +121,22 @@ defmodule Claudio.Tools do
         IO.inspect(tool_use.name)
         IO.inspect(tool_use.input)
       end)
+
+  After a server-side fallback, `tool_use` blocks before the last `fallback` block
+  came from the model that declined and are skipped (see
+  `Claudio.Messages.Response.to_assistant_content/1`).
   """
   @spec extract_tool_uses(map() | struct()) :: list(tool_use())
   def extract_tool_uses(%{content: content}) when is_list(content) do
     content
+    |> Claudio.Messages.Response.since_last_fallback()
     |> Enum.filter(&is_tool_use?/1)
     |> Enum.map(&normalize_tool_use/1)
   end
 
   def extract_tool_uses(%{"content" => content}) when is_list(content) do
     content
+    |> Claudio.Messages.Response.since_last_fallback()
     |> Enum.filter(&is_tool_use?/1)
     |> Enum.map(&normalize_tool_use/1)
   end

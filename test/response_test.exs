@@ -1152,4 +1152,27 @@ defmodule Claudio.Messages.ResponseTest do
              ]
     end
   end
+
+  describe "get_tool_uses/1 after a fallback" do
+    test "skips tool_use blocks before the last fallback block" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          fb("a", "b"),
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+
+    test "without a fallback block every tool_use is returned" do
+      response =
+        content([
+          %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+          %{"type" => "tool_use", "id" => "toolu_2", "name" => "y", "input" => %{}}
+        ])
+
+      assert [%{id: "toolu_1"}, %{id: "toolu_2"}] = Response.get_tool_uses(response)
+    end
+  end
 end
