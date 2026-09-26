@@ -113,7 +113,8 @@ These were features Claudio *partially* implemented in a way that breaks real mu
 - **Design decisions (apply to S10–S14):**
   - Library stays **model-agnostic** — raw setter + typed helpers (the `set_output_config/2` / `set_output_format/2` pattern); per-model rules live in docs, the API owns validation.
   - Specs are written **just in time**: S10 now, S11–S14 each spec'd immediately before implementation (dated beta strings go stale).
-  - Existing public signatures do not change; new behaviour arrives as new functions / options. Release as 0.7.0.
+  - Existing public signatures do not change; new behaviour arrives as new functions / options.
+  - **Release:** one version bump (0.7.0) after S14 ships. S10–S13 accumulate under CHANGELOG `[Unreleased]`; no spec bumps `@version` on its own.
 
 | Spec | Title | Status |
 |------|-------|--------|
