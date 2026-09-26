@@ -830,8 +830,11 @@ defmodule Claudio.Messages.Request do
     |> add_beta(@task_budgets_beta)
   end
 
+  # Stringifies top-level keys first: a raw `set_output_config(%{effort: ...})`
+  # plus a helper would otherwise encode both `effort` keys into one JSON object.
   defp put_output_config(%__MODULE__{output_config: existing} = request, key, value) do
-    %{request | output_config: Map.put(existing || %{}, key, value)}
+    base = Map.new(existing || %{}, fn {k, v} -> {to_string(k), v} end)
+    %{request | output_config: Map.put(base, key, value)}
   end
 
   @doc """

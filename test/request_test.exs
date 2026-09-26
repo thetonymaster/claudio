@@ -944,4 +944,22 @@ defmodule Claudio.Messages.RequestTest do
       assert Request.to_map(request)["output_config"] == %{"effort" => "low"}
     end
   end
+
+  describe "output_config helpers over an atom-keyed raw map" do
+    test "merge without leaving duplicate atom/string keys" do
+      request =
+        Request.new("m")
+        |> Request.set_output_config(%{effort: "low", format: %{"type" => "json_schema"}})
+        |> Request.set_effort(:high)
+
+      assert Request.to_map(request)["output_config"] == %{
+               "effort" => "high",
+               "format" => %{"type" => "json_schema"}
+             }
+
+      assert Jason.encode!(Request.to_map(request)["output_config"])
+             |> String.split("effort")
+             |> length() == 2
+    end
+  end
 end

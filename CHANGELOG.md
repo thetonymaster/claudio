@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the beta. Previously the request had no toolset and no beta header and was rejected.
 - `Response.usage` keeps `output_tokens_details` (raw map, e.g. `thinking_tokens`);
   it was dropped by the usage parser.
+- `set_output_format/2` (and the new output-config helpers) no longer emit a duplicate
+  key when `set_output_config/2` was given atom keys — existing keys are stringified first.
 
 ### Changed
 
