@@ -111,6 +111,7 @@ defmodule Claudio.MCP.ServerConfig do
   """
   @spec set_default_config(t(), map()) :: t()
   def set_default_config(%__MODULE__{} = config, settings) when is_map(settings) do
+    settings = stringify_keys(settings)
     %{config | default_config: Map.merge(config.default_config || %{}, settings)}
   end
 
@@ -122,6 +123,7 @@ defmodule Claudio.MCP.ServerConfig do
   @spec configure_tool(t(), String.t(), map()) :: t()
   def configure_tool(%__MODULE__{} = config, name, settings)
       when is_binary(name) and is_map(settings) do
+    settings = stringify_keys(settings)
     configs = Map.update(config.configs || %{}, name, settings, &Map.merge(&1, settings))
     %{config | configs: configs}
   end
@@ -215,6 +217,10 @@ defmodule Claudio.MCP.ServerConfig do
   defp validate_exact_name!(other) do
     raise ArgumentError, "MCP allow_tools/2 takes tool name strings; got #{inspect(other)}"
   end
+
+  # Settings are stored with string keys so atom and string forms of the same
+  # setting merge (and allow_tools/2 can find a prior "enabled").
+  defp stringify_keys(settings), do: Map.new(settings, fn {k, v} -> {to_string(k), v} end)
 
   defp empty_to_nil(map) when map == %{}, do: nil
   defp empty_to_nil(other), do: other

@@ -65,6 +65,15 @@ defmodule Claudio.MCP.ServerConfigTest do
              }
     end
 
+    test "replacing the allowlist also drops an atom-keyed enable" do
+      config =
+        ServerConfig.new("s", "https://x")
+        |> ServerConfig.configure_tool("read", %{enabled: true})
+        |> ServerConfig.allow_tools(["write"])
+
+      assert config.configs == %{"write" => %{"enabled" => true}}
+    end
+
     test "empty allowlist disables everything and emits no configs key" do
       toolset =
         ServerConfig.new("s", "https://mcp.example.com")
@@ -104,6 +113,18 @@ defmodule Claudio.MCP.ServerConfigTest do
   end
 
   describe "set_default_config/2 and configure_tool/3" do
+    test "setting keys are stored as strings, so atom and string forms merge" do
+      config =
+        ServerConfig.new("s", "https://x")
+        |> ServerConfig.set_default_config(%{defer_loading: true})
+        |> ServerConfig.set_default_config(%{"defer_loading" => false})
+        |> ServerConfig.configure_tool("a", %{enabled: false})
+        |> ServerConfig.configure_tool("a", %{"enabled" => true})
+
+      assert config.default_config == %{"defer_loading" => false}
+      assert config.configs == %{"a" => %{"enabled" => true}}
+    end
+
     test "merge into existing config" do
       config =
         ServerConfig.new("s", "https://x")
