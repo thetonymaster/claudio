@@ -45,6 +45,22 @@ defmodule Claudio.Messages.Request.MCPTest do
              ] = map["tools"]
     end
 
+    test "rejects a second server with the same name" do
+      assert_raise ArgumentError, ~r/already has an MCP server named "a"/, fn ->
+        Request.new("claude-opus-5-5")
+        |> Request.add_mcp_server(ServerConfig.new("a", "https://a.example.com"))
+        |> Request.add_mcp_server(ServerConfig.new("a", "https://other.example.com"))
+      end
+    end
+
+    test "rejects a raw map whose name matches an existing atom-keyed server" do
+      assert_raise ArgumentError, ~r/already has an MCP server named "a"/, fn ->
+        Request.new("claude-opus-5-5")
+        |> Request.add_mcp_server(%{type: "url", name: "a", url: "https://a.example.com"})
+        |> Request.add_mcp_server(%{"type" => "url", "name" => "a", "url" => "https://b"})
+      end
+    end
+
     test "two servers -> two toolsets, beta declared once" do
       request =
         Request.new("claude-opus-5")

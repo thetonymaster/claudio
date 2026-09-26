@@ -507,7 +507,8 @@ defmodule Claudio.Messages.Request do
   server name (the API allows one per server), no second toolset is added —
   unless the new one carries `default_config`/`configs`, which would be lost,
   so that raises `ArgumentError`. Add hand-built toolsets **before** calling
-  this, or the request will carry two.
+  this, or the request will carry two. Server names must be unique; adding a
+  second server with an existing name raises `ArgumentError`.
 
       Request.new("claude-opus-5")
       |> Request.add_mcp_server(
@@ -529,9 +530,15 @@ defmodule Claudio.Messages.Request do
   end
 
   defp put_mcp_server(%__MODULE__{mcp_servers: servers} = request, server_map, toolset) do
-    request = %{request | mcp_servers: (servers || []) ++ [server_map]}
-
     name = toolset["mcp_server_name"]
+
+    if Enum.any?(servers || [], &((&1["name"] || &1[:name]) == name)) do
+      raise ArgumentError,
+            "request already has an MCP server named #{inspect(name)}; the connector " <>
+              "requires unique server names (each is referenced by exactly one mcp_toolset)"
+    end
+
+    request = %{request | mcp_servers: (servers || []) ++ [server_map]}
 
     request =
       cond do
