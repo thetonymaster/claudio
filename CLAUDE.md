@@ -221,7 +221,7 @@ One flat module with grouped functions over a shared private request helper:
 Updates use `POST` (not PATCH). Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. Workspace-member / service-account / federation endpoints need an `org:admin` OAuth token and are not covered.
 
 ### Skills API (lib/claudio/skills.ex) — GA
-The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). GA — no beta header is attached. List responses are `{data, next_page}` (no `has_more`); opt back into the old shape with `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
+The `Claudio.Skills` module wraps the Agent Skills API (`/v1/skills`). GA — no beta header is attached. `list/2` responses are `{data, next_page}` (no `has_more`); opt back into the old shape with `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
 - **Read/manage:** `list/2` (`:limit`/`:page`/`:source`), `get/2`, `delete/2`, `list_versions/3`, `get_version/3`, `delete_version/3`
 - **Create (multipart):** `create/2`, `create_version/3` accept a `form_multipart`-shaped list (same shape as `Claudio.Files.upload/3`); the module supplies the endpoint + multipart transport.
 

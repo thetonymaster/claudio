@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*`/`?` patterns (the connector matches names literally; a pattern would enable
   no tools). Raw maps with legacy `tool_configuration` are translated with a warning.
 - `Claudio.Skills` no longer attaches `anthropic-beta: skills-2025-10-02` (Skills API is GA).
-  `Skills.list/2` / `list_versions/3` responses lose `"has_more"` — page with
+  `Skills.list/2` responses lose `"has_more"` (verified live; `list_versions/3` not probed) — page with
   `next_page` → `:page`, or opt back in with
   `Claudio.Client.with_betas(client, ["skills-2025-10-02"])`.
 - `Request.add_mcp_server/2` raises `ArgumentError` when `tools` already holds an

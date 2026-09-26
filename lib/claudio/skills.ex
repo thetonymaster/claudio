@@ -3,7 +3,7 @@ defmodule Claudio.Skills do
   Anthropic **Agent Skills API** client (`/v1/skills`) — manage custom skills
   (packaged `SKILL.md` + files) and their versions.
 
-  **GA — no beta header.** Without the header, list responses are
+  **GA — no beta header.** Without the header, `list/2` responses are
   `%{"data" => [...], "next_page" => cursor | nil}` — page by passing
   `next_page` back as `:page`. The old beta shape also carried `"has_more"`;
   callers that depend on it can opt back in:
