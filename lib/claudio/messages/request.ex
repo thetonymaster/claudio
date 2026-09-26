@@ -38,7 +38,10 @@ defmodule Claudio.Messages.Request do
           service_tier: String.t() | nil,
           betas: [String.t()],
           output_config: map() | nil,
-          cache_control: map() | nil
+          cache_control: map() | nil,
+          speed: String.t() | nil,
+          inference_geo: String.t() | nil,
+          diagnostics: map() | nil
         }
 
   defstruct [
@@ -61,7 +64,10 @@ defmodule Claudio.Messages.Request do
     :service_tier,
     betas: [],
     output_config: nil,
-    cache_control: nil
+    cache_control: nil,
+    speed: nil,
+    inference_geo: nil,
+    diagnostics: nil
   ]
 
   @doc """
@@ -909,6 +915,60 @@ defmodule Claudio.Messages.Request do
     if effort, do: add_beta(request, @message_effort_beta), else: request
   end
 
+  @speeds [:fast, :standard]
+  @fast_mode_beta "fast-mode-2026-02-01"
+
+  @doc """
+  Sets `speed` (`:fast` or `:standard`). Fast mode is an access-gated research
+  preview. Always declares the `fast-mode-2026-02-01` beta — the API rejects the
+  `speed` field without it, even for `:standard`. The response's `usage.speed`
+  reports the speed used.
+  """
+  @spec set_speed(t(), :fast | :standard) :: t()
+  def set_speed(%__MODULE__{} = request, speed) when speed in @speeds do
+    add_beta(%{request | speed: Atom.to_string(speed)}, @fast_mode_beta)
+  end
+
+  def set_speed(%__MODULE__{}, speed) do
+    raise ArgumentError,
+          "Request.set_speed/2 speed must be one of :fast, :standard; got #{inspect(speed)}"
+  end
+
+  @inference_geos [:global, :us]
+
+  @doc """
+  Sets `inference_geo` — where the request is processed (`:global` or `:us`; GA, no
+  beta). Without it the workspace default applies. `:us` is billed at 1.1× standard
+  pricing. Not sent by `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
+  The response's `usage.inference_geo` reports where it ran.
+  """
+  @spec set_inference_geo(t(), :global | :us) :: t()
+  def set_inference_geo(%__MODULE__{} = request, geo) when geo in @inference_geos do
+    %{request | inference_geo: Atom.to_string(geo)}
+  end
+
+  def set_inference_geo(%__MODULE__{}, geo) do
+    raise ArgumentError,
+          "Request.set_inference_geo/2 geo must be one of :global, :us; got #{inspect(geo)}"
+  end
+
+  @doc """
+  Asks for cache diagnostics (GA, no beta): the response's `diagnostics` explains a
+  prompt-cache miss against `previous_message_id` (the `id` of an earlier response in
+  the same conversation), or is `nil` when there is nothing to compare. Not sent by
+  `Claudio.Messages.count_tokens/2` (that endpoint rejects it).
+  """
+  @spec enable_cache_diagnostics(t(), String.t() | nil) :: t()
+  def enable_cache_diagnostics(%__MODULE__{} = request, previous_message_id \\ nil) do
+    unless is_nil(previous_message_id) or is_binary(previous_message_id) do
+      raise ArgumentError,
+            "Request.enable_cache_diagnostics/2 previous_message_id must be a string or nil; " <>
+              "got #{inspect(previous_message_id)}"
+    end
+
+    %{request | diagnostics: %{"previous_message_id" => previous_message_id}}
+  end
+
   @doc """
   Adds a tool with strict schema validation enabled (`strict: true`).
 
@@ -1164,6 +1224,9 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("service_tier", request.service_tier)
     |> maybe_put("output_config", request.output_config)
     |> maybe_put("cache_control", request.cache_control)
+    |> maybe_put("speed", request.speed)
+    |> maybe_put("inference_geo", request.inference_geo)
+    |> maybe_put("diagnostics", request.diagnostics)
   end
 
   defp cache_control_map(nil), do: %{"type" => "ephemeral"}

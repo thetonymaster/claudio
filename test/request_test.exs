@@ -1077,4 +1077,74 @@ defmodule Claudio.Messages.RequestTest do
       end
     end
   end
+
+  describe "set_speed/2" do
+    test "each value is emitted and always declares the fast-mode beta" do
+      for speed <- [:fast, :standard] do
+        request = Request.new("claude-opus-5-5") |> Request.set_speed(speed)
+
+        assert Request.to_map(request)["speed"] == Atom.to_string(speed)
+        assert Request.required_betas(request) == ["fast-mode-2026-02-01"]
+      end
+    end
+
+    test "unknown values raise" do
+      for bad <- [:turbo, "fast", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_speed\/2 speed must be one of :fast, :standard; got/,
+                     fn ->
+                       Request.new("m") |> Request.set_speed(bad)
+                     end
+      end
+    end
+  end
+
+  describe "set_inference_geo/2" do
+    test "each value is emitted, no beta" do
+      for geo <- [:global, :us] do
+        request = Request.new("claude-opus-5-5") |> Request.set_inference_geo(geo)
+
+        assert Request.to_map(request)["inference_geo"] == Atom.to_string(geo)
+        assert Request.required_betas(request) == []
+      end
+    end
+
+    test "unknown values raise" do
+      for bad <- [:eu, "us", nil] do
+        assert_raise ArgumentError,
+                     ~r/set_inference_geo\/2 geo must be one of :global, :us; got/,
+                     fn -> Request.new("m") |> Request.set_inference_geo(bad) end
+      end
+    end
+  end
+
+  describe "enable_cache_diagnostics/2" do
+    test "defaults previous_message_id to nil, no beta" do
+      request = Request.new("m") |> Request.enable_cache_diagnostics()
+
+      assert Request.to_map(request)["diagnostics"] == %{"previous_message_id" => nil}
+      assert Request.required_betas(request) == []
+    end
+
+    test "carries a previous message id" do
+      request = Request.new("m") |> Request.enable_cache_diagnostics("msg_01")
+      assert Request.to_map(request)["diagnostics"] == %{"previous_message_id" => "msg_01"}
+    end
+
+    test "a non-string id raises" do
+      for bad <- [123, :msg, %{}] do
+        assert_raise ArgumentError,
+                     ~r/enable_cache_diagnostics\/2 previous_message_id must be a string or nil; got/,
+                     fn -> Request.new("m") |> Request.enable_cache_diagnostics(bad) end
+      end
+    end
+  end
+
+  describe "to_map/1 without the S12a setters" do
+    test "emits no speed, inference_geo or diagnostics keys" do
+      map = Request.new("m") |> Request.add_message(:user, "hi") |> Request.to_map()
+
+      assert map == %{"model" => "m", "messages" => [%{"role" => "user", "content" => "hi"}]}
+    end
+  end
 end
