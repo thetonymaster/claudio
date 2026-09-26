@@ -979,4 +979,177 @@ defmodule Claudio.Messages.ResponseTest do
       assert Response.served_by(response) == "m"
     end
   end
+
+  defp fb(from, to) do
+    %{"type" => "fallback", "from" => %{"model" => from}, "to" => %{"model" => to}}
+  end
+
+  defp content(blocks), do: Response.from_map(%{"content" => blocks})
+
+  describe "to_assistant_content/1 continuation rules after a fallback" do
+    # RF "Continuing the conversation" (fetched 2026-09-25); mcp_tool_use follows the
+    # server_tool_use pairing rule (spec §3, probes P12b/P13).
+    test "no fallback block: unchanged, thinking and tool_use included" do
+      blocks = [
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        %{"type" => "text", "text" => "a"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "fallback first (every non-streaming response): unchanged" do
+      blocks = [
+        fb("claude-fable-5", "claude-opus-4-8"),
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        %{"type" => "text", "text" => "a"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "mid-output fallback: drops and pairing apply before it, everything after is kept" do
+      paired_srv = %{
+        "type" => "server_tool_use",
+        "id" => "srv_1",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      srv_result = %{
+        "type" => "web_search_tool_result",
+        "tool_use_id" => "srv_1",
+        "content" => []
+      }
+
+      unpaired_srv = %{
+        "type" => "server_tool_use",
+        "id" => "srv_2",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      paired_mcp = %{
+        "type" => "mcp_tool_use",
+        "id" => "mcp_1",
+        "name" => "x",
+        "server_name" => "s",
+        "input" => %{}
+      }
+
+      mcp_result = %{
+        "type" => "mcp_tool_result",
+        "tool_use_id" => "mcp_1",
+        "server_name" => "s",
+        "content" => [],
+        "is_error" => false
+      }
+
+      unpaired_mcp = %{paired_mcp | "id" => "mcp_2"}
+      unknown = %{"type" => "container_upload", "file_id" => "file_1"}
+      fallback = fb("claude-opus-5-5", "claude-opus-4-8")
+      after_tool_use = %{"type" => "tool_use", "id" => "toolu_9", "name" => "x", "input" => %{}}
+
+      blocks = [
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "redacted_thinking", "data" => "enc"},
+        %{"type" => "connector_text", "text" => "narration"},
+        %{"type" => "tool_use", "id" => "toolu_1", "name" => "x", "input" => %{}},
+        paired_srv,
+        srv_result,
+        unpaired_srv,
+        paired_mcp,
+        mcp_result,
+        unpaired_mcp,
+        %{"type" => "text", "text" => "partial"},
+        unknown,
+        fallback,
+        %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+        %{"type" => "text", "text" => "Hello"},
+        after_tool_use
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == [
+               paired_srv,
+               srv_result,
+               paired_mcp,
+               mcp_result,
+               %{"type" => "text", "text" => "partial"},
+               unknown,
+               fallback,
+               %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+               %{"type" => "text", "text" => "Hello"},
+               after_tool_use
+             ]
+    end
+
+    test "a result after the fallback still pairs a server_tool_use before it" do
+      srv = %{"type" => "server_tool_use", "id" => "srv_1", "name" => "web_fetch", "input" => %{}}
+      result = %{"type" => "web_fetch_tool_result", "tool_use_id" => "srv_1", "content" => %{}}
+      blocks = [%{"type" => "text", "text" => "a"}, srv, fb("a", "b"), result]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "two fallback blocks: rules apply only before the last one" do
+      first = fb("claude-opus-5-5", "claude-opus-4-8")
+      last = fb("claude-opus-4-8", "claude-opus-5")
+
+      blocks = [
+        %{"type" => "text", "text" => "a"},
+        first,
+        %{"type" => "thinking", "thinking" => "t", "signature" => "s"},
+        %{"type" => "text", "text" => "b"},
+        last,
+        %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+        %{"type" => "text", "text" => "c"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == [
+               %{"type" => "text", "text" => "a"},
+               first,
+               %{"type" => "text", "text" => "b"},
+               last,
+               %{"type" => "thinking", "thinking" => "u", "signature" => "s2"},
+               %{"type" => "text", "text" => "c"}
+             ]
+    end
+
+    test "non-map entries pass through without crashing the filter" do
+      blocks = [
+        "stray",
+        %{"type" => "text", "text" => "a"},
+        fb("a", "b"),
+        %{"type" => "text", "text" => "b"}
+      ]
+
+      assert Response.to_assistant_content(content(blocks)) == blocks
+    end
+
+    test "atom-keyed input follows the same rules" do
+      fallback = %{type: "fallback", from: %{model: "a"}, to: %{model: "b"}}
+      connector = %{type: "connector_text", text: "narration"}
+      srv = %{type: "server_tool_use", id: "srv_1", name: "web_fetch", input: %{}}
+      result = %{type: "web_fetch_tool_result", tool_use_id: "srv_1", content: %{}}
+
+      response =
+        Response.from_map(%{
+          content: [connector, srv, result, %{type: "text", text: "p"}, fallback]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               %{
+                 "type" => "server_tool_use",
+                 "id" => "srv_1",
+                 "name" => "web_fetch",
+                 "input" => %{}
+               },
+               result,
+               %{"type" => "text", "text" => "p"},
+               fallback
+             ]
+    end
+  end
 end
