@@ -222,7 +222,7 @@ TDD, unit tests first (Bypass not needed except where noted):
   - `[:claudio, :messages, :stream, :usage]` metadata: same rule, from the final
     `message_delta` usage.
 - Integration (`test/integration/`, tagged `:integration`, opt-in): `claude-opus-5-5` with
-  `enable_adaptive_thinking(display: :omitted)` + `set_effort(:low)` → 200, at least one
+  `enable_adaptive_thinking(display: :omitted)` + `set_effort(:high)` (not `:low`: adaptive thinking may skip thinking on an easy prompt at low effort, which would make the block assertion flaky) and a multi-step arithmetic prompt → 200, at least one
   `:thinking` block with `""` text and a signature, and
   `usage.output_tokens_details` containing `thinking_tokens`. (Task budgets and `:updates`
   are not live-tested: they need betas that may not be enabled on the test key.)
