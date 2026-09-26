@@ -137,11 +137,12 @@ defmodule Claudio.MCP.ServerConfig do
     {server, toolset}
   end
 
+  # Strips both key forms so neither leaks into the server entry; the string
+  # key wins when both are present.
   defp pop_legacy(server) do
-    case Map.pop(server, "tool_configuration") do
-      {nil, server} -> Map.pop(server, :tool_configuration)
-      found -> found
-    end
+    {string_value, server} = Map.pop(server, "tool_configuration")
+    {atom_value, server} = Map.pop(server, :tool_configuration)
+    {string_value || atom_value, server}
   end
 
   defp legacy_toolset(name, nil), do: build_toolset(name, nil, nil)

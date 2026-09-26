@@ -216,6 +216,21 @@ defmodule Claudio.MCP.ServerConfigTest do
       end)
     end
 
+    test "strips both string and atom tool_configuration keys; string key wins" do
+      capture_log(fn ->
+        {server, toolset} =
+          ServerConfig.split_raw(%{
+            "name" => "s",
+            "url" => "https://x",
+            "tool_configuration" => %{"allowed_tools" => ["from_string"]},
+            :tool_configuration => %{allowed_tools: ["from_atom"]}
+          })
+
+        assert server == %{"name" => "s", "url" => "https://x"}
+        assert toolset["configs"] == %{"from_string" => %{"enabled" => true}}
+      end)
+    end
+
     test "legacy allowed_tools with a pattern raises" do
       capture_log(fn ->
         assert_raise ArgumentError, ~r/got pattern "search_\*"/, fn ->
