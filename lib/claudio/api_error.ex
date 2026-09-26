@@ -40,7 +40,11 @@ defmodule Claudio.APIError do
   end
 
   def from_response(status_code, body) when is_map(body) do
-    error_info = body[:error] || body["error"] || %{}
+    error_info =
+      case body[:error] || body["error"] do
+        %{} = info -> info
+        _ -> %{}
+      end
 
     type =
       case error_info[:type] || error_info["type"] do
@@ -52,7 +56,7 @@ defmodule Claudio.APIError do
         "api_error" -> :api_error
         "overloaded_error" -> :overloaded_error
         other when is_binary(other) -> other
-        nil -> :api_error
+        _ -> :api_error
       end
 
     message = error_info[:message] || error_info["message"] || "Unknown error"
@@ -68,15 +72,21 @@ defmodule Claudio.APIError do
   # A body that isn't a JSON object — an empty 5xx, a proxy's HTML page, plain text — still
   # becomes an APIError, typed from the HTTP status.
   def from_response(status_code, body) do
-    snippet =
+    detail =
       case body do
-        text when is_binary(text) and text != "" -> ": " <> String.slice(text, 0, 200)
-        _ -> ""
+        text when is_binary(text) and text != "" ->
+          "a non-JSON body: " <> String.slice(text, 0, 200)
+
+        text when is_binary(text) or is_nil(text) ->
+          "an empty body"
+
+        other ->
+          "an unexpected body: " <> String.slice(inspect(other), 0, 200)
       end
 
     %__MODULE__{
       type: type_for_status(status_code),
-      message: "HTTP #{status_code} with a non-JSON body#{snippet}",
+      message: "HTTP #{status_code} with #{detail}",
       status_code: status_code,
       raw_body: body
     }

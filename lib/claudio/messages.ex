@@ -239,8 +239,10 @@ defmodule Claudio.Messages do
     metadata = %{model: payload["model"] || payload[:model], stream: true}
 
     :telemetry.span([:claudio, :messages, :create], metadata, fn ->
+      # Not retried: a retried async request would leave the failed attempt's body
+      # messages in the caller's mailbox.
       result =
-        case Req.post(client, url: "messages", json: payload, into: :self) do
+        case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
           {:ok, %Req.Response{status: 200} = r} ->
             {:ok, r}
 
@@ -309,12 +311,11 @@ defmodule Claudio.Messages do
     |> Enum.each(&send(self(), &1))
   end
 
-  defp try_decode(""), do: %{}
-
+  # A non-JSON (or empty) body stays a binary so APIError types it from the status.
   defp try_decode(body) when is_binary(body) do
     case Jason.decode(body) do
       {:ok, map} when is_map(map) -> map
-      _ -> %{"raw" => body}
+      _ -> body
     end
   end
 

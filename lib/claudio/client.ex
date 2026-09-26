@@ -36,7 +36,7 @@ defmodule Claudio.Client do
   POSTs the Messages API uses:
 
       config :claudio, Claudio.Client,
-        retry: true  # 3 retries; honours Retry-After, else backs off 1s, 2s, 4s
+        retry: true  # 3 retries; Retry-After on 429/503, else backs off 1s, 2s, 4s
 
       # Or customize (delay doubles per attempt, capped at max_delay; all in ms):
       config :claudio, Claudio.Client,
@@ -47,6 +47,7 @@ defmodule Claudio.Client do
         ]
 
   Without `retry:`, Req's default applies: only GET/HEAD requests are retried.
+  `retry: false` disables retries entirely. Streaming requests are never retried.
 
   ## Usage
 
@@ -197,6 +198,7 @@ defmodule Claudio.Client do
   # Maps the documented `retry:` config onto Req's retry step. Req's own default only
   # retries GET/HEAD, and every Messages call is a POST, so without this nothing retries.
   defp req_retry_options(nil), do: []
+  defp req_retry_options(:disabled), do: [retry: false]
 
   defp req_retry_options(opts) do
     [retry: &retryable?/2, max_retries: Keyword.get(opts, :max_retries, 3)] ++
@@ -258,6 +260,7 @@ defmodule Claudio.Client do
   defp get_retry_config do
     case Keyword.get(config(), :retry) do
       true -> []
+      false -> :disabled
       retry_opts when is_list(retry_opts) -> retry_opts
       _ -> nil
     end

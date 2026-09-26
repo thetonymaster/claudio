@@ -159,7 +159,8 @@ defmodule Claudio.Agent do
   # empty content (compaction-on-demand docs, "Handle a missing summary").
   defp failed_on_demand_compaction?(%Request{compaction: nil}, _response), do: false
   defp failed_on_demand_compaction?(_request, %Response{stop_reason: :compaction}), do: false
-  defp failed_on_demand_compaction?(_request, _response), do: true
+  defp failed_on_demand_compaction?(_request, %Response{content: []}), do: true
+  defp failed_on_demand_compaction?(_request, _response), do: false
 
   defp history_with(request, %Response{content: []}), do: extract_messages(request)
 
@@ -298,12 +299,16 @@ defmodule Claudio.Agent do
 
   defp result_content!(tool_use, other), do: raise_bad_return!(tool_use, other)
 
-  defp valid_content?(value) when is_binary(value) or is_nil(value) or is_number(value), do: true
+  # Mirrors Tools.create_tool_result/4, which encodes maps/structs and raises its own
+  # ArgumentError for unencodable ones.
+  defp valid_content?(value)
+       when is_binary(value) or is_nil(value) or is_number(value) or is_atom(value) or
+              is_map(value),
+       do: true
 
   defp valid_content?(value) when is_list(value),
     do: Enum.all?(value, &(is_map(&1) and not is_struct(&1)))
 
-  defp valid_content?(value) when is_map(value), do: not is_struct(value)
   defp valid_content?(_value), do: false
 
   # A handler returning anything else is a programming error: fail loudly with the

@@ -130,7 +130,8 @@ defmodule Claudio.Messages.StreamTest do
         text_delta(1, "one"),
         text_delta(0, "zero"),
         stop(1),
-        stop(0)
+        stop(0),
+        ev("message_stop", %{})
       ]
 
       assert {:ok, %{"content" => [%{"text" => "zero"}, %{"text" => "one"}]}} =
@@ -148,7 +149,8 @@ defmodule Claudio.Messages.StreamTest do
         ev("message_start", nil),
         ev("message_delta", nil),
         start(0, %{"type" => "text", "text" => "x"}),
-        stop(0)
+        stop(0),
+        ev("message_stop", %{})
       ]
 
       assert {:ok, %{"content" => [%{"text" => "x"}]}} = ClaudioStream.build_final_message(events)
@@ -726,7 +728,8 @@ defmodule Claudio.Messages.StreamTest do
            event: "content_block_delta",
            data: %{index: 0, delta: %{type: "compaction_delta", content: "S"}}
          }},
-        {:ok, %{event: "content_block_stop", data: %{index: 0}}}
+        {:ok, %{event: "content_block_stop", data: %{index: 0}}},
+        {:ok, %{event: "message_stop", data: %{}}}
       ]
 
       assert {:ok, %{"content" => [%{type: "compaction", content: "S"}]}} =
@@ -749,6 +752,9 @@ defmodule Claudio.Messages.StreamTest do
         "",
         ~s(event: message_delta),
         ~s(data: {"type":"message_delta","delta":{"stop_reason":"compaction"},"usage":{"output_tokens":0}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
         ""
       ]
 
@@ -774,6 +780,9 @@ defmodule Claudio.Messages.StreamTest do
         "",
         ~s(event: message_delta),
         ~s(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
         ""
       ]
 
@@ -794,6 +803,9 @@ defmodule Claudio.Messages.StreamTest do
         "",
         ~s(event: message_delta),
         ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use","container":#{Jason.encode!(delta_container)}},"usage":{"output_tokens":1}}),
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
         ""
       ]
       |> Enum.join("\n")
@@ -831,6 +843,9 @@ defmodule Claudio.Messages.StreamTest do
         "",
         ~s(event: message_delta),
         "data: " <> delta_event,
+        "",
+        ~s(event: message_stop),
+        ~s(data: {"type":"message_stop"}),
         ""
       ]
       |> Enum.join("\n")
@@ -907,6 +922,9 @@ defmodule Claudio.Messages.StreamTest do
            "",
            ~s(event: message_delta),
            ~s(data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+           "",
+           ~s(event: message_stop),
+           ~s(data: {"type":"message_stop"}),
            ""
          ])
       |> Enum.join("\n")
@@ -956,6 +974,35 @@ defmodule Claudio.Messages.StreamTest do
     test "invalid JSON (e.g. cut off by max_tokens) is an error, not a silent partial block" do
       assert {:error, {:invalid_tool_input_json, 0, ~s({"city":)}} =
                tool_stream(@tool_use, [~s({"city":)])
+    end
+  end
+
+  describe "re-audit: truncated streams" do
+    test "a stream that ends between blocks (no message_stop) is an error" do
+      sse =
+        Enum.join(
+          [
+            ~s(event: message_start),
+            ~s(data: {"type":"message_start","message":{"id":"m","content":[],"model":"x","usage":{"input_tokens":5,"output_tokens":0}}}),
+            "",
+            ~s(event: content_block_start),
+            ~s(data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hi"}}),
+            "",
+            ~s(event: content_block_stop),
+            ~s(data: {"type":"content_block_stop","index":0}),
+            "",
+            ""
+          ],
+          "\n"
+        )
+
+      assert {:error, {:incomplete_stream, :no_message_stop}} =
+               [sse] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+
+    test "an empty stream is an error" do
+      assert {:error, {:incomplete_stream, :no_message_stop}} =
+               [""] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
     end
   end
 end

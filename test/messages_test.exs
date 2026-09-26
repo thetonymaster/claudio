@@ -671,4 +671,28 @@ defmodule Claudio.MessagesTest do
       assert Enum.sort(Map.keys(raw_body)) == ["messages", "model"]
     end
   end
+
+  test "re-audit: a streaming non-JSON error body is typed from the status like non-streaming", %{
+    client: client,
+    bypass: bypass
+  } do
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/html")
+      |> Plug.Conn.resp(503, "<html>down</html>")
+    end)
+
+    request =
+      Request.new("m")
+      |> Request.add_message(:user, "hi")
+      |> Request.set_max_tokens(8)
+      |> Request.enable_streaming()
+
+    assert {:error,
+            %Claudio.APIError{status_code: 503, type: :api_error, raw_body: "<html>down</html>"} =
+              error} =
+             Claudio.Messages.create(client, request)
+
+    assert error.message =~ "503"
+  end
 end

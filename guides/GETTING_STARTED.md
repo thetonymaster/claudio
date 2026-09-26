@@ -49,12 +49,7 @@ config :claudio, Claudio.Client,
   retry: [
     delay: 1000,
     max_retries: 3,
-    max_delay: 10_000,
-    should_retry: fn
-      {:ok, %{status: status}} when status in [429, 500, 502, 503, 504] -> true
-      {:ok, _} -> false
-      {:error, _} -> true
-    end
+    max_delay: 10_000   # retries 408/429/5xx/529 and connection errors; streams are not retried
   ]
 ```
 

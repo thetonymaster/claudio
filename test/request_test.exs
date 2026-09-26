@@ -2118,4 +2118,27 @@ defmodule Claudio.Messages.RequestTest do
              |> image_media_type() == "image/webp"
     end
   end
+
+  describe "re-audit: typed blocks keep cache_control" do
+    test "a typed block with cache_control keeps the breakpoint" do
+      request =
+        Request.new("m")
+        |> Request.add_message(:user, [
+          %{type: :text, text: "hi", cache_control: %{"type" => "ephemeral"}}
+        ])
+
+      assert [
+               %{
+                 "content" => [
+                   %{
+                     "type" => "text",
+                     "text" => "hi",
+                     "cache_control" => %{"type" => "ephemeral"}
+                   }
+                 ]
+               }
+             ] =
+               request.messages
+    end
+  end
 end

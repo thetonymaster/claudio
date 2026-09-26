@@ -1047,10 +1047,16 @@ defmodule Claudio.AgentTest do
     } do
       serve_seq(bypass, List.duplicate(msg([use_block("t1", "a")], "tool_use"), 4))
 
-      for bad <- [{:ok, %URI{}}, {:ok, {:a, 1}}, {:error, ""}, {:ok, ["plain string"]}] do
+      for bad <- [{:ok, {:a, 1}}, {:error, ""}, {:ok, ["plain string"]}] do
         assert_raise ArgumentError, ~r/handler for tool "a" must return/, fn ->
           Agent.run(client, base_request(), %{"a" => fn _ -> bad end})
         end
+      end
+
+      # An unencodable struct gets past the Agent's shape check and is refused by
+      # Tools.create_tool_result/4 — still a clear ArgumentError.
+      assert_raise ArgumentError, ~r/cannot be sent as tool_result content/, fn ->
+        Agent.run(client, base_request(), %{"a" => fn _ -> {:ok, %URI{}} end})
       end
     end
 
@@ -1088,6 +1094,74 @@ defmodule Claudio.AgentTest do
           Agent.run(client, base_request(), %{}, max_turns: bad)
         end
       end
+    end
+  end
+
+  describe "re-audit fixes" do
+    defp ra_msg(content, stop_reason) do
+      %{
+        "id" => "msg_#{System.unique_integer([:positive])}",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "claude-opus-5-5",
+        "content" => content,
+        "stop_reason" => stop_reason,
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+    end
+
+    defp ra_serve(bypass, responses) do
+      test_pid = self()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:ra_body, Jason.decode!(body)})
+        :counters.add(count, 1, 1)
+        json_response(conn, Enum.at(responses, :counters.get(count, 1) - 1))
+      end)
+    end
+
+    test "handler results create_tool_result accepts (atoms, booleans, encodable structs) are accepted",
+         %{
+           client: client,
+           bypass: bypass
+         } do
+      uses =
+        for {id, name} <- [{"t1", "a"}, {"t2", "b"}, {"t3", "c"}],
+            do: %{"type" => "tool_use", "id" => id, "name" => name, "input" => %{}}
+
+      ra_serve(bypass, [
+        ra_msg(uses, "tool_use"),
+        ra_msg([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      handlers = %{
+        "a" => fn _ -> {:ok, true} end,
+        "b" => fn _ -> {:ok, :done} end,
+        "c" => fn _ -> {:ok, ~D[2026-01-01]} end
+      }
+
+      assert {:ok, _, _} = Agent.run(client, base_request(), handlers)
+      assert_received {:ra_body, _}
+      assert_received {:ra_body, second}
+
+      assert [%{"content" => "true"}, %{"content" => "done"}, %{"content" => ~s("2026-01-01")}] =
+               List.last(second["messages"])["content"]
+    end
+
+    test "with request_compaction, a normal reply with content is the answer, not a failed compaction",
+         %{
+           client: client,
+           bypass: bypass
+         } do
+      ra_serve(bypass, [ra_msg([%{"type" => "text", "text" => "answer"}], "end_turn")])
+
+      assert {:ok, %{stop_reason: :end_turn}, _} =
+               Agent.run(client, Request.request_compaction(base_request()), %{})
+
+      assert_received {:ra_body, _}
+      refute_received {:ra_body, _}
     end
   end
 end

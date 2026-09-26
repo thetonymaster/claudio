@@ -35,23 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across network chunks (it emitted an `event:` with no data and a `data:` with no event, which
   crashed `build_final_message/1` or silently lost the event). CRLF line endings, multi-line
   `data:` and a final event without a trailing blank line are handled. `build_final_message/1`
-  keeps interleaved blocks (keyed by index) and returns `{:error, {:incomplete_stream, indexes}}`
-  for a block that never closed. Streamed usage telemetry merges `message_start` usage (input
+  keeps interleaved blocks (keyed by index) and returns an error for a truncated stream —
+  `{:incomplete_stream, indexes}` for a block that never closed, `{:incomplete_stream,
+  :no_message_stop}` when `message_stop` never arrived — instead of a message silently missing
+  content and `stop_reason`. Streamed usage telemetry merges `message_start` usage (input
   and cache counts were lost).
 - `Response.to_assistant_content/1` no longer sends `server_name` on a replayed
   `mcp_tool_result` — the API rejects it, so replaying any MCP-connector turn failed.
 - `Request.add_message/3` with parsed `Response` content (e.g. `response.content`) sends each
-  block in API shape; it sent `"caller": null`, which the API rejects.
+  block in API shape (keeping a `cache_control` you added); it sent `"caller": null`, which the
+  API rejects.
 - `Claudio.Messages.count_tokens/2` also strips `temperature`, `top_k`, `top_p`,
   `stop_sequences`, `metadata`, `service_tier` and `container` (Request and raw-map forms) — each
   made the count endpoint return 400, so a request using them couldn't be counted.
 - `Claudio.APIError.from_response/2` handles non-JSON bodies (an empty 5xx, a proxy's HTML
-  page) instead of raising `FunctionClauseError`; the type comes from the HTTP status (429 →
-  `:rate_limit_error`, 529 → `:overloaded_error`, …). A 200 whose body isn't a JSON object is
-  an `APIError` too.
+  page — streaming or not) and odd JSON error shapes instead of raising; the type comes from the
+  HTTP status (429 → `:rate_limit_error`, 529 → `:overloaded_error`, …). A 200 whose body isn't
+  a JSON object is an `APIError` too.
 - **Retries actually happen:** the documented `config :claudio, Claudio.Client, retry: ...`
   was a no-op placeholder (and Req's default never retries POST). It now retries 408, 429,
-  5xx, 529 and connection errors on every method.
+  5xx, 529 and connection errors on every method; `retry: false` disables retries (Req's
+  GET/HEAD default too). Streaming requests are not retried.
 - `config :claudio, default_api_version: ..., default_beta_features: [...]` (the documented
   form) is honoured; only the nested `config :claudio, :claudio, ...` form was read.
 - `Claudio.Batches.create/2` drops `stream` from `%Request{}` items (batch items are never

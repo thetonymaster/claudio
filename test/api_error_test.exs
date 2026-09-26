@@ -4,6 +4,13 @@ defmodule Claudio.APIErrorTest do
   alias Claudio.APIError
 
   describe "from_response/2" do
+    test "odd JSON error shapes don't raise" do
+      for body <- [%{"error" => "bad"}, %{"error" => %{"type" => 5}}, [1, 2]] do
+        assert %Claudio.APIError{status_code: 500, type: :api_error} =
+                 Claudio.APIError.from_response(500, body)
+      end
+    end
+
     test "a non-JSON body (empty, HTML, nil) still yields an APIError typed by status" do
       for {status, body, type} <- [
             {500, "", :api_error},

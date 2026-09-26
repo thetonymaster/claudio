@@ -253,6 +253,7 @@ defmodule Claudio.Messages.Stream do
       content_blocks: [],
       open_blocks: %{},
       last_index: nil,
+      saw_stop: false,
       error: nil
     }
 
@@ -297,7 +298,7 @@ defmodule Claudio.Messages.Stream do
           %{state | message: message}
 
         {:ok, %{event: "message_stop"}}, state ->
-          state
+          %{state | saw_stop: true}
 
         {:ok, %{event: "ping"}}, state ->
           state
@@ -320,6 +321,10 @@ defmodule Claudio.Messages.Stream do
       # instead of returning a message silently missing that content.
       map_size(final_state.open_blocks) > 0 ->
         {:error, {:incomplete_stream, final_state.open_blocks |> Map.keys() |> Enum.sort()}}
+
+      # Cut off between blocks (or never started): no stop_reason, possibly missing content.
+      not final_state.saw_stop ->
+        {:error, {:incomplete_stream, :no_message_stop}}
 
       true ->
         content =

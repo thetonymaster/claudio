@@ -1943,8 +1943,15 @@ defmodule Claudio.Messages.Request do
 
   # Any atom-typed block came from Response parsing: send its API shape (the original map
   # when kept under :raw), never the typed map with nil fields the API rejects.
-  defp unwrap_typed(%{type: type} = block) when is_atom(type) and not is_nil(type),
-    do: Claudio.Messages.Response.to_api_block(block)
+  # A cache_control the caller added to a typed block is kept (it is not a Response field).
+  defp unwrap_typed(%{type: type} = block) when is_atom(type) and not is_nil(type) do
+    api_block = Claudio.Messages.Response.to_api_block(block)
+
+    case Map.get(block, :cache_control) || Map.get(block, "cache_control") do
+      nil -> api_block
+      cache_control -> Map.put(api_block, "cache_control", cache_control)
+    end
+  end
 
   defp unwrap_typed(block), do: block
 
