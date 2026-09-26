@@ -52,6 +52,14 @@ defmodule Claudio.Agent do
   from code execution). A `pause_turn` is resumed automatically by resending the
   assistant turn; it counts toward `:max_turns`.
 
+  ## Compaction
+
+  A `stop_reason: :compaction` reply (`Request.request_compaction/2`, or
+  `Request.add_compaction/2` with `pause_after_compaction: true`) is continued with
+  `Request.apply_compaction/2` — the history becomes the summary block and the on-demand
+  `compaction` field is cleared — and the loop calls the model again with no user turn.
+  It counts toward `:max_turns`. A failed compaction (`content: nil`) keeps the history.
+
   ## Options
 
     - `:max_turns` — Maximum model calls (default: 10)
@@ -107,7 +115,7 @@ defmodule Claudio.Agent do
   defp loop(client, request, handlers, max_turns, on_tool_call, turn) do
     case Messages.create(client, request) do
       {:ok, %Response{stop_reason: reason} = response}
-      when reason in [:tool_use, :pause_turn] and turn + 1 >= max_turns ->
+      when reason in [:tool_use, :pause_turn, :compaction] and turn + 1 >= max_turns ->
         messages =
           extract_messages(request) ++
             [%{"role" => "assistant", "content" => Response.to_assistant_content(response)}]
@@ -134,6 +142,24 @@ defmodule Claudio.Agent do
           request
           |> carry_container(response)
           |> Request.add_message(:assistant, Response.to_assistant_content(response))
+
+        loop(client, updated_request, handlers, max_turns, on_tool_call, turn + 1)
+
+      {:ok, %Response{stop_reason: :compaction} = response} ->
+        # A compaction summary (on-demand, or threshold with pause_after_compaction) is not
+        # the answer: continue from it with no user turn — the model answers the pending
+        # request from the summary (probed 2026-09-26). A failed compaction (content: nil)
+        # is a no-op on replay, so keep the history and resend it instead.
+        request = carry_container(request, response)
+
+        updated_request =
+          case Response.compaction_block(response) do
+            %{content: content} when is_binary(content) ->
+              Request.apply_compaction(request, response)
+
+            _failed ->
+              Request.add_message(request, :assistant, Response.to_assistant_content(response))
+          end
 
         loop(client, updated_request, handlers, max_turns, on_tool_call, turn + 1)
 

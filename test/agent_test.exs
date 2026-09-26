@@ -806,6 +806,83 @@ defmodule Claudio.AgentTest do
                    end
     end
 
+    test "stop_reason :compaction continues from the summary (apply_compaction/2), no user turn",
+         %{
+           client: client,
+           bypass: bypass
+         } do
+      block = %{"type" => "compaction", "content" => "Q asked 2+2.", "signature" => "sig"}
+
+      serve(bypass, [
+        message([block], "compaction"),
+        message([%{"type" => "text", "text" => "4"}], "end_turn")
+      ])
+
+      request = base_request() |> Request.request_compaction()
+
+      assert {:ok, %{stop_reason: :end_turn}, messages} = Agent.run(client, request, %{})
+      assert_received {:request_body, first}
+      assert_received {:request_body, second}
+
+      assert first["compaction"] == %{"type" => "summarize"}
+      # History replaced by the block; on-demand field cleared so it doesn't compact again.
+      assert second["messages"] == [%{"role" => "assistant", "content" => [block]}]
+      refute Map.has_key?(second, "compaction")
+      assert hd(messages) == %{"role" => "assistant", "content" => [block]}
+    end
+
+    test "a failed compaction (content: nil) keeps the history and continues", %{
+      client: client,
+      bypass: bypass
+    } do
+      failed = %{"type" => "compaction", "content" => nil}
+
+      serve(bypass, [
+        message([failed], "compaction"),
+        message([%{"type" => "text", "text" => "ok"}], "end_turn")
+      ])
+
+      assert {:ok, %{stop_reason: :end_turn}, _} = Agent.run(client, base_request(), %{})
+      assert_received {:request_body, _}
+      assert_received {:request_body, second}
+
+      assert [%{"role" => "user"}, %{"role" => "assistant", "content" => [^failed]}] =
+               second["messages"]
+    end
+
+    test "endless compaction stops at max_turns", %{client: client, bypass: bypass} do
+      block = %{"type" => "compaction", "content" => "s", "signature" => "sig"}
+      serve(bypass, List.duplicate(message([block], "compaction"), 5))
+
+      assert {:error, :max_turns_exceeded, %{stop_reason: :compaction}, _} =
+               Agent.run(client, base_request(), %{}, max_turns: 2)
+    end
+
+    test "pause, pause, tool_use: three consecutive assistant turns in order (probe F3)", %{
+      client: client,
+      bypass: bypass
+    } do
+      paused = [
+        %{"type" => "server_tool_use", "id" => "srv_1", "name" => "advisor", "input" => %{}}
+      ]
+
+      serve(bypass, [
+        message(paused, "pause_turn"),
+        message(paused, "pause_turn"),
+        message([plain("t1", "lookup")], "tool_use"),
+        message([%{"type" => "text", "text" => "done"}], "end_turn")
+      ])
+
+      assert {:ok, _, _} =
+               Agent.run(client, base_request(), %{"lookup" => fn _ -> {:ok, "x"} end})
+
+      for _ <- 1..3, do: assert_received({:request_body, _})
+      assert_received {:request_body, fourth}
+
+      assert Enum.map(fourth["messages"], & &1["role"]) ==
+               ["user", "assistant", "assistant", "assistant", "user"]
+    end
+
     test "pause_turn resumes with the assistant content and no user message", %{
       client: client,
       bypass: bypass
