@@ -11,7 +11,8 @@
   `managed-agents/environments` (EN), `managed-agents/sessions` (SE),
   `managed-agents/session-operations` (SO), `api/beta/agents/list` (AL),
   `api/beta/sessions/list` (SL), `api/beta/sessions/events/list` (EL) — plus live probes P1–P7
-  (2026-10-01 01:50 UTC, scratch agent/environment/session, all cleaned up).
+  (2026-10-01 01:50 UTC) and P8–P9 (session resources, 01:56–01:57 UTC); scratch agents,
+  environments, sessions and files, all cleaned up.
 
 ## Problem
 
@@ -30,11 +31,11 @@ needs — an agent, an environment, and the session itself.
 | F4 | `GET /v1/agents/{id}?version=1` returns that version (`system: null` after v2 set it). `GET /v1/agents/{id}/versions/1` → 404. `GET /v1/agents/{id}/versions` lists versions newest first. Agents have archive (`POST …/archive`, sets `archived_at`), no delete. | P2, AS |
 | F5 | Environment create: `name` required; `config` `{type: "cloud", networking, packages}` or `{type: "self_hosted"}`; optional `description`, `metadata`, `scope`. Response adds `state: "active"` and defaults `packages` to empty lists. `DELETE` works only while no session references it (→ `{"id", "type": "environment_deleted"}`); archive makes it read-only. Not versioned. | EN, P5 |
 | F6 | Session create: `agent` (id string = latest version, `{type: "agent", id, version}`, or `{type: "agent_with_overrides", …}`) and `environment_id` required; optional `vault_ids`, `resources`, `title`, `metadata`, `budget`, `initial_events` (≤ 50; non-empty starts it `running`). Without `initial_events` the session is `idle`, with `stats.active_seconds: 0` — no model call. `agent` in the response is the resolved snapshot (version 2). | SE, P5 |
-| F7 | Session `DELETE` → `{"id", "type": "session_deleted"}` (removes events, sandbox, produced files); archive keeps history and blocks new events. Neither works on a `running` session. Update (`POST /v1/sessions/{id}`) takes `agent.tools` / `agent.mcp_servers` (session must be `idle`) and `budget`. | SO, P5 |
+| F7 | Session `DELETE` → `{"id", "type": "session_deleted"}` (removes events, sandbox, produced files); archive keeps history and blocks new events. Neither works on a `running` session. Update (`POST /v1/sessions/{id}`) takes `agent.tools` / `agent.mcp_servers` (session must be `idle`), `budget`, and `title` / `metadata` (P8 S1 → 200, both reflected). | SO, P5, P8 |
 | F8 | Lists are cursor-paged: `page` in, `next_page` out. When there is a further page the body has `next_page: "page_…"`; on the last page `next_page` is **absent** (single-page lists: keys `["data"]`) or `null` (the page fetched by cursor). Session lists may also return `prev_page`. No `has_more` / `first_id`. | AL, SL, P6 |
 | F9 | Filters use bracketed names: `statuses[]` (repeatable), `created_at[gt\|gte\|lt\|lte]`, `created_by_ids[]`. Unbracketed `statuses=idle` → 400 listing the valid parameters (`agent_id, agent_version, created_at[gt], created_at[gte], created_at[lt], created_at[lte], created_by_ids[], deployment_id, include_archived, limit, memory_store_id, order, page, statuses[]`). Percent-encoded names (`statuses%5B%5D=idle`, what `URI.encode_query/1` emits) are accepted; an invalid value → 400 naming `statuses[0]`. | SL, P3, P7 |
 | F10 | Events: `POST /v1/sessions/{id}/events` with `{"events": [...]}`; `GET /v1/sessions/{id}/events` takes `types[]`, `created_at[…]`, `order` (default `asc`), `limit`, `page`. A fresh idle session lists `{"data": []}`. | EL, P5 |
-| F11 | Session resources: `POST/GET /v1/sessions/{id}/resources`, `GET/POST/DELETE …/resources/{rid}`; variants `file` (`file_id`, `mount_path?`), `github_repository` (`url`, `authorization_token?`, `checkout?`, `mount_path?`), `memory_store` (creation-time only). Not probed in P1–P7 — the integration test covers add/delete of a `file` resource. | SE |
+| F11 | Session resources: `POST/GET /v1/sessions/{id}/resources`, `GET/POST/DELETE …/resources/{rid}`, ids `sesrsc_…`. At session create, `resources` takes `file` (`file_id`, `mount_path?`), `github_repository` (`url`, `authorization_token?` — a public repo needs none, mounts at `/workspace/<repo>`; `checkout?`, `mount_path?`) and `memory_store`. **Mid-session `POST …/resources` accepts only `file`** (`github_repository` / `memory_store` → 400 "type: … is not a valid value"). A `file` resource needs the agent's `agent_toolset` with `read` usable, else 400 "Missing required tool: file resources require the read tool…". The response's `file_id` is a **new** id (a session-scoped copy), while `mount_path` defaults to `/mnt/session/uploads/<uploaded file id>`. **Update** (`POST …/resources/{rid}`) only rotates `authorization_token` on `github_repository` (file → 400 "Only github_repository resources support token updates"; body requires `authorization_token`; `mount_path` → unknown field). Delete → `{"id", "type": "session_resource_deleted"}`, then get → 404. | SE, P8, P9 |
 | F12 | Claudio today: `Client.with_betas/2` unions + dedupes betas into one comma-joined header; `Skills`/`Admin` use private `get/post/delete` + `handle/1` returning `{:ok, body}` / `{:error, APIError.from_response(status, body)}`; `APIError` keeps unknown `error.type` strings as strings; Req's `put_params` keeps repeated `{name, value}` tuples in order. | code |
 
 ## Design
@@ -99,10 +100,10 @@ environments/{id}`), `list/2`, `archive/2`, `delete/2`.
 | `archive(client, id)` / `delete(client, id)` | `POST sessions/{id}/archive` / `DELETE sessions/{id}` |
 | `send_events(client, id, events)` | `POST sessions/{id}/events`, body `%{"events" => events}`; `events` must be a list |
 | `list_events(client, id, opts \\ [])` | `GET sessions/{id}/events` — `types`, `created_at`, `order`, `limit`, `page` |
-| `add_resource(client, id, resource)` | `POST sessions/{id}/resources` |
+| `add_resource(client, id, resource)` | `POST sessions/{id}/resources` — mid-session only `file` is accepted (F11); repos go in `create/2`'s `resources` |
 | `list_resources(client, id, opts \\ [])` | `GET sessions/{id}/resources` |
 | `get_resource(client, id, rid)` | `GET sessions/{id}/resources/{rid}` |
-| `update_resource(client, id, rid, params)` | `POST sessions/{id}/resources/{rid}` |
+| `update_resource(client, id, rid, params)` | `POST sessions/{id}/resources/{rid}` — documented as GitHub token rotation (`%{authorization_token: …}`), the only update the API accepts (F11); body still passed through |
 | `delete_resource(client, id, rid)` | `DELETE sessions/{id}/resources/{rid}` |
 
 Typed event builders/parsers and the event stream are MA2. Moduledocs show the raw-map form:
@@ -150,10 +151,14 @@ Claudio.ManagedAgents.stream(fn opts -> Agents.list(client, opts) end, limit: 10
   emitted, `Enum.take/2` fetches only the pages it needs (Bypass `expect` counts).
 - **Integration** — `test/integration/managed_agents_integration_test.exs`, `:integration`,
   cleanup in `on_exit`: create agent → get → update (version 2) → `get(version: 1)` →
-  `list_versions` → stale update → 409 `APIError`; create environment; create idle session; list
-  events (`[]`); upload a small file via `Claudio.Files.upload/3`, `add_resource` /
-  `list_resources` / `delete_resource`; `stream/2` over `Agents.list_versions` with `limit: 1`;
-  delete session, archive agent, delete environment, delete file. No model call, no tokens.
+  `list_versions` → stale update → 409 `APIError`; the agent carries
+  `tools: [%{type: "agent_toolset_20260401"}]` (file resources need `read`, F11); create
+  environment; create idle session with a public `github_repository` resource; update its
+  title/metadata; list events (`[]`); upload a small file via `Claudio.Files.upload/3`,
+  `add_resource` (assert a `sesrsc_` id and a `file_id` ≠ the uploaded id) / `list_resources` /
+  `get_resource` / `update_resource` on the repo with a dummy token / `delete_resource`;
+  `stream/2` over `Agents.list_versions` with `limit: 1`; delete session, archive agent, delete
+  environment, delete file. No model call, no tokens (P8/P9 ran this exact shape).
 
 ## Docs
 
