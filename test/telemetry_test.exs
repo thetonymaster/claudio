@@ -184,6 +184,7 @@ defmodule Claudio.TelemetryTest do
       assert stop.telemetry_span_context == start.telemetry_span_context
       assert stop.status_code == 200
       assert stop.request_id == "req_models"
+      refute Map.has_key?(stop, :error_type)
     end
 
     test "a transport error is a :stop with error_type and nil status_code", %{bypass: bypass} do
@@ -197,6 +198,21 @@ defmodule Claudio.TelemetryTest do
       assert stop.error_type == :econnrefused
       assert Map.has_key?(stop, :status_code)
       assert stop.status_code == nil
+    end
+
+    test "a body that fails to decode still yields exactly one :stop per attempt", %{
+      bypass: bypass
+    } do
+      attach(@http)
+
+      Bypass.expect_once(bypass, "GET", "/models", fn conn ->
+        conn |> Plug.Conn.put_resp_content_type("application/json") |> Plug.Conn.resp(200, "{bad")
+      end)
+
+      Claudio.Models.list(http_client(bypass, %{retry: false}))
+
+      assert [{:start, _, _}, {:stop, _, %{status_code: 200}}] = collect(2)
+      refute_receive {:telemetry, _, _, _}, 50
     end
   end
 end

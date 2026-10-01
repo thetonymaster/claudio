@@ -126,7 +126,9 @@ defmodule Claudio.Telemetry do
         :ok
     end
 
-    {request, response_or_exception}
+    # Clear so a response step that turns the response into an error (decode_body, ...) and
+    # hands off to the error steps does not emit a second :stop for the same attempt.
+    {Req.Request.put_private(request, :claudio_http, nil), response_or_exception}
   end
 
   defp http_result(%Req.Response{status: status} = response),
