@@ -106,7 +106,7 @@ defmodule Claudio.Messages.Stream do
   defp merge_usage(%{} = current, %{} = usage), do: Map.merge(current, stringify_keys(usage))
 
   defp maybe_emit_stream_usage_telemetry(usage) when is_map(usage) do
-    metadata = usage_to_metadata(usage)
+    metadata = Claudio.Telemetry.usage(usage)
 
     if map_size(metadata) > 0 do
       :telemetry.execute([:claudio, :messages, :stream, :usage], %{}, metadata)
@@ -114,36 +114,6 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp maybe_emit_stream_usage_telemetry(_), do: :ok
-
-  defp usage_to_metadata(usage) when is_map(usage) do
-    %{}
-    |> maybe_put_usage_key(:input_tokens, usage)
-    |> maybe_put_usage_key(:output_tokens, usage)
-    |> maybe_put_usage_key(:cache_creation_input_tokens, usage)
-    |> maybe_put_usage_key(:cache_read_input_tokens, usage)
-    |> maybe_put_thinking_tokens(usage)
-  end
-
-  # The final message_delta carries usage.output_tokens_details.thinking_tokens.
-  defp maybe_put_thinking_tokens(metadata, usage) do
-    case usage["output_tokens_details"] || usage[:output_tokens_details] do
-      %{} = details ->
-        case details["thinking_tokens"] || details[:thinking_tokens] do
-          nil -> metadata
-          tokens -> Map.put(metadata, :thinking_tokens, tokens)
-        end
-
-      _ ->
-        metadata
-    end
-  end
-
-  defp maybe_put_usage_key(metadata, key, usage) do
-    case Map.get(usage, key) || Map.get(usage, Atom.to_string(key)) do
-      nil -> metadata
-      value -> Map.put(metadata, key, value)
-    end
-  end
 
   @doc """
   Accumulates text deltas from streaming events into complete text chunks.

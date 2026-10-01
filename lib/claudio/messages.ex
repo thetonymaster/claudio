@@ -355,31 +355,10 @@ defmodule Claudio.Messages do
   end
 
   defp maybe_put_usage_metadata(metadata, {:ok, %Response{usage: usage}}) when is_map(usage) do
-    Map.merge(metadata, usage_to_metadata(usage))
+    Map.merge(metadata, Claudio.Telemetry.usage(usage))
   end
 
   defp maybe_put_usage_metadata(metadata, _result), do: metadata
-
-  defp usage_to_metadata(usage) when is_map(usage) do
-    usage
-    |> Map.take([
-      :input_tokens,
-      :output_tokens,
-      :cache_creation_input_tokens,
-      :cache_read_input_tokens
-    ])
-    |> Map.put(:thinking_tokens, thinking_tokens(usage))
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
-  end
-
-  # usage.output_tokens_details is carried raw by Response (atom or string keys).
-  defp thinking_tokens(usage) do
-    case usage[:output_tokens_details] || usage["output_tokens_details"] do
-      %{} = details -> details[:thinking_tokens] || details["thinking_tokens"]
-      _ -> nil
-    end
-  end
 
   # Recursively convert atom keys to string keys for backward compatibility
   defp atomize_keys_to_strings(map) when is_map(map) do
