@@ -9,7 +9,7 @@ Claudio emits [`:telemetry`](https://hexdocs.pm/telemetry) events for message ca
 | `[:claudio, :messages, :create]` | span (`:start` / `:stop` / `:exception`) | `Claudio.Messages.create/2` and legacy `create_message/2`. Non-streaming: request to parsed response, **including retries and backoff**. Streaming: request to response headers. |
 | `[:claudio, :messages, :count_tokens]` | span | `Claudio.Messages.count_tokens/2` |
 | `[:claudio, :messages, :stream]` | `:start` / `:stop` | `Claudio.Messages.Stream.parse_events/1`, in the **consuming** process, around each consumption of the stream |
-| `[:claudio, :messages, :stream, :usage]` | single event | `message_stop` with usage. Older event, kept unchanged; superseded by `[:claudio, :messages, :stream, :stop]` |
+| `[:claudio, :messages, :stream, :usage]` | single event | `message_stop` with usage. Older event, kept unchanged; superseded by `[:claudio, :messages, :stream, :stop]`. Its token counts are metadata with empty measurements. |
 | `[:claudio, :http, :request]` | `:start` / `:stop`, per attempt | Every request made by a client built with `Claudio.Client.new/2` (all Anthropic endpoints). The A2A client (`Claudio.A2A.*`) is not instrumented. |
 
 Guarantees:
@@ -29,6 +29,8 @@ Guarantees:
 
 For streaming calls the `:stop` event fires when the response headers arrive, so it has no token keys, `response_id`, `response_model` or `stop_reason`; read those from the stream events below.
 
+Legacy `create_message/2` with `"stream" => true` behaves like streaming `create/2`: its `:stop` fires at headers with no tokens, and passing the response to `parse_events/1` links the stream span.
+
 Legacy `create_message/2` returns any 200 body unchanged. Its `:stop` carries the response fields (`response_id`, `response_model`, `stop_reason`, tokens) only when the body is a message.
 
 ### `[:claudio, :messages, :count_tokens]`
@@ -43,7 +45,7 @@ Legacy `create_message/2` returns any 200 body unchanged. Its `:stop` carries th
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `:start` | `monotonic_time`, `system_time` | `model` (from `message_start`), `response_id`, `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`) and `request_id`. |
+| `:start` | `monotonic_time`, `system_time` | `model` (from `message_start`; falls back to the `create` span's model when linked) and `response_id` (both absent if the stream ended before `message_start`), `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`) and `request_id`. |
 | `:stop` | `duration`, `monotonic_time`, and the token measurements as for `create :stop` | The `:start` keys plus `reason`, `stop_reason` (from the last `message_delta`, when seen), `response_model` (the last `fallback` block's target model, else `model`), the token keys (`message_start` and `message_delta` usage merged, delta wins), and `error_type` when `reason` is `:error`. |
 
 `:start` is emitted when `message_start` arrives. If the stream ends before that (empty or garbage body), `:start` is emitted at the ending, immediately followed by `:stop`, so a broken stream is still visible.
@@ -127,8 +129,22 @@ defmodule MyApp.ClaudioOtel do
 
   def setup, do: :telemetry.attach_many("my-app-claudio-otel", @events, &__MODULE__.handle_event/4, nil)
 
-  # Streaming calls are traced from the stream events (full duration and tokens), so skip
-  # their create span, which ends when the headers arrive.
+  # Successful streaming calls are traced from the stream events (full duration and tokens), so
+  # skip their create span, which ends when the headers arrive. A streaming request that fails
+  # before headers (429, 401, 5xx, transport error) never reaches parse_events/1, so it has no
+  # stream span: record its create :stop (status: :error) as one error span, back-dated by `duration`.
+  def handle_event([:claudio, :messages, :create, :stop], %{duration: duration}, %{stream: true, status: :error} = meta, _config) do
+    span =
+      Tracer.start_span("chat #{meta[:model]}", %{
+        kind: :client,
+        start_time: :opentelemetry.timestamp() - duration,
+        attributes: Map.merge(start_attributes(meta), stop_attributes(meta))
+      })
+
+    OpenTelemetry.Span.set_status(span, OpenTelemetry.status(:error, to_string(meta.error_type)))
+    OpenTelemetry.Span.end_span(span)
+  end
+
   def handle_event([:claudio, :messages, :create, _phase], _measurements, %{stream: true}, _config), do: :ok
 
   def handle_event([:claudio, :messages, _kind, :start], _measurements, meta, _config) do
@@ -187,5 +203,7 @@ defmodule MyApp.ClaudioOtel do
   defp compact(map), do: map |> Enum.reject(fn {_k, v} -> is_nil(v) end) |> Map.new()
 end
 ```
+
+The handler skips the `create` span of a streaming call, except a failed one (recorded as an error span as above); a `:exception` on a streaming `create` is also skipped, as no span was started for it.
 
 HTTP client spans come from `OpentelemetryReq.attach(client, propagate_trace_headers: true)` on the client returned by `Claudio.Client.new/2`; Claudio's `[:claudio, :http, :request]` events are for metrics and logs. Finch's streaming path (`into: :self`) runs the request in a linked process, so check that HTTP spans and trace headers appear for streaming calls in your setup.
