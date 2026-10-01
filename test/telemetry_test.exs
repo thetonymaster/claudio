@@ -306,7 +306,7 @@ defmodule Claudio.TelemetryTest do
       assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, create_stop}
       assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], _, count_stop}
       assert_receive {:telemetry, [:claudio, :http, :request, :stop], _, http_stop}
-      assert_receive {:telemetry, [:claudio, :http, :request, :stop], _, _}
+      assert_receive {:telemetry, [:claudio, :http, :request, :stop], _, count_http_stop}
 
       assert create_stop.error =~ secret
       assert create_stop.error_type == :invalid_request_error
@@ -315,6 +315,7 @@ defmodule Claudio.TelemetryTest do
       assert count_stop.error_type == :invalid_request_error
       assert_clean(count_stop, secret, :count_tokens)
       assert_clean(http_stop, secret, :http)
+      assert_clean(count_http_stop, secret, :http)
     end
   end
 

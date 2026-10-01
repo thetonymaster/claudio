@@ -126,7 +126,8 @@ defmodule Claudio.Messages do
   Returns either a `Response` struct or raw stream data for streaming requests.
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
-  See the [telemetry guide](telemetry.html).
+  See the [telemetry guide](telemetry.html). The `error` key on a failed `:stop` is deprecated (it
+  can contain the API's error body); use `error_type`.
 
   ## Examples
 
@@ -168,7 +169,8 @@ defmodule Claudio.Messages do
   For new code, consider using `create/2` instead.
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
-  See the [telemetry guide](telemetry.html).
+  See the [telemetry guide](telemetry.html). The `error` key on a failed `:stop` is deprecated (it
+  can contain the API's error body); use `error_type`.
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
