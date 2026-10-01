@@ -270,56 +270,42 @@ defmodule Claudio.Messages do
   end
 
   # Drain the into: :self mailbox for a non-200 response so the JSON error
-  # body from Anthropic is visible instead of silently lost. Non-Req messages
-  # (e.g. GenServer casts, monitor DOWNs) that happen to arrive during the
-  # drain are buffered and replayed to self() so the caller does not lose them.
-  defp drain_async_body(%Req.Response{} = resp) do
-    drain_loop(resp, [], [], System.monotonic_time(:millisecond) + 2_000)
+  # body from Anthropic is visible instead of silently lost. Only messages that
+  # belong to this response (`{ref, _}`, the body's own ref) are received, so the
+  # caller's other mailbox messages (GenServer casts, monitor DOWNs, ...) are never touched.
+  defp drain_async_body(%Req.Response{body: %Req.Response.Async{ref: ref}} = resp) do
+    drain_loop(resp, ref, [], System.monotonic_time(:millisecond) + 2_000)
   end
 
-  defp drain_loop(resp, acc, unknown, deadline) do
+  defp drain_loop(resp, ref, acc, deadline) do
     if System.monotonic_time(:millisecond) > deadline do
       # Cancel so chunks still in flight don't reach the caller's mailbox after we return.
       Req.cancel_async_response(resp)
-      finish_drain(acc, unknown)
+      finish_drain(acc)
     else
       receive do
-        msg ->
+        {^ref, _} = msg ->
           case Req.parse_message(resp, msg) do
             {:ok, [{:data, chunk} | _rest]} ->
-              drain_loop(resp, [acc, chunk], unknown, deadline)
+              drain_loop(resp, ref, [acc, chunk], deadline)
 
             {:ok, [:done]} ->
-              finish_drain(acc, unknown)
+              finish_drain(acc)
 
             # A transport error ends the body; keep what arrived (the status is authoritative).
             {:error, _reason} ->
-              finish_drain(acc, unknown)
-
-            :unknown ->
-              drain_loop(resp, acc, [msg | unknown], deadline)
+              finish_drain(acc)
 
             _ ->
-              drain_loop(resp, acc, unknown, deadline)
+              drain_loop(resp, ref, acc, deadline)
           end
       after
-        200 -> drain_loop(resp, acc, unknown, deadline)
+        200 -> drain_loop(resp, ref, acc, deadline)
       end
     end
   end
 
-  defp finish_drain(acc, unknown) do
-    replay_unknown(unknown)
-    acc |> IO.iodata_to_binary() |> try_decode()
-  end
-
-  defp replay_unknown([]), do: :ok
-
-  defp replay_unknown(messages) do
-    messages
-    |> Enum.reverse()
-    |> Enum.each(&send(self(), &1))
-  end
+  defp finish_drain(acc), do: acc |> IO.iodata_to_binary() |> try_decode()
 
   # A non-JSON (or empty) body stays a binary so APIError types it from the status.
   defp try_decode(body) when is_binary(body) do

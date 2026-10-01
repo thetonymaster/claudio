@@ -191,7 +191,7 @@ defmodule Claudio.MessagesTest do
   end
 
   # Regression: the 2s overall deadline must outlast idle gaps between chunks.
-  # An earlier version of `drain_loop/3` decoded after the first 200ms of
+  # An earlier version of `drain_loop` decoded after the first 200ms of
   # mailbox silence, which truncated slow/chunked error bodies and recreated
   # the original `%APIError{raw_body: nil}` bug. This test sends the 400 body
   # in two chunks with a 250ms sleep between them — longer than the idle
@@ -239,12 +239,11 @@ defmodule Claudio.MessagesTest do
     assert get_in(err.raw_body, ["error", "type"]) == "invalid_request_error"
   end
 
-  # Regression: `drain_loop/4` must not silently consume mailbox messages that
+  # Regression: `drain_loop` must not silently consume mailbox messages that
   # don't belong to Req. If the caller is a GenServer, a cast/call/monitor
   # message arriving during the drain has to survive — otherwise the drain
   # trades one lost-data bug (raw_body: nil) for another (lost caller msgs).
-  # `replay_unknown/1` re-delivers buffered `:unknown` messages to self() in
-  # arrival order before returning.
+  # The drain receives only its own response's messages, so the rest stay put.
   test "streaming 400 drain preserves unrelated mailbox messages", %{
     client: client,
     bypass: bypass
@@ -264,8 +263,7 @@ defmodule Claudio.MessagesTest do
     end)
 
     # Seed the mailbox with a sentinel BEFORE calling create/2. During the
-    # drain, Req.parse_message/2 classifies this as :unknown. The old code
-    # dropped it; the fix buffers and replays it.
+    # drain. The old code dropped it; the drain now never receives it.
     send(self(), {:sentinel, :from_test})
     send(self(), {:sentinel, :second})
 
@@ -281,6 +279,70 @@ defmodule Claudio.MessagesTest do
     # Both sentinels must still be deliverable, and in arrival order.
     assert_received {:sentinel, :from_test}
     assert_received {:sentinel, :second}
+  end
+
+  # The drain only receives messages that belong to its own async response (selective
+  # receive on the body's ref), so unrelated messages are never taken off the mailbox and
+  # re-sent to self(): they keep their position. A :send trace catches any replay.
+  test "streaming 400 drain never re-sends unrelated messages", %{
+    client: client,
+    bypass: bypass
+  } do
+    test_pid = self()
+
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      conn =
+        conn |> Plug.Conn.put_resp_content_type("application/json") |> Plug.Conn.send_chunked(400)
+
+      {:ok, conn} = Plug.Conn.chunk(conn, ~s({"type":"error",))
+      send(test_pid, {:sentinel, :during})
+      :timer.sleep(50)
+
+      {:ok, conn} =
+        Plug.Conn.chunk(conn, ~s("error":{"type":"invalid_request_error","message":"bad"}}))
+
+      conn
+    end)
+
+    send(self(), {:sentinel, :first})
+    send(self(), {:sentinel, :second})
+
+    {:ok, tracer} = Agent.start_link(fn -> [] end)
+
+    tracer_loop = fn loop ->
+      receive do
+        {:trace, _pid, :send, msg, _to} ->
+          Agent.update(tracer, &[msg | &1])
+          loop.(loop)
+
+        :stop ->
+          :ok
+      end
+    end
+
+    collector = spawn_link(fn -> tracer_loop.(tracer_loop) end)
+    :erlang.trace(self(), true, [:send, tracer: collector])
+
+    request =
+      Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
+
+    result = Claudio.Messages.create(client, request)
+
+    :erlang.trace(self(), false, [:send])
+    send(collector, :stop)
+    :timer.sleep(50)
+    received = Agent.get(tracer, & &1)
+
+    assert {:error, %Claudio.APIError{status_code: 400, message: "bad"}} = result
+
+    refute Enum.any?(received, &match?({:sentinel, _}, &1)),
+           "drain re-sent: #{inspect(received)}"
+
+    messages = for {:sentinel, _} = m <- Process.info(self(), :messages) |> elem(1), do: m
+    assert messages == [{:sentinel, :first}, {:sentinel, :second}, {:sentinel, :during}]
   end
 
   # Regression: a drain that hits its 2s deadline must cancel the async response,

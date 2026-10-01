@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline expires, so chunks still in flight no longer land in the caller's mailbox after
   the call returns, and a transport error mid-body ends the drain at once instead of
   waiting out the deadline. The `APIError` keeps the HTTP status either way.
+- Draining a streaming error body now receives only the messages of its own response (a selective
+  receive on the body's ref). Unrelated messages in the caller's mailbox are no longer taken off
+  and re-sent to the end, so their order is untouched.
 
 ### Security
 
