@@ -883,6 +883,7 @@ defmodule Claudio.MessagesTest do
       assert start.max_tokens == 16
       assert start.temperature == 0.5
       assert start.server_address == "localhost"
+      assert start.server_port == URI.parse(client.options.base_url).port
       assert is_reference(start.telemetry_span_context)
       refute Map.has_key?(start, :top_p)
       refute Map.has_key?(start, :top_k)
@@ -1003,7 +1004,13 @@ defmodule Claudio.MessagesTest do
       assert resp.private.claudio == %{
                span_context: stop.telemetry_span_context,
                model: "claude-span-model",
-               request_id: "req_stream_1"
+               request_id: "req_stream_1",
+               request_metadata: %{
+                 max_tokens: 16,
+                 temperature: 0.5,
+                 server_address: "localhost",
+                 server_port: URI.parse(client.options.base_url).port
+               }
              }
     end
 
@@ -1215,6 +1222,7 @@ defmodule Claudio.MessagesTest do
       assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :start], _, start}
       assert start.model == "claude-count"
       assert start.server_address == "localhost"
+      assert start.server_port == URI.parse(client.options.base_url).port
       refute Map.has_key?(start, :stream)
 
       assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], measurements, stop}
@@ -1312,6 +1320,97 @@ defmodule Claudio.MessagesTest do
       assert stop.status == :error
       assert stop.error_type == :invalid_request_error
       assert stop.status_code == 400
+    end
+  end
+
+  describe "audit hardening (create span)" do
+    @audit_create [
+      [:claudio, :messages, :create, :start],
+      [:claudio, :messages, :create, :stop]
+    ]
+
+    test "non-integer token values never reach measurements or metadata", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@audit_create)
+
+      body = %{
+        "id" => "m",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "x",
+        "content" => [],
+        "usage" => %{"input_tokens" => "3", "output_tokens" => 4.0}
+      }
+
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, body))
+      assert {:ok, _} = Claudio.Messages.create(client, %{"model" => "x", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements, stop}
+      refute Map.has_key?(measurements, :input_tokens)
+      refute Map.has_key?(measurements, :output_tokens)
+      refute Map.has_key?(stop, :input_tokens)
+      refute Map.has_key?(stop, :output_tokens)
+    end
+
+    test "a free-text API error type becomes :unknown", %{client: client, bypass: bypass} do
+      attach(@audit_create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        json_resp(conn, 400, %{"error" => %{"type" => "proxy says: USERCONTENT was blocked"}})
+      end)
+
+      assert {:error, %Claudio.APIError{}} =
+               Claudio.Messages.create(client, %{"model" => "x", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.error_type == :unknown
+    end
+
+    test "legacy create_message/2 labels the span by its routing: an atom stream: true is not streamed",
+         %{client: client, bypass: bypass} do
+      attach(@audit_create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert Jason.decode!(body)["stream"] == true
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, "event: ping\ndata: {}\n\n")
+      end)
+
+      assert {:ok, raw} =
+               Claudio.Messages.create_message(client, %{model: "x", messages: [], stream: true})
+
+      assert is_binary(raw)
+      assert_receive {:telemetry, [:claudio, :messages, :create, :start], _, %{stream: false}}
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, %{stream: false}}
+    end
+
+    test "a keyword-list client (accepted by Req) does not raise in telemetry", %{
+      bypass: bypass
+    } do
+      attach(@audit_create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        json_resp(conn, 200, %{
+          "id" => "m",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "x",
+          "content" => [],
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        })
+      end)
+
+      client = [base_url: "http://localhost:#{bypass.port}/"]
+      assert {:ok, _} = Claudio.Messages.create(client, %{"model" => "x", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :start], _, start}
+      refute Map.has_key?(start, :server_address)
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, %{status: :ok}}
     end
   end
 end

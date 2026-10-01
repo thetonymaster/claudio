@@ -254,7 +254,7 @@ defmodule Claudio.Messages do
       # messages in the caller's mailbox.
       case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
         {:ok, %Req.Response{status: 200} = resp} ->
-          resp = link_stream(resp, ctx, payload)
+          resp = link_stream(resp, ctx, client, payload)
           ok_stop({:ok, resp}, resp, nil, %{})
 
         {:ok, %Req.Response{status: status} = resp} ->
@@ -388,7 +388,7 @@ defmodule Claudio.Messages do
     start_metadata =
       %{model: payload_model(payload), telemetry_span_context: ctx}
       |> Map.merge(extra_start)
-      |> Telemetry.put_present(:server_address, Telemetry.server_address(client))
+      |> Map.merge(Telemetry.server_metadata(client))
 
     :telemetry.span(event, start_metadata, fn ->
       {result, measurements, stop_metadata} = fun.(ctx)
@@ -441,11 +441,14 @@ defmodule Claudio.Messages do
     do: Telemetry.put_present(metadata, :request_id, Telemetry.request_id(resp))
 
   # The create span's link, read by Stream.parse_events/1 to emit a linked stream span.
-  defp link_stream(resp, ctx, payload) do
+  # It also carries the request params and server info, which the linked stream :start repeats.
+  defp link_stream(resp, ctx, client, payload) do
     Req.Response.put_private(resp, :claudio, %{
       span_context: ctx,
       model: payload_model(payload),
-      request_id: Telemetry.request_id(resp)
+      request_id: Telemetry.request_id(resp),
+      request_metadata:
+        payload |> Telemetry.request_metadata() |> Map.merge(Telemetry.server_metadata(client))
     })
   end
 

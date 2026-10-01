@@ -1301,6 +1301,9 @@ defmodule Claudio.Messages.StreamTest do
       assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
       assert start.parent_span_context == create_stop.telemetry_span_context
       assert start.request_id == "req_e2e"
+      assert start.max_tokens == 16
+      assert start.server_address == "localhost"
+      assert start.server_port == bypass.port
       assert create_stop.request_id == "req_e2e"
       assert [{_, %{reason: :completed, stop_reason: :end_turn}}] = stops()
     end
@@ -1322,6 +1325,95 @@ defmodule Claudio.Messages.StreamTest do
                       %{parent_span_context: ^ctx}}
 
       assert [{_, %{reason: :completed}}] = stops()
+    end
+  end
+
+  describe "stream span (audit hardening)" do
+    test "the span clock starts at consumption, not at message_start" do
+      attach(@span)
+
+      delayed =
+        Stream.flat_map([:go], fn _ ->
+          Process.sleep(60)
+          [full_stream()]
+        end)
+
+      before = System.monotonic_time()
+      delayed |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], start_m, _}
+      assert [{stop_m, _}] = stops()
+
+      slack = System.convert_time_unit(20, :millisecond, :native)
+      assert start_m.monotonic_time <= before + slack
+      assert stop_m.duration >= System.convert_time_unit(60, :millisecond, :native)
+    end
+
+    test "a body with no message_start still gets consumption-start timing" do
+      attach(@span)
+      delayed = Stream.flat_map([:go], fn _ -> Process.sleep(40) && [""] end)
+
+      before = System.monotonic_time()
+      delayed |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], start_m, _}
+      assert [{stop_m, %{reason: :error}}] = stops()
+
+      assert start_m.monotonic_time <=
+               before + System.convert_time_unit(20, :millisecond, :native)
+
+      assert stop_m.duration >= System.convert_time_unit(40, :millisecond, :native)
+    end
+
+    test "a free-text SSE error type becomes :unknown" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start",
+           %{"type" => "message_start", "message" => %{"id" => "m", "model" => "x"}}},
+          {"error",
+           %{"type" => "error", "error" => %{"type" => "overloaded: RESPCONTENT detail"}}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+      assert [{_, %{reason: :error, error_type: :unknown}}] = stops()
+    end
+
+    test "a linked start carries the request params and server info; an unlinked one does not" do
+      attach(@span)
+
+      link = %{
+        span_context: make_ref(),
+        model: "claude-req",
+        request_id: nil,
+        request_metadata: %{
+          max_tokens: 10,
+          temperature: 0.5,
+          effort: "high",
+          server_address: "api.example.test",
+          server_port: 443
+        }
+      }
+
+      resp = %Req.Response{status: 200, body: [full_stream()], private: %{claudio: link}}
+      resp |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.max_tokens == 10
+      assert start.temperature == 0.5
+      assert start.effort == "high"
+      assert start.server_address == "api.example.test"
+      assert start.server_port == 443
+      refute Map.has_key?(start, :top_p)
+      _ = stops()
+
+      [full_stream()] |> ClaudioStream.parse_events() |> Stream.run()
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, unlinked}
+
+      for key <- [:max_tokens, :temperature, :effort, :server_address, :server_port] do
+        refute Map.has_key?(unlinked, key)
+      end
     end
   end
 end

@@ -114,7 +114,9 @@ defmodule Claudio.Messages.Stream do
       link: link,
       started?: false,
       stopped?: false,
-      start_time: nil,
+      # The span covers the whole consumption: its clock starts here, not at message_start.
+      start_time: System.monotonic_time(),
+      start_system_time: System.system_time(),
       metadata: %{},
       usage: nil,
       stop_reason: nil,
@@ -159,8 +161,11 @@ defmodule Claudio.Messages.Stream do
   defp span_event({:ok, %{event: "error", data: data}} = event, span) do
     error_type =
       case data do
-        %{"error" => %{"type" => type}} when is_binary(type) -> type
-        _ -> :stream_error
+        %{"error" => %{"type" => type}} when is_binary(type) ->
+          Claudio.Telemetry.bounded_type(type) || :unknown
+
+        _ ->
+          :stream_error
       end
 
     {[event], finish_span(span, :error, error_type)}
@@ -172,7 +177,6 @@ defmodule Claudio.Messages.Stream do
   defp span_event(event, span), do: {[event], span}
 
   defp start_span(span, model, response_id) do
-    now = System.monotonic_time()
     link_model = if span.link, do: span.link[:model]
 
     metadata =
@@ -183,11 +187,11 @@ defmodule Claudio.Messages.Stream do
 
     :telemetry.execute(
       [:claudio, :messages, :stream, :start],
-      %{monotonic_time: now, system_time: System.system_time()},
+      %{monotonic_time: span.start_time, system_time: span.start_system_time},
       metadata
     )
 
-    %{span | started?: true, start_time: now, metadata: metadata}
+    %{span | started?: true, metadata: metadata}
   end
 
   defp put_link(metadata, %{span_context: ctx} = link) do
@@ -195,6 +199,7 @@ defmodule Claudio.Messages.Stream do
     |> Map.put(:parent_span_context, ctx)
     |> Claudio.Telemetry.put_present(:request_id, link[:request_id])
     |> Claudio.Telemetry.put_present(:request_model, link[:model])
+    |> Map.merge(link[:request_metadata] || %{})
   end
 
   defp put_link(metadata, _link), do: metadata
