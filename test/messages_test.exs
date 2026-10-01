@@ -1073,5 +1073,65 @@ defmodule Claudio.MessagesTest do
       assert start.model == "claude-atom"
       assert start.max_tokens == 9
     end
+
+    test "legacy 200 with a non-list content still returns the body and emits :stop", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      Bypass.expect_once(
+        bypass,
+        "POST",
+        "/messages",
+        &json_resp(&1, 200, %{"content" => "not a list"})
+      )
+
+      assert {:ok, %{"content" => "not a list"}} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements,
+                      %{status: :ok}}
+
+      refute Map.has_key?(measurements, :input_tokens)
+    end
+
+    test "a 200 without usage emits no token measurements", %{client: client, bypass: bypass} do
+      attach(@create)
+      body = Map.delete(message_body(), "usage")
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, body))
+
+      assert {:ok, _} = Claudio.Messages.create(client, span_request())
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements,
+                      %{status: :ok}}
+
+      refute Map.has_key?(measurements, :input_tokens)
+      refute Map.has_key?(measurements, :output_tokens)
+    end
+
+    test "a streaming non-200 is an error stop", %{client: client, bypass: bypass} do
+      attach(@create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        json_resp(conn, 429, %{
+          "type" => "error",
+          "error" => %{"type" => "rate_limit_error", "message" => "slow"}
+        })
+      end)
+
+      assert {:error, %Claudio.APIError{}} =
+               Claudio.Messages.create(client, Request.enable_streaming(span_request()))
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.status == :error
+      assert stop.error_type == :rate_limit_error
+      assert stop.status_code == 429
+      assert stop.request_id == "req_test_1"
+    end
   end
 end

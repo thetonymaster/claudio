@@ -172,15 +172,7 @@ defmodule Claudio.Messages do
     span([:claudio, :messages, :create], client, payload, create_start(payload, false), fn _ctx ->
       case Req.post(client, url: "messages", json: payload) do
         {:ok, %Req.Response{status: 200, body: body} = resp} when is_map(body) ->
-          # Convert atom keys to string keys for backward compatibility
-          response = Response.from_map(body)
-
-          ok_stop(
-            {:ok, atomize_keys_to_strings(body)},
-            resp,
-            response.usage,
-            response_fields(response)
-          )
+          legacy_ok(body, resp)
 
         # A 200 whose body isn't a JSON object: returned exactly as before (Review Focus 2).
         {:ok, %Req.Response{status: 200, body: body} = resp} ->
@@ -318,12 +310,31 @@ defmodule Claudio.Messages do
     end
   end
 
+  # Keys are converted to strings for backward compatibility. Only a message-shaped body is
+  # parsed (for its telemetry fields); anything else is returned as it always was.
+  defp legacy_ok(body, resp) do
+    if is_list(Map.get(body, "content", [])) do
+      response = Response.from_map(body)
+
+      ok_stop(
+        {:ok, atomize_keys_to_strings(body)},
+        resp,
+        body["usage"],
+        response_fields(response)
+      )
+    else
+      ok_stop({:ok, atomize_keys_to_strings(body)}, resp, body["usage"], %{})
+    end
+  end
+
+  defp payload_model(payload), do: payload["model"] || payload[:model]
+
   defp create_non_streaming(client, payload) do
     span([:claudio, :messages, :create], client, payload, create_start(payload, false), fn _ctx ->
       case Req.post(client, url: "messages", json: payload) do
         {:ok, %Req.Response{status: 200, body: body} = resp} when is_map(body) ->
           response = Response.from_map(body)
-          ok_stop({:ok, response}, resp, response.usage, response_fields(response))
+          ok_stop({:ok, response}, resp, body["usage"], response_fields(response))
 
         # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
         {:ok, %Req.Response{status: status, body: body} = resp} ->
@@ -342,7 +353,7 @@ defmodule Claudio.Messages do
     ctx = make_ref()
 
     start_metadata =
-      %{model: payload["model"] || payload[:model], telemetry_span_context: ctx}
+      %{model: payload_model(payload), telemetry_span_context: ctx}
       |> Map.merge(extra_start)
       |> Telemetry.put_present(:server_address, Telemetry.server_address(client))
 
@@ -400,7 +411,7 @@ defmodule Claudio.Messages do
   defp link_stream(resp, ctx, payload) do
     Req.Response.put_private(resp, :claudio, %{
       span_context: ctx,
-      model: payload["model"] || payload[:model],
+      model: payload_model(payload),
       request_id: Telemetry.request_id(resp)
     })
   end
