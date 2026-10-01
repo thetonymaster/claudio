@@ -54,7 +54,10 @@ defmodule Claudio.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:req, "~> 0.5"},
+      # >= 0.6.1: earlier releases carry EEF-CVE-2026-49755 (decompression bomb, fixed in
+      # 0.6.1) and EEF-CVE-2026-49756 (multipart header injection, fixed in 0.6.0), which
+      # Files/Skills multipart uploads would reach.
+      {:req, "~> 0.6 and >= 0.6.1"},
       {:bypass, "~> 2.1", only: :test},
       {:plug_cowboy, "~> 2.0", only: :test},
       # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
