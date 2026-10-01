@@ -2,6 +2,7 @@ defmodule Claudio.Messages.RequestTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
+  alias Claudio.Messages.Response
 
   describe "new/1" do
     test "creates a request with model" do
@@ -104,9 +105,7 @@ defmodule Claudio.Messages.RequestTest do
       raw = %{"type" => "compaction", "content" => "s", "signature" => "sig"}
 
       typed =
-        Claudio.Messages.Response.compaction_block(
-          Claudio.Messages.Response.from_map(%{"content" => [raw]})
-        )
+        Response.compaction_block(Response.from_map(%{"content" => [raw]}))
 
       request = Request.new("m") |> Request.add_message(:assistant, [typed])
 
@@ -580,8 +579,6 @@ defmodule Claudio.Messages.RequestTest do
   end
 
   describe "apply_compaction/2" do
-    alias Claudio.Messages.Response
-
     @signed %{"type" => "compaction", "content" => "Summary.", "signature" => "sig"}
 
     test "on-demand: history becomes one assistant message holding the block; compaction cleared" do
@@ -1976,7 +1973,7 @@ defmodule Claudio.Messages.RequestTest do
         %{"type" => "server_tool_use", "id" => "srv_1", "name" => "web_search", "input" => %{}}
       ]
 
-      response = Claudio.Messages.Response.from_map(%{"content" => raw})
+      response = Response.from_map(%{"content" => raw})
       request = Request.new("m") |> Request.add_message(:assistant, response.content)
 
       assert request.messages == [%{"role" => "assistant", "content" => raw}]

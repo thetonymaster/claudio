@@ -250,6 +250,7 @@ defmodule Claudio.Agent do
               do: MapSet.put(failed, toolset),
               else: failed
 
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           opts = if toolset, do: [toolset_name: toolset], else: []
           {Tools.create_tool_result(tool_use.id, content, is_error, opts), failed}
         end

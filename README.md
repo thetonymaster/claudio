@@ -634,6 +634,9 @@ mix test test/messages_test.exs
 
 # Check code formatting
 mix format --check-formatted
+
+# Everything CI checks locally: compile warnings, unused deps, format, Credo, Dialyzer, tests
+mix precommit
 ```
 
 ## Documentation

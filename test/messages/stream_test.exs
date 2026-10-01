@@ -1,6 +1,7 @@
 defmodule Claudio.Messages.StreamTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Response
   alias Claudio.Messages.Stream, as: ClaudioStream
 
   describe "parse_events/1 SSE framing (pre-release audit)" do
@@ -443,7 +444,7 @@ defmodule Claudio.Messages.StreamTest do
                "output_tokens_details" => %{"thinking_tokens" => 2}
              }
 
-      usage = Claudio.Messages.Response.from_map(message).usage
+      usage = Response.from_map(message).usage
       assert usage.input_tokens == 5
       assert usage.output_tokens == 3
       assert usage.output_tokens_details == %{"thinking_tokens" => 2}
@@ -475,7 +476,7 @@ defmodule Claudio.Messages.StreamTest do
       {:ok, message} = ClaudioStream.build_final_message(events)
 
       assert message["usage"] == %{"input_tokens" => 5, "output_tokens" => 3}
-      assert Claudio.Messages.Response.from_map(message).usage.output_tokens == 3
+      assert Response.from_map(message).usage.output_tokens == 3
     end
   end
 
@@ -498,7 +499,7 @@ defmodule Claudio.Messages.StreamTest do
         |> ClaudioStream.parse_events()
         |> ClaudioStream.build_final_message()
 
-      response = Claudio.Messages.Response.from_map(message)
+      response = Response.from_map(message)
       assert response.usage.output_tokens_details == %{"thinking_tokens" => 25}
     end
   end
@@ -599,7 +600,7 @@ defmodule Claudio.Messages.StreamTest do
         |> ClaudioStream.parse_events()
         |> ClaudioStream.build_final_message()
 
-      assert Claudio.Messages.Response.from_map(message).diagnostics == %{
+      assert Response.from_map(message).diagnostics == %{
                "cache_miss_reason" => nil
              }
     end
@@ -658,13 +659,13 @@ defmodule Claudio.Messages.StreamTest do
              ] =
                message["usage"]["iterations"]
 
-      response = Claudio.Messages.Response.from_map(message)
+      response = Response.from_map(message)
 
       assert [%{type: :text, text: "Part"}, %{type: :fallback}, %{type: :text, text: "Hello"}] =
                response.content
 
       assert response.model == "claude-opus-5-5"
-      assert Claudio.Messages.Response.served_by(response) == "claude-opus-4-8"
+      assert Response.served_by(response) == "claude-opus-4-8"
       assert [_, %{"type" => "fallback_message"}] = response.usage.iterations
     end
   end
@@ -703,7 +704,7 @@ defmodule Claudio.Messages.StreamTest do
 
       assert message["context_management"] == %{"applied_edits" => []}
 
-      response = Claudio.Messages.Response.from_map(message)
+      response = Response.from_map(message)
 
       assert response.stop_reason == :compaction
       assert response.context_management == %{"applied_edits" => []}
@@ -711,7 +712,7 @@ defmodule Claudio.Messages.StreamTest do
       assert [%{"type" => "compaction"}] = response.usage.iterations
 
       # Review Focus 3: the streamed block replays byte-exact.
-      assert Claudio.Messages.Response.to_assistant_content(response) == [
+      assert Response.to_assistant_content(response) == [
                %{"type" => "compaction", "content" => "Summary of the session."}
              ]
     end
@@ -763,12 +764,12 @@ defmodule Claudio.Messages.StreamTest do
         |> ClaudioStream.parse_events()
         |> ClaudioStream.build_final_message()
 
-      response = Claudio.Messages.Response.from_map(message)
+      response = Response.from_map(message)
 
       # Byte-exact, signature included — what apply_compaction/2 (Task 4) replays.
       assert response.stop_reason == :compaction
 
-      assert Claudio.Messages.Response.to_assistant_content(response) == [
+      assert Response.to_assistant_content(response) == [
                %{"type" => "compaction", "content" => "Sum.", "signature" => "sig"}
              ]
     end
@@ -819,7 +820,7 @@ defmodule Claudio.Messages.StreamTest do
       c = %{"id" => "container_1", "expires_at" => "t1"}
       {:ok, message} = container_stream(c, nil)
 
-      assert Claudio.Messages.Response.from_map(message).container == c
+      assert Response.from_map(message).container == c
     end
 
     test "a non-null delta container overwrites the start value" do
@@ -862,7 +863,7 @@ defmodule Claudio.Messages.StreamTest do
         )
 
       assert [%{"type" => "thinking_dropped"}] =
-               Claudio.Messages.Response.from_map(message).input_transformations
+               Response.from_map(message).input_transformations
     end
 
     test "a top-level key on message_delta replaces it (post-fallback copy)" do
@@ -941,10 +942,10 @@ defmodule Claudio.Messages.StreamTest do
 
       assert message["content"] == [Map.put(@tool_use, "input", %{"city" => "Paris"})]
 
-      response = Claudio.Messages.Response.from_map(message)
-      assert [%{input: %{"city" => "Paris"}}] = Claudio.Messages.Response.get_tool_uses(response)
+      response = Response.from_map(message)
+      assert [%{input: %{"city" => "Paris"}}] = Response.get_tool_uses(response)
 
-      assert Claudio.Messages.Response.to_assistant_content(response) ==
+      assert Response.to_assistant_content(response) ==
                [Map.put(@tool_use, "input", %{"city" => "Paris"})]
     end
 

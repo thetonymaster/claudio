@@ -2,6 +2,7 @@ defmodule Claudio.BatchesTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
+  alias Claudio.Messages.Response
 
   setup do
     bypass = Bypass.open()
@@ -127,8 +128,8 @@ defmodule Claudio.BatchesTest do
       assert first["custom_id"] == "a"
       assert second["result"]["type"] == "errored"
 
-      response = Claudio.Messages.Response.from_map(first["result"]["message"])
-      assert Claudio.Messages.Response.get_text(response) == "hi"
+      response = Response.from_map(first["result"]["message"])
+      assert Response.get_text(response) == "hi"
     end
 
     test "a malformed line is an error, not silently dropped", %{client: client, bypass: bypass} do

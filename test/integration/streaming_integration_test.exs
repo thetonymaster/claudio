@@ -37,7 +37,7 @@ defmodule Claudio.Messages.StreamingIntegrationTest do
         |> Stream.accumulate_text()
         |> Enum.to_list()
 
-      assert length(text_chunks) > 0
+      assert text_chunks != []
       full_text = Enum.join(text_chunks, "")
       assert String.length(full_text) > 0
     end
@@ -87,7 +87,7 @@ defmodule Claudio.Messages.StreamingIntegrationTest do
         |> Stream.filter_events(["content_block_delta"])
         |> Enum.to_list()
 
-      assert length(delta_events) > 0
+      assert delta_events != []
 
       Enum.each(delta_events, fn {:ok, event} ->
         assert event.event == "content_block_delta"

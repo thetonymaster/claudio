@@ -7,7 +7,7 @@ defmodule Claudio.A2A.Transport.HTTP do
 
   @behaviour Claudio.A2A.Transport
 
-  alias Claudio.A2A.{AgentCard, Task, Message}
+  alias Claudio.A2A.{AgentCard, Message, Task}
   import Claudio.A2A.Util, only: [maybe_put: 3]
 
   @agent_card_path "/.well-known/agent-card.json"

@@ -3,6 +3,7 @@ defmodule Claudio.AgentTest do
 
   alias Claudio.Agent
   alias Claudio.Messages.Request
+  alias Claudio.Messages.Response
   alias Claudio.Tools
 
   setup do
@@ -87,7 +88,7 @@ defmodule Claudio.AgentTest do
       {:ok, response, messages} = Agent.run(client, base_request(), %{})
 
       assert response.stop_reason == :end_turn
-      assert Claudio.Messages.Response.get_text(response) == "Hello there!"
+      assert Response.get_text(response) == "Hello there!"
       assert length(messages) == 2
       assert hd(messages)["role"] == "user"
       assert List.last(messages)["role"] == "assistant"
@@ -131,7 +132,7 @@ defmodule Claudio.AgentTest do
       {:ok, response, messages} = Agent.run(client, request, handlers)
 
       assert response.stop_reason == :end_turn
-      assert Claudio.Messages.Response.get_text(response) == "It's 72°F and sunny in SF."
+      assert Response.get_text(response) == "It's 72°F and sunny in SF."
       assert :counters.get(call_count, 1) == 2
 
       # Messages: user, assistant (tool_use), user (tool_result), assistant (final)
@@ -215,7 +216,7 @@ defmodule Claudio.AgentTest do
                Agent.run(client, request, handlers, max_turns: 2)
 
       assert response.stop_reason == :tool_use
-      assert length(messages) > 0
+      assert messages != []
     end
 
     test "handles unknown tool gracefully", %{client: client, bypass: bypass} do

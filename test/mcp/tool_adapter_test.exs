@@ -1,8 +1,8 @@
 defmodule Claudio.MCP.ToolAdapterTest do
   use ExUnit.Case, async: true
 
-  alias Claudio.MCP.ToolAdapter
   alias Claudio.MCP.Client.Tool
+  alias Claudio.MCP.ToolAdapter
   alias Claudio.Messages.Request
 
   @tools [
@@ -107,7 +107,7 @@ defmodule Claudio.MCP.ToolAdapterTest do
     test "a nil description is omitted and a schema without type gets type object" do
       tool = %Claudio.MCP.Client.Tool{name: "search", description: nil, input_schema: %{}}
 
-      assert Claudio.MCP.ToolAdapter.to_claudio_tool(tool) == %{
+      assert ToolAdapter.to_claudio_tool(tool) == %{
                "name" => "search",
                "input_schema" => %{"type" => "object"}
              }
@@ -118,7 +118,7 @@ defmodule Claudio.MCP.ToolAdapterTest do
       tool = %Claudio.MCP.Client.Tool{name: "s", description: "d", input_schema: schema}
 
       assert %{"input_schema" => ^schema, "description" => "d"} =
-               Claudio.MCP.ToolAdapter.to_claudio_tool(tool)
+               ToolAdapter.to_claudio_tool(tool)
     end
 
     test "names the API would reject raise ArgumentError naming the tool" do
@@ -130,7 +130,7 @@ defmodule Claudio.MCP.ToolAdapterTest do
         tool = %Claudio.MCP.Client.Tool{name: name, description: "d", input_schema: %{}}
 
         assert_raise ArgumentError, ~r/tool name .* must match/, fn ->
-          Claudio.MCP.ToolAdapter.to_claudio_tool(tool, prefix)
+          ToolAdapter.to_claudio_tool(tool, prefix)
         end
       end
     end

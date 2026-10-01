@@ -172,10 +172,10 @@ defmodule Claudio.MessagesTest do
     end)
 
     request =
-      Claudio.Messages.Request.new("claude-3-5-sonnet-20241022")
-      |> Claudio.Messages.Request.add_message(:user, "Hello")
-      |> Claudio.Messages.Request.set_max_tokens(64)
-      |> Claudio.Messages.Request.enable_streaming()
+      Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
 
     assert {:error, %Claudio.APIError{} = err} = Claudio.Messages.create(client, request)
     assert err.status_code == 400
@@ -223,10 +223,10 @@ defmodule Claudio.MessagesTest do
     end)
 
     request =
-      Claudio.Messages.Request.new("claude-3-5-sonnet-20241022")
-      |> Claudio.Messages.Request.add_message(:user, "Hello")
-      |> Claudio.Messages.Request.set_max_tokens(64)
-      |> Claudio.Messages.Request.enable_streaming()
+      Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
 
     assert {:error, %Claudio.APIError{} = err} = Claudio.Messages.create(client, request)
     assert err.status_code == 400
@@ -267,10 +267,10 @@ defmodule Claudio.MessagesTest do
     send(self(), {:sentinel, :second})
 
     request =
-      Claudio.Messages.Request.new("claude-3-5-sonnet-20241022")
-      |> Claudio.Messages.Request.add_message(:user, "Hello")
-      |> Claudio.Messages.Request.set_max_tokens(64)
-      |> Claudio.Messages.Request.enable_streaming()
+      Request.new("claude-3-5-sonnet-20241022")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(64)
+      |> Request.enable_streaming()
 
     assert {:error, %Claudio.APIError{status_code: 400}} =
              Claudio.Messages.create(client, request)

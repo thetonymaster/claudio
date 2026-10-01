@@ -1,8 +1,8 @@
 defmodule Claudio.Messages.ResponseTest do
   use ExUnit.Case, async: true
 
-  alias Claudio.Messages.Response
   alias Claudio.Messages.Request
+  alias Claudio.Messages.Response
 
   describe "from_map/1" do
     test "parses basic response with string keys" do

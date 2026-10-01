@@ -45,7 +45,7 @@ defmodule Claudio.Admin do
   @spec get_user(Req.Request.t(), String.t()) :: result()
   def get_user(client, user_id), do: get(client, "organizations/users/#{user_id}")
 
-  @doc "Updates a member's role, e.g. `%{\"role\" => \"developer\"}`."
+  @doc ~s(Updates a member's role, e.g. `%{"role" => "developer"}`.)
   @spec update_user(Req.Request.t(), String.t(), map()) :: result()
   def update_user(client, user_id, body),
     do: post(client, "organizations/users/#{user_id}", body)
@@ -64,7 +64,7 @@ defmodule Claudio.Admin do
   @spec get_invite(Req.Request.t(), String.t()) :: result()
   def get_invite(client, invite_id), do: get(client, "organizations/invites/#{invite_id}")
 
-  @doc "Creates an invite, e.g. `%{\"email\" => \"x@y.com\", \"role\" => \"developer\"}`."
+  @doc ~s(Creates an invite, e.g. `%{"email" => "x@y.com", "role" => "developer"}`.)
   @spec create_invite(Req.Request.t(), map()) :: result()
   def create_invite(client, body), do: post(client, "organizations/invites", body)
 
@@ -82,7 +82,7 @@ defmodule Claudio.Admin do
   @spec get_workspace(Req.Request.t(), String.t()) :: result()
   def get_workspace(client, id), do: get(client, "organizations/workspaces/#{id}")
 
-  @doc "Creates a workspace, e.g. `%{\"name\" => \"Production\"}`."
+  @doc ~s(Creates a workspace, e.g. `%{"name" => "Production"}`.)
   @spec create_workspace(Req.Request.t(), map()) :: result()
   def create_workspace(client, body), do: post(client, "organizations/workspaces", body)
 
@@ -106,7 +106,7 @@ defmodule Claudio.Admin do
   @spec get_api_key(Req.Request.t(), String.t()) :: result()
   def get_api_key(client, id), do: get(client, "organizations/api_keys/#{id}")
 
-  @doc "Updates an API key, e.g. `%{\"status\" => \"inactive\"}` or `%{\"name\" => \"…\"}`."
+  @doc ~s(Updates an API key, e.g. `%{"status" => "inactive"}` or `%{"name" => "…"}`.)
   @spec update_api_key(Req.Request.t(), String.t(), map()) :: result()
   def update_api_key(client, id, body), do: post(client, "organizations/api_keys/#{id}", body)
 

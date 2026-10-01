@@ -228,6 +228,7 @@ defmodule Claudio.Messages.Response do
   Converts a raw API response map into a structured Response.
   """
   @spec from_map(map()) :: t()
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def from_map(data) when is_map(data) do
     %__MODULE__{
       id: data[:id] || data["id"],
@@ -253,8 +254,7 @@ defmodule Claudio.Messages.Response do
   def get_text(%__MODULE__{content: content}) do
     content
     |> Enum.filter(&(&1[:type] == :text))
-    |> Enum.map(& &1.text)
-    |> Enum.join("")
+    |> Enum.map_join("", & &1.text)
   end
 
   # Exact text of an interrupted `display: "updates"` thinking block

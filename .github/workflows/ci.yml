@@ -25,6 +25,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
@@ -66,24 +68,66 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
-        elixir-version: '1.17'
-        otp-version: '27'
+        elixir-version: '1.19'
+        otp-version: '28'
 
+    # _build includes the Dialyzer PLTs (plt_core_path: "_build/plts").
     - name: Restore dependencies cache
       uses: actions/cache@v4
       with:
         path: |
           deps
           _build
-        key: ${{ runner.os }}-mix-quality-${{ hashFiles('**/mix.lock') }}
-        restore-keys: ${{ runner.os }}-mix-quality-
+        key: ${{ runner.os }}-mix-quality-1.19-28-${{ hashFiles('**/mix.lock') }}
+        restore-keys: ${{ runner.os }}-mix-quality-1.19-28-
 
     - name: Install dependencies
       run: mix deps.get
 
     - name: Check unused dependencies
       run: mix deps.unlock --check-unused
+
+    - name: Check for retired dependencies
+      run: mix hex.audit
+
+    - name: Credo
+      run: mix credo --strict
+
+    - name: Dialyzer
+      run: mix dialyzer --format github
+
+    - name: Docs build without warnings
+      run: mix docs --warnings-as-errors
+
+  # Consumers ignore our mix.lock: test against the newest versions our requirements allow.
+  unlocked-deps:
+    name: Test with unlocked dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: '1.19'
+        otp-version: '28'
+
+    - name: Unlock and fetch latest dependencies
+      run: |
+        mix deps.unlock --all
+        mix deps.get
+
+    - name: Compile with warnings as errors
+      run: mix compile --warnings-as-errors
+
+    - name: Run unit tests
+      run: mix test --exclude integration

@@ -17,7 +17,7 @@ defmodule Claudio.A2A.Transport do
         transport: Claudio.A2A.Transport.GRPC)
   """
 
-  alias Claudio.A2A.{AgentCard, Task, Message}
+  alias Claudio.A2A.{AgentCard, Message, Task}
 
   @type endpoint :: String.t()
   @type opts :: keyword()

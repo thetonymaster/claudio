@@ -241,6 +241,7 @@ defmodule Claudio.A2A.AgentCard do
   # Serialization
 
   @spec from_map(map()) :: t()
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def from_map(map) when is_map(map) do
     %__MODULE__{
       name: map["name"],
