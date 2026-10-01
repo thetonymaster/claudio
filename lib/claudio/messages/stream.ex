@@ -3,7 +3,7 @@ defmodule Claudio.Messages.Stream do
   Utilities for parsing and consuming Server-Sent Events (SSE) from streaming Messages API responses.
 
   `parse_events/1` emits `[:claudio, :messages, :stream, :start | :stop]` around each consumption
-  (and the older `[:claudio, :messages, :stream, :usage]`); see the telemetry guide.
+  (and the older `[:claudio, :messages, :stream, :usage]`); see the [telemetry guide](telemetry.html).
 
   ## Event Types
 
@@ -47,6 +47,9 @@ defmodule Claudio.Messages.Stream do
 
   Pass the whole `%Req.Response{}` from `Claudio.Messages.create/2` to link the stream span
   to the `create` span; passing `response.body` still works, unlinked.
+
+  Emits `[:claudio, :messages, :stream, :start | :stop]` around each consumption of the
+  returned stream; see the [telemetry guide](telemetry.html).
 
   ## Example
 
