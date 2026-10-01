@@ -47,12 +47,46 @@ defmodule Claudio.TelemetryTest do
                %{output_tokens: 2}
     end
 
-    test "a present atom key wins, even when false; the string key is only a fallback" do
-      assert Telemetry.usage(%{:input_tokens => false, "input_tokens" => 5}) ==
-               %{input_tokens: false}
+    test "a present atom key wins, even when invalid; the string key is only a fallback" do
+      assert Telemetry.usage(%{:input_tokens => false, "input_tokens" => 5}) == %{}
 
       assert Telemetry.usage(%{"input_tokens" => 5}) == %{input_tokens: 5}
     end
+  end
+
+  describe "usage/1 integer-only tokens" do
+    test "string, float, map and negative values are dropped" do
+      usage = %{
+        "input_tokens" => "3",
+        "output_tokens" => 4.0,
+        "cache_creation_input_tokens" => %{"x" => 1},
+        "cache_read_input_tokens" => -1,
+        "output_tokens_details" => %{"thinking_tokens" => "7"}
+      }
+
+      assert Telemetry.usage(usage) == %{}
+
+      assert Telemetry.usage(%{output_tokens: 2, output_tokens_details: %{thinking_tokens: 1.5}}) ==
+               %{output_tokens: 2}
+    end
+  end
+
+  describe "error_type/1 bounds server-supplied strings" do
+    test "a snake_case string passes; free text becomes :unknown" do
+      assert Telemetry.error_type(%Claudio.APIError{type: "new_error"}) == "new_error"
+      assert Telemetry.error_type(%Claudio.APIError{type: "proxy says: USERCONTENT"}) == :unknown
+      assert Telemetry.error_type(%Claudio.APIError{type: String.duplicate("a", 65)}) == :unknown
+      assert Telemetry.error_type(%Claudio.APIError{type: ""}) == :unknown
+    end
+
+    test "bounded_type/1 is shared with the stream error path" do
+      assert Telemetry.bounded_type("overloaded_error") == "overloaded_error"
+      assert Telemetry.bounded_type("overloaded: detail") == nil
+    end
+  end
+
+  test "server_address/1 is nil for a client that is not a Req.Request" do
+    assert Telemetry.server_address(base_url: "https://api.anthropic.com/v1/") == nil
   end
 
   describe "error_type/1" do
@@ -103,6 +137,15 @@ defmodule Claudio.TelemetryTest do
       Claudio.Client.new(%{token: "t", version: "2023-06-01"}, "http://api.example.test:4000/v1/")
 
     assert Telemetry.server_address(client) == "api.example.test"
+  end
+
+  test "server_port/1 is the explicit port or the scheme default" do
+    mk = &Claudio.Client.new(%{token: "t", version: "v"}, &1)
+    assert Telemetry.server_port(mk.("http://api.example.test:4000/v1/")) == 4000
+    assert Telemetry.server_port(mk.("https://api.example.test/v1/")) == 443
+    assert Telemetry.server_port(mk.("http://api.example.test/v1/")) == 80
+    assert Telemetry.server_port(Req.new()) == nil
+    assert Telemetry.server_port(base_url: "https://x/") == nil
   end
 
   test "server_address/1 is nil without a base_url" do

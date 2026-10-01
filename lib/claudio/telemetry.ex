@@ -13,14 +13,20 @@ defmodule Claudio.Telemetry do
 
   @doc false
   # Token counts from a usage map (atom or string keys). Used as both measurements and metadata.
+  # A token is kept only when it is a non-negative integer.
   @spec usage(term()) :: map()
   def usage(usage) when is_map(usage) do
     @token_keys
-    |> Enum.reduce(%{}, fn key, acc -> put_present(acc, key, get(usage, key)) end)
-    |> put_present(:thinking_tokens, thinking_tokens(usage))
+    |> Enum.reduce(%{}, fn key, acc -> put_token(acc, key, get(usage, key)) end)
+    |> put_token(:thinking_tokens, thinking_tokens(usage))
   end
 
   def usage(_usage), do: %{}
+
+  defp put_token(map, key, value) when is_integer(value) and value >= 0,
+    do: Map.put(map, key, value)
+
+  defp put_token(map, _key, _value), do: map
 
   # usage.output_tokens_details is carried raw (atom or string keys).
   defp thinking_tokens(usage) do
@@ -34,8 +40,11 @@ defmodule Claudio.Telemetry do
   # A bounded error classification, safe to use as OTel `error.type`.
   @spec error_type(term()) :: atom() | String.t()
   def error_type(%Claudio.APIError{type: type})
-      when (is_atom(type) and type not in [nil, true, false]) or is_binary(type),
+      when is_atom(type) and type not in [nil, true, false],
       do: type
+
+  def error_type(%Claudio.APIError{type: type}) when is_binary(type),
+    do: bounded_type(type) || :unknown
 
   def error_type(%Claudio.APIError{}), do: :unknown
 
@@ -45,6 +54,14 @@ defmodule Claudio.Telemetry do
 
   def error_type(%{__exception__: true, __struct__: module}), do: module
   def error_type(_other), do: :unknown
+
+  @doc false
+  # A server-supplied error type string, only when it looks like an identifier (bounded
+  # cardinality, no free text); nil otherwise.
+  @spec bounded_type(String.t()) :: String.t() | nil
+  def bounded_type(type) when is_binary(type) do
+    if Regex.match?(~r/\A[a-z][a-z0-9_]{0,63}\z/, type), do: type
+  end
 
   @doc false
   @spec request_metadata(map()) :: map()
@@ -62,12 +79,36 @@ defmodule Claudio.Telemetry do
   end
 
   @doc false
-  @spec server_address(Req.Request.t()) :: String.t() | nil
+  @spec server_address(term()) :: String.t() | nil
   def server_address(%Req.Request{options: options}) do
     case options[:base_url] do
       url when is_binary(url) -> URI.parse(url).host
       _ -> nil
     end
+  end
+
+  # Req accepts a keyword list or URL as a "client"; those carry no base_url to report.
+  def server_address(_client), do: nil
+
+  @doc false
+  # The base_url's port, with the scheme default (443 / 80) when it names none.
+  @spec server_port(term()) :: :inet.port_number() | nil
+  def server_port(%Req.Request{options: options}) do
+    case options[:base_url] do
+      url when is_binary(url) -> URI.parse(url).port
+      _ -> nil
+    end
+  end
+
+  def server_port(_client), do: nil
+
+  @doc false
+  # server_address and server_port of a client, only those present.
+  @spec server_metadata(term()) :: map()
+  def server_metadata(client) do
+    %{}
+    |> put_present(:server_address, server_address(client))
+    |> put_present(:server_port, server_port(client))
   end
 
   @doc false
