@@ -63,16 +63,21 @@ lib/claudio/managed_agents/sessions.ex
   body)}`; transport error → `{:error, reason}` (F12, unchanged contract).
 - **Query encoding** `encode_query(opts)` → list of `{String.t(), String.t()}` handed to Req's
   `params:` (F9, F12):
-  - scalar (string, integer, boolean, atom) → `{"key", to_string(v)}`
+  - scalar (string, integer, boolean, atom) → `{"key", to_string(v)}`; `DateTime` →
+    `DateTime.to_iso8601/1` (`to_string/1` would emit a space-separated form)
   - list of scalars → one `{"key[]", v}` per element, in order (`statuses: ["idle", "running"]`)
   - keyword list → one `{"key[sub]", v}` per pair (`created_at: [gte: "2026-09-01T00:00:00Z"]`)
   - anything else (map, nested list, list inside a keyword) → `ArgumentError` naming the key and
-    `inspect/1` of the value. `nil` values → `ArgumentError` too (not silently dropped).
+    `inspect/1` of the value. `nil` values and empty lists (`statuses: []` — "none" or "any"?)
+    → `ArgumentError` too (not silently dropped).
+- **Ids in paths** go through `segment/1` (`URI.encode(id, &URI.char_unreserved?/1)`), so an id
+  is always one path segment (`"a/b"` → `a%2Fb`); the `is_id/1` guard rejects `""` (which would
+  otherwise turn `get/2` into a list call).
   - Option names are not checked; the API rejects unknown ones (F9).
 
 ### 3. Resource functions
 
-All ids are guarded `when is_binary(id)`; bodies are maps (string or atom keys, encoded by
+All ids are guarded `when is_binary(id) and id != ""` and escaped as one segment (§2); bodies are maps (string or atom keys, encoded by
 Jason) passed through; every function returns `{:ok, map()} | {:error, APIError.t() | term()}`.
 
 **`Claudio.ManagedAgents.Agents`**
