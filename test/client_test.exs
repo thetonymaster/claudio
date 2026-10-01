@@ -443,6 +443,8 @@ defmodule Claudio.ClientOptionsTest do
   end
 
   describe "per-client retry" do
+    # Req logs each retry at :warning.
+    @tag :capture_log
     test "retry: [...] retries a POST on a retryable status" do
       bypass = Bypass.open()
       count = :counters.new(1, [:atomics])

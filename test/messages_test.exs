@@ -331,25 +331,33 @@ defmodule Claudio.MessagesTest do
   # being ignored until the 2s deadline.
   # (A server that dies mid-body ends the stream with :done, not an error; a receive
   # timeout is what delivers `{:error, _}`.)
-  test "streaming 400 drain stops on a stream error", %{bypass: bypass} do
-    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
-      # The client times out mid-handler; see the test above.
-      Process.flag(:trap_exit, true)
+  # A raw TCP server, as above: a Bypass handler still sleeping when the test exits makes
+  # Bypass's on_exit check crash its own instance (logged outside the test's capture).
+  test "streaming 400 drain stops on a stream error" do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
 
-      conn =
-        conn
-        |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_chunked(400)
+    server =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        {:ok, _request} = :gen_tcp.recv(socket, 0)
 
-      {:ok, conn} = Plug.Conn.chunk(conn, ~s({"type":"error",))
-      :timer.sleep(1_500)
-      conn
-    end)
+        :ok =
+          :gen_tcp.send(
+            socket,
+            "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\n" <>
+              "transfer-encoding: chunked\r\n\r\n" <> chunk(~s({"type":"error",))
+          )
+
+        # The client times out mid-body (recv_timeout: 300).
+        :timer.sleep(1_500)
+        :gen_tcp.close(socket)
+      end)
 
     client =
       Claudio.Client.new(
         %{token: "t", version: "2023-06-01", recv_timeout: 300},
-        "http://localhost:#{bypass.port}/"
+        "http://localhost:#{port}/"
       )
 
     request =
@@ -362,6 +370,9 @@ defmodule Claudio.MessagesTest do
 
     assert {:error, %Claudio.APIError{status_code: 400}} = result
     assert micros < 1_500_000, "drain took #{div(micros, 1000)}ms"
+
+    Task.await(server, 5_000)
+    :gen_tcp.close(listen)
   end
 
   test "telemetry stop metadata includes token usage for non-streaming success", %{
