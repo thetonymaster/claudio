@@ -127,7 +127,7 @@ defmodule Claudio.Messages do
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
   See the [telemetry guide](telemetry.html). The `error` key on a failed `:stop` is deprecated (it
-  can contain the API's error body); use `error_type`.
+  can contain the API's error body or a malformed 200's body); use `error_type`.
 
   ## Examples
 
@@ -170,7 +170,7 @@ defmodule Claudio.Messages do
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
   See the [telemetry guide](telemetry.html). The `error` key on a failed `:stop` is deprecated (it
-  can contain the API's error body); use `error_type`.
+  can contain the API's error body or a malformed 200's body); use `error_type`.
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}

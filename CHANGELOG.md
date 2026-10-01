@@ -16,12 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nil` on an error stop; `:unknown` when unclassified) and `status_code`, and token counts as
   **measurements** (still also metadata).
   New `[:claudio, :messages, :count_tokens]` span; new `[:claudio, :messages, :stream, :start | :stop]`
-  around each stream consumption (full duration, tokens, exactly one `:stop`), linked to the
-  `create` span when `parse_events/1` is given the whole response; new per-attempt
-  `[:claudio, :http, :request, :start | :stop]` for every endpoint (retries visible as `attempt`).
-  No event carries headers, bodies, the API key or message content, except the deprecated `error`
-  key on a failed `create :stop` (an `inspect` string that can include the API's error body;
-  use `error_type`). A linked stream `:start` also carries `request_model`.
+  around each stream consumption (duration measured from the start of consumption to its end,
+  tokens, exactly one `:stop`), linked to the `create` span when `parse_events/1` is given the
+  whole response; new per-attempt `[:claudio, :http, :request, :start | :stop]` for every
+  endpoint (retries visible as `attempt`). `create` and `count_tokens` `:start` carry
+  `server_port`; a linked stream `:start` also carries `request_model`, the request params that
+  were set, `server_address` and `server_port`.
+  No event carries headers, bodies, the API key or message content, with two exceptions: the
+  deprecated `error` key on a failed `create :stop` (an `inspect` of the error, which can include
+  the API's error body or, for a malformed 200, the response body), and the `:exception` events'
+  `reason` and `stacktrace` (standard `:telemetry.span` behavior), which can include request or
+  response data. Exporters should use `error_type`. `error_type` and token values are bounded:
+  a server-supplied type string passes only if it is an identifier (`[a-z][a-z0-9_]{0,63}`),
+  else `:unknown`, and a token key is kept only when its value is a non-negative integer.
 
 - `Claudio.Client.new/2` accepts `:timeout`, `:recv_timeout` and `:retry` per client.
   A per-client value wins over `config :claudio, Claudio.Client`, which remains the
@@ -38,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Legacy `Claudio.Messages.create_message/2` now emits the `[:claudio, :messages, :create]` span.
+  It recognises only the string key `"stream" => true` as streaming (as before); an atom
+  `stream: true` is routed, and labelled, as non-streaming.
+- `create :stop` token keys (measurements and metadata) are **absent**, not `0`, when a 200
+  response carries no `usage`, and a non-integer token value is dropped. Handlers that read
+  `meta.input_tokens` unconditionally should use `Map.get/3`.
+- A streaming `Req.Response` from `create/2` / `create_message/2` now carries
+  `private.claudio` (the link `Claudio.Messages.Stream.parse_events/1` reads). Code that matches `private: %{}`
+  exactly or compares whole responses will see it.
+- `Claudio.Client.new/2` adds a `:claudio_telemetry` Req step (request, response and error
+  steps) that emits the HTTP events. User steps and `Req.merge/2` keep working; code that
+  asserts on the step lists will see it.
+- `Claudio.Messages.Stream.parse_events/1` no longer raises on a malformed `message_start` /
+  `message_delta` (a non-map `message` or `usage`): it passes the events through.
 - `Claudio.Messages.Stream.parse_events/1` also accepts the whole `%Req.Response{}`.
 - **The `:telemetry` requirement is now `~> 1.3`** (was `~> 1.0`): span stop measurements need
   1.3. Applications locked to an older `:telemetry` will be asked to update it.
@@ -51,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - The `error` metadata key on `[:claudio, :messages, :create, :stop]` (an `inspect` string that can
-  contain the API's error response body). It will be removed in 0.8.0; use `error_type`.
+  contain the API's error response body, or a malformed 200's body). It will be removed in 0.8.0; use `error_type`.
 
 ### Fixed
 
