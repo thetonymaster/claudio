@@ -239,7 +239,17 @@ defmodule Claudio.TelemetryTest do
     end
   end
 
-  test "no event carries the API key", %{} do
+  describe "no event carries the credential" do
+    test "with an API key client" do
+      assert_no_secret(%{})
+    end
+
+    test "with a bearer client" do
+      assert_no_secret(%{auth_type: :bearer})
+    end
+  end
+
+  defp assert_no_secret(client_opts) do
     bypass = Bypass.open()
     secret = "sk-test-SECRET-#{System.unique_integer([:positive])}"
 
@@ -256,12 +266,20 @@ defmodule Claudio.TelemetryTest do
     attach(events)
 
     Bypass.expect(bypass, "POST", "/messages", fn conn ->
-      conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.resp(
-        200,
-        ~s({"id":"m","type":"message","role":"assistant","model":"x","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})
-      )
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+      if Jason.decode!(body)["stream"] == true do
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, sse_body())
+      else
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          ~s({"id":"m","type":"message","role":"assistant","model":"x","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})
+        )
+      end
     end)
 
     Bypass.expect(
@@ -275,7 +293,7 @@ defmodule Claudio.TelemetryTest do
 
     client =
       Claudio.Client.new(
-        %{token: secret, version: "2023-06-01"},
+        Map.merge(%{token: secret, version: "2023-06-01"}, client_opts),
         "http://localhost:#{bypass.port}/"
       )
 
@@ -289,6 +307,11 @@ defmodule Claudio.TelemetryTest do
     assert {:ok, _} = Claudio.Messages.count_tokens(client, payload)
     assert {:ok, _} = Claudio.Models.list(client)
 
+    assert {:ok, %Req.Response{} = resp} =
+             Claudio.Messages.create(client, Map.put(payload, "stream", true))
+
+    resp |> Claudio.Messages.Stream.parse_events() |> Stream.run()
+
     received =
       Stream.repeatedly(fn ->
         receive do
@@ -299,12 +322,56 @@ defmodule Claudio.TelemetryTest do
       end)
       |> Enum.take_while(&(&1 != :done))
 
-    assert length(received) >= 8
+    names = for {:telemetry, event, _, _} <- received, do: event
+    assert length(names) >= 14
+    assert [:claudio, :messages, :stream, :stop] in names
 
     for {:telemetry, event, measurements, metadata} <- received do
       refute inspect({measurements, metadata}, limit: :infinity, printable_limit: :infinity) =~
                secret,
-             "#{inspect(event)} leaked the API key"
+             "#{inspect(event)} leaked the credential"
+
+      # Req's inspect redacts `authorization`, so also walk the values themselves.
+      for value <- [measurements, metadata] do
+        assert_clean(value, secret, event)
+      end
     end
   end
+
+  defp sse_body do
+    Enum.map_join(
+      [
+        {"message_start",
+         ~s({"type":"message_start","message":{"id":"m","model":"x","content":[],"usage":{"input_tokens":1,"output_tokens":1}}})},
+        {"message_delta",
+         ~s({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}})},
+        {"message_stop", ~s({"type":"message_stop"})}
+      ],
+      fn {event, data} -> "event: #{event}\ndata: #{data}\n\n" end
+    )
+  end
+
+  defp assert_clean(%struct{}, _secret, event) when struct in [Req.Request, Req.Response],
+    do: flunk("#{inspect(event)} carries a #{inspect(struct)}")
+
+  defp assert_clean(%_{} = struct, secret, event),
+    do: assert_clean(Map.from_struct(struct), secret, event)
+
+  defp assert_clean(%{} = map, secret, event) do
+    for {key, value} <- map do
+      assert_clean(key, secret, event)
+      assert_clean(value, secret, event)
+    end
+  end
+
+  defp assert_clean(list, secret, event) when is_list(list),
+    do: Enum.each(list, &assert_clean(&1, secret, event))
+
+  defp assert_clean(tuple, secret, event) when is_tuple(tuple),
+    do: assert_clean(Tuple.to_list(tuple), secret, event)
+
+  defp assert_clean(binary, secret, event) when is_binary(binary),
+    do: refute(binary =~ secret, "#{inspect(event)} leaked the credential")
+
+  defp assert_clean(_other, _secret, _event), do: :ok
 end
