@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Claudio.Client.new/2` accepts `:timeout`, `:recv_timeout` and `:retry` per client.
   A per-client value wins over `config :claudio, Claudio.Client`, which remains the
   fallback, so one application can run clients with different retry behaviour.
+- **Managed Agents foundation** (beta `managed-agents-2026-04-01`, attached per request):
+  `Claudio.ManagedAgents.Agents` (create / get incl. `version:` / update / list / archive /
+  list_versions), `Claudio.ManagedAgents.Environments` (create / get / update / list / archive /
+  delete), `Claudio.ManagedAgents.Sessions` (create / get / update / list / archive / delete,
+  `send_events/3`, `list_events/3`, session resources). List options encode the API's bracketed
+  filters (`statuses: [...]` → `statuses[]=…`, `created_at: [gte: dt]` → `created_at[gte]=…`).
+  `Claudio.ManagedAgents.stream/2` walks cursor-paged lists lazily. Raw-map returns, like
+  `Claudio.Skills`.
 
 ### Changed
 

@@ -371,6 +371,33 @@ request =
 IO.puts(Response.get_text(final_response))
 ```
 
+### Managed Agents (beta)
+
+Server-hosted agents that run in Anthropic's sandbox. Claudio attaches the
+`managed-agents-2026-04-01` beta per request.
+
+```elixir
+alias Claudio.ManagedAgents.{Agents, Environments, Sessions}
+
+{:ok, agent} = Agents.create(client, %{name: "researcher", model: "claude-opus-5-5",
+                                       tools: [%{type: "agent_toolset_20260401"}]})
+{:ok, env} = Environments.create(client, %{name: "default",
+                                           config: %{type: "cloud", networking: %{type: "unrestricted"}}})
+{:ok, session} = Sessions.create(client, %{agent: agent["id"], environment_id: env["id"]})
+
+{:ok, _} = Sessions.send_events(client, session["id"], [
+  %{type: "user.message", content: [%{type: "text", text: "List the files in the repo."}]}
+])
+
+{:ok, %{"data" => events}} = Sessions.list_events(client, session["id"])
+
+# Every page, lazily:
+Claudio.ManagedAgents.stream(fn opts -> Sessions.list(client, opts) end, statuses: ["idle"])
+|> Enum.map(& &1["id"])
+```
+
+A typed event stream and a run loop for custom tools and confirmations are planned next.
+
 ### MCP (Model Context Protocol)
 
 Connect Claude to any MCP server:
