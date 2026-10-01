@@ -274,3 +274,14 @@ All handlers forward only events emitted by the test process (or filter on a uni
 | `:telemetry ~> 1.3` forces some apps to update. | CHANGELOG callout; telemetry's CHANGELOG lists only additions for 1.3.0 (extra span measurements), no removals. |
 | Semconv attribute names change (Development status). | Names live only in the guide's example, not in code (D3). |
 | Per-attempt HTTP events add overhead to every request. | Two `:telemetry.execute` calls per attempt; no-ops without handlers. |
+
+## Amendments from planning (2026-10-01)
+
+Found while writing the implementation plan against the code; each replaces the conflicting text above.
+
+| # | Change | Why |
+|---|--------|-----|
+| A1 | `[:claudio, :http, :request]` has **no `:exception`** event — only `:start` / `:stop`. | A Req step cannot catch a raise in another step or the adapter. A raise during a Messages call still surfaces as the `create` / `count_tokens` span's `:exception`. |
+| A2 | A stream that ends without `message_stop` (and wasn't halted by the consumer), including an empty body, stops with `reason: :error`, `error_type: :incomplete_stream`. Add `:incomplete_stream` to the `error_type` table. | The spec covered halt, error, parse error and empty body but not truncation; `Stream.transform/5`'s last fun distinguishes it from a consumer halt. |
+| A3 | Legacy `create_message/2` builds its stop metadata via `Response.from_map/1`, so its `response_model` is `Response.served_by/1` (equal to the body's `model` unless a `fallback` block is present). | Same value as `create/2`, no second parser. |
+| A4 | `Claudio.Telemetry.usage/1` returns one map (the token keys), used as both measurements and metadata, instead of a `{measurements, metadata}` tuple. | The two were always identical. |
