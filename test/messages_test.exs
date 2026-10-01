@@ -1210,6 +1210,77 @@ defmodule Claudio.MessagesTest do
       assert stop.request_id == "req_test_1"
     end
 
+    test "a 200 without input_tokens reports no :input_tokens", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@count)
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", &json_resp(&1, 200, %{}))
+
+      assert {:ok, %{}} =
+               Claudio.Messages.count_tokens(client, %{"model" => "m", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], measurements, stop}
+      assert stop.status == :ok
+      refute Map.has_key?(stop, :input_tokens)
+      refute Map.has_key?(measurements, :input_tokens)
+    end
+
+    test "a transport error is an error stop with a nil status_code", %{bypass: bypass} do
+      attach(@count)
+      Bypass.down(bypass)
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01", retry: false},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      assert {:error, %Req.TransportError{}} =
+               Claudio.Messages.count_tokens(client, %{"model" => "m", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], _, stop}
+      assert stop.status == :error
+      assert stop.error_type == :econnrefused
+      assert Map.has_key?(stop, :status_code)
+      assert stop.status_code == nil
+    end
+
+    test "a %Request{} input fires the span with its model", %{client: client, bypass: bypass} do
+      attach(@count)
+
+      Bypass.expect_once(
+        bypass,
+        "POST",
+        "/messages/count_tokens",
+        &json_resp(&1, 200, %{"input_tokens" => 3})
+      )
+
+      request = Request.new("claude-count-struct") |> Request.add_message(:user, "hi")
+      assert {:ok, %{"input_tokens" => 3}} = Claudio.Messages.count_tokens(client, request)
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :start], _, start}
+      assert start.model == "claude-count-struct"
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], _, %{status: :ok}}
+    end
+
+    test "an atom-keyed payload map reports model", %{client: client, bypass: bypass} do
+      attach(@count)
+
+      Bypass.expect_once(
+        bypass,
+        "POST",
+        "/messages/count_tokens",
+        &json_resp(&1, 200, %{"input_tokens" => 3})
+      )
+
+      assert {:ok, _} =
+               Claudio.Messages.count_tokens(client, %{model: "claude-count-atom", messages: []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :start], _, start}
+      assert start.model == "claude-count-atom"
+    end
+
     test "an API error carries error_type and status_code", %{client: client, bypass: bypass} do
       attach(@count)
 
