@@ -128,6 +128,12 @@ defmodule Claudio.MixProject do
         "Skills API": [
           Claudio.Skills
         ],
+        "Managed Agents (beta)": [
+          Claudio.ManagedAgents,
+          Claudio.ManagedAgents.Agents,
+          Claudio.ManagedAgents.Environments,
+          Claudio.ManagedAgents.Sessions
+        ],
         Tools: [
           Claudio.Tools
         ],

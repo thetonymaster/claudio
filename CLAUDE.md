@@ -217,6 +217,14 @@ Agent-to-Agent protocol support for discovering and interacting with remote agen
   - `get_task/3`, `list_tasks/2`, `cancel_task/3`: Task management
   - Bearer token auth support, timeout passthrough
 
+### Managed Agents (lib/claudio/managed_agents/) — beta
+Server-hosted agents (`managed-agents-2026-04-01`, merged into the client's betas per request by the private `Claudio.ManagedAgents.HTTP`). Raw-map returns (`{:ok, map()}` / `{:error, APIError}`), no local body validation. Roadmap: `docs/superpowers/specs/2026-09-30-managed-agents-roadmap.md` (MA1 shipped; MA2 run loop + `Claudio.Agent` deprecation, MA3 deployments/vaults/memory stores/threads, MA4 dreams/work queue/webhooks; 0.8.0 after MA4).
+- `Agents`: create, get (`version:`), update (body `version` = optimistic check, stale → 409), list, archive (no delete), list_versions
+- `Environments`: create, get, update, list, archive, delete (only when unreferenced)
+- `Sessions`: CRUD + archive/delete (not while `running`), `send_events/3` (list of event maps), `list_events/3`, resources (mid-session add accepts only `file`, which needs the agent toolset's `read`; update = GitHub token rotation). `update/3` emits a persisted `session.updated` event
+- List options: list → `key[]`, keyword → `key[sub]`, `DateTime` → ISO 8601; `nil` / `[]` / maps raise. Ids are escaped as one path segment. `Claudio.ManagedAgents.stream/2` pages lazily (stops on absent or nil `next_page`, raises on errors)
+- Tests: `test/managed_agents/` (Bypass, shared helpers in `managed_agents_helper.exs`), live flow in `test/integration/managed_agents_integration_test.exs` (no model call)
+
 ### Message Batches API (lib/claudio/batches.ex)
 The `Claudio.Batches` module handles asynchronous batch processing:
 - `create/2`: Submit up to 100,000 requests in a single batch
@@ -310,6 +318,8 @@ lib/
     ├── batches.ex             # Batches API
     ├── client.ex              # HTTP client setup
     ├── files.ex               # Files API
+    ├── managed_agents.ex      # Managed Agents overview + stream/2
+    ├── managed_agents/        # http (private), agents, environments, sessions
     ├── mcp/                   # server_config, client behaviour, tool_adapter, result_mapper, adapters/{hermes_mcp,ex_mcp,mcp_ex}
     ├── messages.ex            # Main Messages API
     ├── messages/              # request.ex (builder), response.ex (parser), stream.ex (SSE)
