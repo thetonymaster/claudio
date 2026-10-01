@@ -126,7 +126,7 @@ defmodule Claudio.Messages do
   Returns either a `Response` struct or raw stream data for streaming requests.
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
-  See the telemetry guide.
+  See the [telemetry guide](telemetry.html).
 
   ## Examples
 
@@ -168,7 +168,7 @@ defmodule Claudio.Messages do
   For new code, consider using `create/2` instead.
 
   Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
-  See the telemetry guide.
+  See the [telemetry guide](telemetry.html).
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
@@ -197,7 +197,7 @@ defmodule Claudio.Messages do
   Counts tokens for a message request.
 
   Emits the `[:claudio, :messages, :count_tokens]` span (and, per attempt, `[:claudio, :http, :request]`).
-  See the telemetry guide.
+  See the [telemetry guide](telemetry.html).
 
   ## Example
 
@@ -230,15 +230,21 @@ defmodule Claudio.Messages do
           count_tokens_ok(body, resp)
 
         {:ok, %Req.Response{status: status, body: body} = resp} ->
-          error_stop({:error, APIError.from_response(status, body)}, resp)
+          count_tokens_error_stop({:error, APIError.from_response(status, body)}, resp)
 
         {:error, reason} ->
-          error_stop({:error, reason}, nil)
+          count_tokens_error_stop({:error, reason}, nil)
       end
     end)
   end
 
   # Private functions
+
+  # No `error` string here: it is deprecated on create :stop and can carry the API's error body.
+  defp count_tokens_error_stop(result, resp) do
+    {result, measurements, metadata} = error_stop(result, resp)
+    {result, measurements, Map.delete(metadata, :error)}
+  end
 
   defp create_streaming(client, payload) do
     span([:claudio, :messages, :create], client, payload, create_start(payload, true), fn ctx ->

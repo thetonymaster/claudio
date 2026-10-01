@@ -884,6 +884,9 @@ defmodule Claudio.MessagesTest do
       assert start.temperature == 0.5
       assert start.server_address == "localhost"
       assert is_reference(start.telemetry_span_context)
+      refute Map.has_key?(start, :top_p)
+      refute Map.has_key?(start, :top_k)
+      refute Map.has_key?(start, :effort)
 
       assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements, stop}
       assert stop.telemetry_span_context == start.telemetry_span_context

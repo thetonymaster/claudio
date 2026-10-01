@@ -101,7 +101,7 @@ defmodule Claudio.Telemetry do
 
     metadata = %{
       method: request.method,
-      url: URI.to_string(%{request.url | query: nil}),
+      url: URI.to_string(%{request.url | query: nil, userinfo: nil, fragment: nil}),
       attempt: Req.Request.get_private(request, :req_retry_count, 0),
       telemetry_span_context: make_ref()
     }

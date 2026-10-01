@@ -210,6 +210,23 @@ defmodule Claudio.TelemetryTest do
       refute Map.has_key?(stop, :error_type)
     end
 
+    test "url drops userinfo, query and fragment", %{bypass: bypass} do
+      attach(@http)
+      Bypass.expect_once(bypass, "GET", "/models", &Plug.Conn.resp(&1, 200, ~s({"data":[]})))
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://user:pass@localhost:#{bypass.port}/"
+        )
+
+      assert {:ok, _} = Claudio.Models.list(client, limit: 5)
+      assert [{:start, _, start}, {:stop, _, _}] = collect(2)
+      assert start.url == "http://localhost:#{bypass.port}/models"
+      refute start.url =~ "user"
+      refute start.url =~ "pass"
+    end
+
     test "a transport error is a :stop with error_type and nil status_code", %{bypass: bypass} do
       attach(@http)
       Bypass.down(bypass)
@@ -246,6 +263,58 @@ defmodule Claudio.TelemetryTest do
 
     test "with a bearer client" do
       assert_no_secret(%{auth_type: :bearer})
+    end
+  end
+
+  describe "error paths" do
+    test "the API error body reaches only create :stop's deprecated `error`" do
+      bypass = Bypass.open()
+      secret = "BODY-SECRET-#{System.unique_integer([:positive])}"
+
+      attach([
+        [:claudio, :messages, :create, :stop],
+        [:claudio, :messages, :count_tokens, :stop],
+        [:claudio, :http, :request, :stop]
+      ])
+
+      error_body =
+        ~s({"type":"error","error":{"type":"invalid_request_error","message":"#{secret}"}})
+
+      for path <- ["/messages", "/messages/count_tokens"] do
+        Bypass.expect_once(bypass, "POST", path, fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(400, error_body)
+        end)
+      end
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      payload = %{
+        "model" => "x",
+        "max_tokens" => 8,
+        "messages" => [%{"role" => "user", "content" => "hi"}]
+      }
+
+      assert {:error, _} = Claudio.Messages.create(client, payload)
+      assert {:error, _} = Claudio.Messages.count_tokens(client, payload)
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, create_stop}
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], _, count_stop}
+      assert_receive {:telemetry, [:claudio, :http, :request, :stop], _, http_stop}
+      assert_receive {:telemetry, [:claudio, :http, :request, :stop], _, _}
+
+      assert create_stop.error =~ secret
+      assert create_stop.error_type == :invalid_request_error
+      assert_clean(Map.delete(create_stop, :error), secret, :create)
+      refute Map.has_key?(count_stop, :error)
+      assert count_stop.error_type == :invalid_request_error
+      assert_clean(count_stop, secret, :count_tokens)
+      assert_clean(http_stop, secret, :http)
     end
   end
 
