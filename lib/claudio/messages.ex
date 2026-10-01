@@ -215,16 +215,18 @@ defmodule Claudio.Messages do
   def count_tokens(client, payload) when is_map(payload) do
     payload = Map.drop(payload, @not_counted ++ Enum.map(@not_counted, &String.to_atom/1))
 
-    case Req.post(client, url: "messages/count_tokens", json: payload) do
-      {:ok, %Req.Response{status: 200, body: body}} ->
-        {:ok, body}
+    span([:claudio, :messages, :count_tokens], client, payload, %{}, fn _ctx ->
+      case Req.post(client, url: "messages/count_tokens", json: payload) do
+        {:ok, %Req.Response{status: 200, body: body} = resp} ->
+          count_tokens_ok(body, resp)
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, APIError.from_response(status, body)}
+        {:ok, %Req.Response{status: status, body: body} = resp} ->
+          error_stop({:error, APIError.from_response(status, body)}, resp)
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+        {:error, reason} ->
+          error_stop({:error, reason}, nil)
+      end
+    end)
   end
 
   # Private functions
@@ -328,6 +330,16 @@ defmodule Claudio.Messages do
   end
 
   defp payload_model(payload), do: payload["model"] || payload[:model]
+
+  defp count_tokens_ok(body, resp) do
+    tokens =
+      case body do
+        %{"input_tokens" => n} when is_integer(n) -> %{input_tokens: n}
+        _ -> %{}
+      end
+
+    {{:ok, body}, tokens, tokens |> Map.put(:status, :ok) |> put_request_id(resp)}
+  end
 
   defp create_non_streaming(client, payload) do
     span([:claudio, :messages, :create], client, payload, create_start(payload, false), fn _ctx ->

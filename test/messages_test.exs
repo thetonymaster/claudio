@@ -1134,4 +1134,61 @@ defmodule Claudio.MessagesTest do
       assert stop.request_id == "req_test_1"
     end
   end
+
+  describe "count_tokens span" do
+    @count [
+      [:claudio, :messages, :count_tokens, :start],
+      [:claudio, :messages, :count_tokens, :stop]
+    ]
+
+    test "success reports input_tokens as measurement and metadata", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@count)
+
+      Bypass.expect_once(
+        bypass,
+        "POST",
+        "/messages/count_tokens",
+        &json_resp(&1, 200, %{"input_tokens" => 42})
+      )
+
+      assert {:ok, %{"input_tokens" => 42}} =
+               Claudio.Messages.count_tokens(client, %{
+                 "model" => "claude-count",
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :start], _, start}
+      assert start.model == "claude-count"
+      assert start.server_address == "localhost"
+      refute Map.has_key?(start, :stream)
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], measurements, stop}
+      assert stop.status == :ok
+      assert stop.input_tokens == 42
+      assert measurements.input_tokens == 42
+      assert stop.request_id == "req_test_1"
+    end
+
+    test "an API error carries error_type and status_code", %{client: client, bypass: bypass} do
+      attach(@count)
+
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
+        json_resp(conn, 400, %{
+          "type" => "error",
+          "error" => %{"type" => "invalid_request_error", "message" => "bad"}
+        })
+      end)
+
+      assert {:error, %Claudio.APIError{}} =
+               Claudio.Messages.count_tokens(client, %{"model" => "m", "messages" => []})
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :stop], _, stop}
+      assert stop.status == :error
+      assert stop.error_type == :invalid_request_error
+      assert stop.status_code == 400
+    end
+  end
 end
