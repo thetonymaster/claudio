@@ -80,5 +80,59 @@ defmodule Claudio.Telemetry do
   def put_present(map, _key, nil), do: map
   def put_present(map, key, value), do: Map.put(map, key, value)
 
+  @doc false
+  # Per-attempt [:claudio, :http, :request] :start/:stop events. The request step is appended
+  # (it runs right before the adapter, after :put_base_url); the response/error steps are
+  # prepended so they run before Req's :retry step, which runs the next attempt inside itself.
+  @spec attach_http(Req.Request.t()) :: Req.Request.t()
+  def attach_http(%Req.Request{} = request) do
+    request
+    |> Req.Request.append_request_steps(claudio_telemetry: &http_start/1)
+    |> Req.Request.prepend_response_steps(claudio_telemetry: &http_stop/1)
+    |> Req.Request.prepend_error_steps(claudio_telemetry: &http_stop/1)
+  end
+
+  defp http_start(%Req.Request{} = request) do
+    start = System.monotonic_time()
+
+    metadata = %{
+      method: request.method,
+      url: URI.to_string(%{request.url | query: nil}),
+      attempt: Req.Request.get_private(request, :req_retry_count, 0),
+      telemetry_span_context: make_ref()
+    }
+
+    :telemetry.execute(
+      [:claudio, :http, :request, :start],
+      %{monotonic_time: start, system_time: System.system_time()},
+      metadata
+    )
+
+    Req.Request.put_private(request, :claudio_http, {start, metadata})
+  end
+
+  defp http_stop({request, response_or_exception}) do
+    case Req.Request.get_private(request, :claudio_http) do
+      {start, metadata} ->
+        stop = System.monotonic_time()
+
+        :telemetry.execute(
+          [:claudio, :http, :request, :stop],
+          %{duration: stop - start, monotonic_time: stop},
+          Map.merge(metadata, http_result(response_or_exception))
+        )
+
+      nil ->
+        :ok
+    end
+
+    {request, response_or_exception}
+  end
+
+  defp http_result(%Req.Response{status: status} = response),
+    do: put_present(%{status_code: status}, :request_id, request_id(response))
+
+  defp http_result(exception), do: %{status_code: nil, error_type: error_type(exception)}
+
   defp get(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 end

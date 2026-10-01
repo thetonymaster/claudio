@@ -4,7 +4,7 @@ defmodule Claudio.MessagesTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
-  import Claudio.TelemetryTestSupport, only: [attach: 1, attach: 2]
+  import Claudio.TelemetryTestSupport, only: [attach: 1]
 
   setup do
     # Create a client with Req.Test adapter for testing

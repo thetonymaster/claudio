@@ -210,7 +210,9 @@ defmodule Claudio.Client do
         finch -> [{:finch, finch} | Keyword.delete(opts, :connect_options)]
       end
 
-    Req.new(opts ++ req_retry_options(retry_opts))
+    (opts ++ req_retry_options(retry_opts))
+    |> Req.new()
+    |> Claudio.Telemetry.attach_http()
   end
 
   # Maps the documented `retry:` config onto Req's retry step. Req's own default only
