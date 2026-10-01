@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[:claudio, :messages, :create]` gains request params (`max_tokens`, `temperature`, `top_p`,
   `top_k`, `effort`), `server_address`, response fields (`response_id`, `response_model` — the
   fallback model when one served — `stop_reason`, `request_id`), a bounded `error_type` (never
-  `nil` on an error stop; `:unknown` when unclassified) and `status_code`, and token counts as **measurements** (still also metadata).
+  `nil` on an error stop; `:unknown` when unclassified) and `status_code`, and token counts as
+  **measurements** (still also metadata).
   New `[:claudio, :messages, :count_tokens]` span; new `[:claudio, :messages, :stream, :start | :stop]`
   around each stream consumption (full duration, tokens, exactly one `:stop`), linked to the
   `create` span when `parse_events/1` is given the whole response; new per-attempt

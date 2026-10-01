@@ -24,8 +24,10 @@ Guarantees:
 | Event | Measurements | Metadata |
 |---|---|---|
 | `:start` | `monotonic_time`, `system_time` | `model` (requested; `nil` if the payload has none), `stream`, `telemetry_span_context`. When set: `max_tokens`, `temperature`, `top_p`, `top_k`, `effort` (`output_config.effort`). `server_address` (host of the client's `base_url`). |
-| `:stop` | `duration`, `monotonic_time`. Token measurements `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `thinking_tokens` appear only when the response carried usage (non-streaming success). | The `:start` keys plus `status` (`:ok` / `:error`) and the same token keys as metadata. On success: `response_id`, `response_model` (the model that served the response; the fallback model if a `fallback` block is present), `stop_reason` (atom), `request_id` (from the `request-id` header). On error: `error` (an `inspect` string, kept for compatibility), `error_type`, `status_code`, and `request_id` when the response had one. |
+| `:stop` | `duration`, `monotonic_time`. Token measurements `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `thinking_tokens` appear only when the response carried usage (non-streaming success). | The `:start` keys plus `status` (`:ok` / `:error`) and the same token keys as metadata. On success: `response_id`, `response_model` (the model that served the response; the fallback model if a `fallback` block is present), `stop_reason` (see below), `request_id` (from the `request-id` header). On error: `error` (an `inspect` string, kept for compatibility), `error_type`, `status_code`, and `request_id` when the response had one. |
 | `:exception` | `duration`, `monotonic_time` | The `:start` keys plus `kind`, `reason`, `stacktrace` (telemetry's own). |
+
+`stop_reason` is an atom for the values Claudio knows (`:end_turn`, `:max_tokens`, `:tool_use`, ...). A value the API adds later is passed through as a string: Claudio never creates atoms from API input. Handle both, for example with `to_string/1`, as the OpenTelemetry example below does. The same applies to the stream `:stop`.
 
 For streaming calls the `:stop` event fires when the response headers arrive, so it has no token keys, `response_id`, `response_model` or `stop_reason`; read those from the stream events below.
 
@@ -145,12 +147,27 @@ defmodule MyApp.ClaudioOtel do
     OpenTelemetry.Span.end_span(span)
   end
 
+  # A raise during a streaming create (no span was started for it) is recorded the same way.
+  def handle_event([:claudio, :messages, :create, :exception], %{duration: duration}, %{stream: true} = meta, _config) do
+    span =
+      Tracer.start_span("chat #{meta[:model]}", %{
+        kind: :client,
+        start_time: :opentelemetry.timestamp() - duration,
+        attributes: start_attributes(meta)
+      })
+
+    OpenTelemetry.Span.record_exception(span, meta.reason, meta.stacktrace, [])
+    OpenTelemetry.Span.set_status(span, OpenTelemetry.status(:error, inspect(meta.kind)))
+    OpenTelemetry.Span.end_span(span)
+  end
+
   def handle_event([:claudio, :messages, :create, _phase], _measurements, %{stream: true}, _config), do: :ok
 
-  def handle_event([:claudio, :messages, _kind, :start], _measurements, meta, _config) do
+  # Stream events carry no `stream` key; every stream span is a streaming request.
+  def handle_event([:claudio, :messages, kind, :start], _measurements, meta, _config) do
     OpentelemetryTelemetry.start_telemetry_span(@tracer_id, "chat #{meta[:model]}", meta, %{
       kind: :client,
-      attributes: start_attributes(meta)
+      attributes: start_attributes(Map.put_new(meta, :stream, kind == :stream))
     })
   end
 
@@ -177,6 +194,8 @@ defmodule MyApp.ClaudioOtel do
       "gen_ai.request.temperature" => meta[:temperature],
       "gen_ai.request.top_p" => meta[:top_p],
       "gen_ai.request.top_k" => meta[:top_k],
+      # Set if and only if the request is streaming.
+      "gen_ai.request.stream" => if(meta[:stream] == true, do: true),
       "server.address" => meta[:server_address]
     })
   end
@@ -204,6 +223,8 @@ defmodule MyApp.ClaudioOtel do
 end
 ```
 
-The handler skips the `create` span of a streaming call, except a failed one (recorded as an error span as above); a `:exception` on a streaming `create` is also skipped, as no span was started for it.
+The handler skips the `create` span of a streaming call, except when it fails. A failed streaming `create` (a `:stop` with `status: :error`, or a `:exception`) is recorded as one error span, back-dated by the event's `duration`; for a `:exception` the span also records the exception. That span is started after the call has returned, so its parent is whatever OpenTelemetry context is current in the calling process: a root span unless the caller has a span open. That is expected, and it nests under the caller's span when there is one.
+
+`gen_ai.request.stream` is set (to `true`) only for streaming requests, as the conventions require; it is absent otherwise.
 
 HTTP client spans come from `OpentelemetryReq.attach(client, propagate_trace_headers: true)` on the client returned by `Claudio.Client.new/2`; Claudio's `[:claudio, :http, :request]` events are for metrics and logs. Finch's streaming path (`into: :self`) runs the request in a linked process, so check that HTTP spans and trace headers appear for streaming calls in your setup.
