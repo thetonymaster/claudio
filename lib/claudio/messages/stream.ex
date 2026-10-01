@@ -2,10 +2,8 @@ defmodule Claudio.Messages.Stream do
   @moduledoc """
   Utilities for parsing and consuming Server-Sent Events (SSE) from streaming Messages API responses.
 
-  Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
-  when `parse_events/1` reaches the terminal `message_stop` event; the usage is
-  `message_start`'s merged with the `message_delta` frames (delta wins). Metadata carries `:input_tokens`,
-  `:output_tokens`, the cache counters and `:thinking_tokens` when present.
+  `parse_events/1` emits `[:claudio, :messages, :stream, :start | :stop]` around each consumption
+  (and the older `[:claudio, :messages, :stream, :usage]`); see the telemetry guide.
 
   ## Event Types
 
@@ -25,7 +23,7 @@ defmodule Claudio.Messages.Stream do
       {:ok, response} =
         Claudio.Messages.create(client, Claudio.Messages.Request.enable_streaming(request))
 
-      response.body
+      response
       |> Claudio.Messages.Stream.parse_events()
       |> Stream.filter(&match?({:ok, %{event: "content_block_delta"}}, &1))
       |> Enum.each(fn {:ok, event} ->

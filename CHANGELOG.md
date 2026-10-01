@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Telemetry for OpenTelemetry/GenAI dashboards** (see `guides/telemetry.md`):
+  `[:claudio, :messages, :create]` gains request params (`max_tokens`, `temperature`, `top_p`,
+  `top_k`, `effort`), `server_address`, response fields (`response_id`, `response_model` — the
+  fallback model when one served — `stop_reason`, `request_id`), a bounded `error_type` and
+  `status_code`, and token counts as **measurements** (still also metadata).
+  New `[:claudio, :messages, :count_tokens]` span; new `[:claudio, :messages, :stream, :start | :stop]`
+  around each stream consumption (full duration, tokens, exactly one `:stop`), linked to the
+  `create` span when `parse_events/1` is given the whole response; new per-attempt
+  `[:claudio, :http, :request, :start | :stop]` for every endpoint (retries visible as `attempt`).
+  No event carries headers, bodies, the API key or message content.
+
 - `Claudio.Client.new/2` accepts `:timeout`, `:recv_timeout` and `:retry` per client.
   A per-client value wins over `config :claudio, Claudio.Client`, which remains the
   fallback, so one application can run clients with different retry behaviour.
@@ -23,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Legacy `Claudio.Messages.create_message/2` now emits the `[:claudio, :messages, :create]` span.
+- `Claudio.Messages.Stream.parse_events/1` also accepts the whole `%Req.Response{}`.
+- **The `:telemetry` requirement is now `~> 1.3`** (was `~> 1.0`): span stop measurements need
+  1.3. Applications locked to an older `:telemetry` will be asked to update it.
 - An invalid `retry` value (anything but `true`, `false` or a keyword list) or an unknown
   retry key now raises `ArgumentError`, for per-client and app config alike. Previously
   it was silently ignored and Req's default (GET/HEAD-only retries) applied.
@@ -430,6 +445,8 @@ backward-compatible — no breaking changes.
   - Extensible transport layer using the Strategy pattern
 - **Cloud Observability & Telemetry**
   - Emits `:telemetry` events for all LLM API calls (`[:claudio, :request, :start | :stop | :exception]`)
+    - *Correction (2026-10-01):* `[:claudio, :request, ...]` never shipped; 0.2.0 emitted
+      `[:claudio, :messages, :create]`. See the telemetry guide for the current events.
   - Track request duration, token usage, and error reasons
   - Support for custom Finch connection pools to manage concurrency
 - **Issue Tracking with Beads**

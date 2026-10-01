@@ -271,6 +271,15 @@ The `Claudio.APIError` exception provides structured error handling:
 - Includes status code, error message, and raw response body
 - Used consistently across all API modules
 
+### Telemetry (lib/claudio/telemetry.ex)
+- `[:claudio, :messages, :create]` — span for `create/2` and legacy `create_message/2` (request params, response fields, `error_type`, token measurements)
+- `[:claudio, :messages, :count_tokens]` — span for `count_tokens/2`
+- `[:claudio, :messages, :stream, :start | :stop]` — per consumption in `parse_events/1` (exactly one `:stop`; linked to `create` when given the whole response)
+- `[:claudio, :messages, :stream, :usage]` — older single event at `message_stop`, kept
+- `[:claudio, :http, :request, :start | :stop]` — per attempt, every `Client.new/2` client
+
+Mappings live in the private `Claudio.Telemetry`; the contract is `guides/telemetry.md`.
+
 ### Testing Strategy
 - Uses Bypass for mocking HTTP calls
 - Tests use `async: true` for parallel execution where possible

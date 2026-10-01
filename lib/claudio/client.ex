@@ -112,7 +112,8 @@ defmodule Claudio.Client do
 
   ## Returns
 
-  Returns a `Req.Request` struct configured for Anthropic API calls.
+  Returns a `Req.Request` struct configured for Anthropic API calls. Requests made with it emit
+  `[:claudio, :http, :request, :start | :stop]` per attempt. See the telemetry guide.
 
   ## Examples
 

@@ -44,7 +44,7 @@ defmodule Claudio.Messages do
       {:ok, stream_response} = Claudio.Messages.create(client, request)
 
       # Parse and accumulate text
-      text = stream_response.body
+      text = stream_response
       |> Claudio.Messages.Stream.parse_events()
       |> Claudio.Messages.Stream.accumulate_text()
 
@@ -125,6 +125,9 @@ defmodule Claudio.Messages do
   Accepts either a `Request` struct or a raw map (for backward compatibility).
   Returns either a `Response` struct or raw stream data for streaming requests.
 
+  Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
+  See the telemetry guide.
+
   ## Examples
 
       # Using Request builder
@@ -163,6 +166,9 @@ defmodule Claudio.Messages do
 
   This function maintains backward compatibility with the original implementation.
   For new code, consider using `create/2` instead.
+
+  Emits the `[:claudio, :messages, :create]` span (and, per attempt, `[:claudio, :http, :request]`).
+  See the telemetry guide.
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
@@ -189,6 +195,9 @@ defmodule Claudio.Messages do
 
   @doc """
   Counts tokens for a message request.
+
+  Emits the `[:claudio, :messages, :count_tokens]` span (and, per attempt, `[:claudio, :http, :request]`).
+  See the telemetry guide.
 
   ## Example
 

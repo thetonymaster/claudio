@@ -133,7 +133,7 @@ request =
 {:ok, stream_response} = Claudio.Messages.create(client, request)
 
 # Stream text in real-time
-stream_response.body
+stream_response
 |> Stream.parse_events()
 |> Stream.accumulate_text()
 |> Enum.each(&IO.write/1)
@@ -441,29 +441,25 @@ message = Message.new(:user, [Part.text("Analyze this dataset")])
 
 ### Telemetry & Monitoring
 
-Claudio emits `:telemetry` spans for message calls — `[:claudio, :messages, :create, :start | :stop | :exception]` —
-and `[:claudio, :messages, :stream, :usage]` when a stream finishes:
+Claudio emits `:telemetry` events under five prefixes: `[:claudio, :messages, :create]`,
+`[:claudio, :messages, :count_tokens]`, `[:claudio, :messages, :stream]`,
+`[:claudio, :messages, :stream, :usage]` and `[:claudio, :http, :request]`.
 
 ```elixir
-require Logger
-
 defmodule MyApp.ClaudioTelemetry do
   require Logger
 
   def handle([:claudio, :messages, :create, :stop], measurements, metadata, _config) do
     ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
-    Logger.info("#{metadata.model} #{metadata.status} in #{ms}ms, " <>
-      "tokens in/out: #{metadata[:input_tokens]}/#{metadata[:output_tokens]}")
+    Logger.info("#{metadata.model} -> #{metadata[:response_model]} #{metadata.status} in #{ms}ms")
   end
 end
 
-:telemetry.attach(
-  "claudio-monitoring",
-  [:claudio, :messages, :create, :stop],
-  &MyApp.ClaudioTelemetry.handle/4,
-  nil
-)
+:telemetry.attach("claudio-monitoring", [:claudio, :messages, :create, :stop],
+  &MyApp.ClaudioTelemetry.handle/4, nil)
 ```
+
+See [the telemetry guide](guides/telemetry.md) for every event, metadata key and an OpenTelemetry example.
 
 ## Configuration
 
