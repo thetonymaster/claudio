@@ -1,4 +1,4 @@
-Code.require_file("support.exs", __DIR__)
+Code.require_file("managed_agents_helper.exs", __DIR__)
 
 defmodule Claudio.ManagedAgents.HTTPTest do
   use ExUnit.Case, async: true
