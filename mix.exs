@@ -14,8 +14,27 @@ defmodule Claudio.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
+      aliases: aliases(),
+      dialyzer: [plt_core_path: "_build/plts"],
       name: "Claudio",
       source_url: @source_url
+    ]
+  end
+
+  def cli do
+    [preferred_envs: [precommit: :test]]
+  end
+
+  defp aliases do
+    [
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --check-unused",
+        "format",
+        "credo --strict",
+        "dialyzer",
+        "test"
+      ]
     ]
   end
 
@@ -34,7 +53,9 @@ defmodule Claudio.MixProject do
       {:plug_cowboy, "~> 2.0", only: :test},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

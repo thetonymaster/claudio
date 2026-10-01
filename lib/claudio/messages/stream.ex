@@ -245,6 +245,7 @@ defmodule Claudio.Messages.Stream do
         |> Stream.build_final_message()
   """
   @spec build_final_message(Enumerable.t()) :: {:ok, map()} | {:error, term()}
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def build_final_message(event_stream) do
     # Open blocks are keyed by index (a delta or stop names its block), and closed blocks
     # are ordered by index, so interleaved blocks can't overwrite each other.

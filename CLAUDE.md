@@ -38,7 +38,16 @@ mix test test/messages_test.exs:22  # Run a specific test at line 22
 ```bash
 mix format            # Format code according to .formatter.exs
 mix format --check-formatted  # Check if files are formatted
+mix credo --strict    # Lint (config: .credo.exs)
+mix dialyzer          # Typespec check (PLTs under _build/plts; first run builds them)
+mix precommit         # compile --warnings-as-errors, unused deps, format, credo, dialyzer, test
 ```
+
+CI (`.github/workflows/ci.yml`) runs the test matrix, a `quality` job (credo, dialyzer,
+`docs --warnings-as-errors`, `hex.audit`, unused deps) and an `unlocked-deps` job that
+tests against the newest dependency versions `mix.exs` allows. Complexity/nesting
+exceptions are inline `credo:disable-for-next-line` comments — grep for them to find
+refactor candidates.
 
 ### Build
 ```bash

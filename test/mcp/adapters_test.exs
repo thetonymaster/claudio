@@ -30,6 +30,8 @@ defmodule Claudio.Test.FakeHermesBase do
   def ping(_pid, _opts), do: :pong
 
   # A bug inside the client module: must surface, not be reported as "library missing".
+  # Called via apply/3 so the undefined module is not a compile-time warning.
+  # credo:disable-for-next-line Credo.Check.Refactor.Apply
   def call_tool(_pid, _name, _args, _opts), do: apply(Claudio.Test.NoSuchModule, :boom, [])
 end
 

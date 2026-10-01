@@ -3,8 +3,8 @@ defmodule Claudio.Messages.Request.MCPTest do
 
   import ExUnit.CaptureLog
 
-  alias Claudio.Messages.Request
   alias Claudio.MCP.ServerConfig
+  alias Claudio.Messages.Request
 
   @beta "mcp-client-2025-11-20"
 

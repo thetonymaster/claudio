@@ -115,8 +115,8 @@ defmodule Claudio.Messages do
       end
   """
 
-  alias Claudio.Messages.{Request, Response}
   alias Claudio.APIError
+  alias Claudio.Messages.{Request, Response}
 
   @doc """
   Creates a message using the new structured API.
@@ -165,7 +165,7 @@ defmodule Claudio.Messages do
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
-  def create_message(client, payload = %{"stream" => true}) do
+  def create_message(client, %{"stream" => true} = payload) do
     case Req.post(client, url: "messages", json: payload, into: :self) do
       {:ok, %Req.Response{status: 200} = result} ->
         {:ok, result}

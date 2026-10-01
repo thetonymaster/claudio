@@ -39,6 +39,7 @@ defmodule Claudio.APIError do
     }
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def from_response(status_code, body) when is_map(body) do
     error_info =
       case body[:error] || body["error"] do

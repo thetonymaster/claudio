@@ -13,6 +13,9 @@ defmodule Claudio.Messages.Request do
       |> Request.to_map()
   """
 
+  alias Claudio.MCP.ServerConfig
+  alias Claudio.Messages.Response
+
   @type role :: :user | :assistant
   @type content :: String.t() | list(map())
 
@@ -819,13 +822,13 @@ defmodule Claudio.Messages.Request do
   def add_mcp_server(%__MODULE__{} = request, %Claudio.MCP.ServerConfig{} = server) do
     put_mcp_server(
       request,
-      Claudio.MCP.ServerConfig.to_map(server),
-      Claudio.MCP.ServerConfig.to_toolset(server)
+      ServerConfig.to_map(server),
+      ServerConfig.to_toolset(server)
     )
   end
 
   def add_mcp_server(%__MODULE__{} = request, server) when is_map(server) do
-    {server_map, toolset} = Claudio.MCP.ServerConfig.split_raw(server)
+    {server_map, toolset} = ServerConfig.split_raw(server)
     put_mcp_server(request, server_map, toolset)
   end
 
@@ -1068,7 +1071,7 @@ defmodule Claudio.Messages.Request do
   """
   @spec apply_compaction(t(), Claudio.Messages.Response.t()) :: t()
   def apply_compaction(%__MODULE__{} = request, %Claudio.Messages.Response{} = response) do
-    content = Claudio.Messages.Response.to_assistant_content(response)
+    content = Response.to_assistant_content(response)
 
     case last_compaction_index(content) do
       nil ->
@@ -1397,6 +1400,7 @@ defmodule Claudio.Messages.Request do
       |> Request.add_system_message("Answer in one word.", clear_at: :next_user_message)
   """
   @spec add_system_message(t(), String.t() | [map()], keyword()) :: t()
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def add_system_message(%__MODULE__{messages: messages} = request, content, opts \\ [])
       when is_binary(content) or is_list(content) do
     opts = Claudio.Options.validate!(opts, [:clear_at, :effort], "Request.add_system_message/3")
@@ -1851,7 +1855,7 @@ defmodule Claudio.Messages.Request do
 
         other ->
           raise ArgumentError,
-                "Request.add_computer_tool/4 :version must be :\"20250124\" or :\"20251124\"; " <>
+                ~s(Request.add_computer_tool/4 :version must be :"20250124" or :"20251124"; ) <>
                   "got #{inspect(other)} (use add_computer_toolset/2 for computer_toolset_20260801)"
       end
 
@@ -1976,7 +1980,7 @@ defmodule Claudio.Messages.Request do
   # when kept under :raw), never the typed map with nil fields the API rejects.
   # A cache_control the caller added to a typed block is kept (it is not a Response field).
   defp unwrap_typed(%{type: type} = block) when is_atom(type) and not is_nil(type) do
-    api_block = Claudio.Messages.Response.to_api_block(block)
+    api_block = Response.to_api_block(block)
 
     case Map.get(block, :cache_control) || Map.get(block, "cache_control") do
       nil -> api_block

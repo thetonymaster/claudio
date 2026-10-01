@@ -1,6 +1,7 @@
 defmodule Claudio.ToolsTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Response
   alias Claudio.Tools
 
   describe "define_tool/3" do
@@ -52,7 +53,7 @@ defmodule Claudio.ToolsTest do
       ]
 
       assert Tools.extract_tool_uses(raw) == expected
-      assert Tools.extract_tool_uses(Claudio.Messages.Response.from_map(raw)) == expected
+      assert Tools.extract_tool_uses(Response.from_map(raw)) == expected
     end
 
     test "skips tool_use blocks before the last fallback block (raw maps and Response)" do
@@ -65,7 +66,7 @@ defmodule Claudio.ToolsTest do
       }
 
       assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(raw)
-      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(Claudio.Messages.Response.from_map(raw))
+      assert [%{id: "toolu_2"}] = Tools.extract_tool_uses(Response.from_map(raw))
 
       atom_keyed = %{
         content: [%{type: "tool_use", id: "toolu_1", name: "x", input: %{}}, %{type: "fallback"}]

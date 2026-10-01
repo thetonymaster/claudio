@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `Claudio.Tools.tool_definition` and `tool_result` typespecs described atom-keyed maps;
+  `define_tool/3` and `create_tool_result/4` return string-keyed maps. The types now match
+  (documentation-only; no runtime change).
+
+### Internal
+
+- Added Credo (`--strict`) and Dialyxir, a `mix precommit` alias, and CI checks for
+  Credo, Dialyzer, `docs --warnings-as-errors`, `hex.audit`, and unlocked dependencies.
+
 ## [0.7.0] - 2026-09-26
 
 ### Fixed

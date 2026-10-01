@@ -22,7 +22,7 @@ defmodule Claudio.A2A.Client do
         transport: Claudio.A2A.Transport.GRPC)
   """
 
-  alias Claudio.A2A.{Task, Message}
+  alias Claudio.A2A.{Message, Task}
 
   @default_transport Claudio.A2A.Transport.HTTP
 

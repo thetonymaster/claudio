@@ -57,11 +57,10 @@ defmodule Claudio.Tools do
   If an action in a batch fails, answer the rest with `halt_result/1`.
   """
 
-  @type tool_definition :: %{
-          required(:name) => String.t(),
-          required(:description) => String.t(),
-          required(:input_schema) => map()
-        }
+  alias Claudio.Messages.Response
+
+  # String-keyed, as sent to the API: "name", "description", "input_schema".
+  @type tool_definition :: %{required(String.t()) => String.t() | map()}
 
   @type tool_use :: %{
           id: String.t(),
@@ -71,11 +70,9 @@ defmodule Claudio.Tools do
           caller: map() | nil
         }
 
-  @type tool_result :: %{
-          type: String.t(),
-          tool_use_id: String.t(),
-          content: String.t() | list()
-        }
+  # String-keyed, as sent to the API: "type", "tool_use_id", "content", and optionally
+  # "is_error" and "toolset_name".
+  @type tool_result :: %{required(String.t()) => String.t() | list() | boolean()}
 
   @doc """
   Defines a tool with a name, description, and JSON schema for input validation.
@@ -137,15 +134,15 @@ defmodule Claudio.Tools do
   @spec extract_tool_uses(map() | struct()) :: list(tool_use())
   def extract_tool_uses(%{content: content}) when is_list(content) do
     content
-    |> Claudio.Messages.Response.since_last_fallback()
-    |> Enum.filter(&is_tool_use?/1)
+    |> Response.since_last_fallback()
+    |> Enum.filter(&tool_use?/1)
     |> Enum.map(&normalize_tool_use/1)
   end
 
   def extract_tool_uses(%{"content" => content}) when is_list(content) do
     content
-    |> Claudio.Messages.Response.since_last_fallback()
-    |> Enum.filter(&is_tool_use?/1)
+    |> Response.since_last_fallback()
+    |> Enum.filter(&tool_use?/1)
     |> Enum.map(&normalize_tool_use/1)
   end
 
@@ -280,10 +277,10 @@ defmodule Claudio.Tools do
 
   # Private functions
 
-  defp is_tool_use?(%{"type" => "tool_use"}), do: true
-  defp is_tool_use?(%{type: "tool_use"}), do: true
-  defp is_tool_use?(%{type: :tool_use}), do: true
-  defp is_tool_use?(_), do: false
+  defp tool_use?(%{"type" => "tool_use"}), do: true
+  defp tool_use?(%{type: "tool_use"}), do: true
+  defp tool_use?(%{type: :tool_use}), do: true
+  defp tool_use?(_), do: false
 
   defp normalize_tool_use(
          %{"type" => "tool_use", "id" => id, "name" => name, "input" => input} = b

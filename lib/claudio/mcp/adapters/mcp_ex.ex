@@ -13,7 +13,7 @@ defmodule Claudio.MCP.Adapters.MCPEx do
 
   @behaviour Claudio.MCP.Client
 
-  alias Claudio.MCP.Client.{Tool, Resource, Prompt}
+  alias Claudio.MCP.Client.{Prompt, Resource, Tool}
 
   @impl true
   def list_tools(client, opts \\ []) do

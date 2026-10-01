@@ -2,6 +2,8 @@ defmodule Claudio.ClientTest do
   # Not async: these tests change global application env that every client reads.
   use ExUnit.Case, async: false
 
+  alias Claudio.Messages.Request
+
   describe "timeout configuration" do
     setup do
       # Save original config
@@ -273,9 +275,9 @@ defmodule Claudio.ClientTest do
         )
 
       request =
-        Claudio.Messages.Request.new("x")
-        |> Claudio.Messages.Request.add_message(:user, "hi")
-        |> Claudio.Messages.Request.set_max_tokens(8)
+        Request.new("x")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(8)
 
       assert {:ok, %Claudio.Messages.Response{}} = Claudio.Messages.create(client, request)
       assert :counters.get(count, 1) == 2
@@ -329,10 +331,10 @@ defmodule Claudio.ClientTest do
         )
 
       request =
-        Claudio.Messages.Request.new("x")
-        |> Claudio.Messages.Request.add_message(:user, "hi")
-        |> Claudio.Messages.Request.set_max_tokens(8)
-        |> Claudio.Messages.Request.enable_streaming()
+        Request.new("x")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(8)
+        |> Request.enable_streaming()
 
       assert {:error, %Claudio.APIError{status_code: 503}} =
                Claudio.Messages.create(client, request)

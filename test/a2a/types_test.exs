@@ -1,7 +1,7 @@
 defmodule Claudio.A2A.TypesTest do
   use ExUnit.Case, async: true
 
-  alias Claudio.A2A.{Part, Message, Artifact, Task, AgentCard}
+  alias Claudio.A2A.{AgentCard, Artifact, Message, Part, Task}
 
   describe "Part" do
     test "text/1 creates a text part" do

@@ -5,7 +5,7 @@ defmodule Claudio.A2A.Task do
   Tasks have a lifecycle: submitted → working → input_required → completed/failed/canceled.
   """
 
-  alias Claudio.A2A.{Message, Artifact}
+  alias Claudio.A2A.{Artifact, Message}
   import Claudio.A2A.Util, only: [maybe_put: 3]
 
   @type state ::

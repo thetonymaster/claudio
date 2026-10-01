@@ -388,6 +388,7 @@ defmodule Claudio.Batches do
 
           status = batch[:processing_status] || batch["processing_status"]
 
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if status == "ended" or status == :ended do
             {:ok, batch}
           else

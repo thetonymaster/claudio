@@ -2,7 +2,7 @@ defmodule Claudio.MCP.ClientTest do
   use ExUnit.Case, async: true
 
   alias Claudio.MCP.Client
-  alias Claudio.MCP.Client.{Tool, Resource, Prompt}
+  alias Claudio.MCP.Client.{Prompt, Resource, Tool}
 
   # A mock adapter that implements the behaviour for testing
   defmodule MockAdapter do

@@ -20,7 +20,7 @@ defmodule Claudio.ModelsIntegrationTest do
     test "lists models and retrieves one by id", %{client: client} do
       assert {:ok, %{"data" => models}} = Models.list(client, limit: 5)
       assert is_list(models)
-      assert length(models) > 0
+      assert models != []
 
       first_id = hd(models)["id"]
       assert is_binary(first_id)
