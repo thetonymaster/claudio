@@ -104,6 +104,11 @@ defmodule Claudio.ManagedAgents.HTTPTest do
       check = fn x -> if is_id(x), do: true, else: false end
       assert check.("agent_1")
       refute check.("")
+      # Dot segments are unreserved, so segment/1 would send them as-is; a normalising hop
+      # would turn resources/.. into the parent path.
+      refute check.(".")
+      refute check.("..")
+      assert check.("...")
       refute check.(nil)
       refute check.(:agent_1)
     end

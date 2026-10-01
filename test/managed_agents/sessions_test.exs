@@ -156,5 +156,15 @@ defmodule Claudio.ManagedAgents.SessionsTest do
     test "an empty resource id raises FunctionClauseError", %{client: client} do
       assert_raise FunctionClauseError, fn -> Sessions.get_resource(client, "sesn_1", "") end
     end
+
+    test "a dot-segment resource id raises instead of addressing the parent path", %{
+      client: client
+    } do
+      assert_raise FunctionClauseError, fn ->
+        Sessions.delete_resource(client, "sesn_1", "..")
+      end
+
+      assert_raise FunctionClauseError, fn -> Sessions.get(client, ".") end
+    end
   end
 end

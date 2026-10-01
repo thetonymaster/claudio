@@ -13,7 +13,9 @@ defmodule Claudio.ManagedAgents.HTTP do
   def beta, do: @beta
 
   @doc false
-  defguard is_id(id) when is_binary(id) and id != ""
+  # Non-empty, and not a dot segment: "." and ".." are unreserved, so segment/1 leaves them
+  # as-is, and any hop that normalises paths would turn `resources/..` into the parent.
+  defguard is_id(id) when is_binary(id) and id not in ["", ".", ".."]
 
   @spec get(Req.Request.t(), String.t(), keyword()) :: ManagedAgents.result()
   def get(client, path, opts) when is_list(opts),

@@ -72,12 +72,13 @@ lib/claudio/managed_agents/sessions.ex
     → `ArgumentError` too (not silently dropped).
 - **Ids in paths** go through `segment/1` (`URI.encode(id, &URI.char_unreserved?/1)`), so an id
   is always one path segment (`"a/b"` → `a%2Fb`); the `is_id/1` guard rejects `""` (which would
-  otherwise turn `get/2` into a list call).
+  otherwise turn `get/2` into a list call) and the dot segments `"."` / `".."` (unreserved, so
+  not escaped; a path-normalising hop would turn `resources/..` into the parent — final review).
   - Option names are not checked; the API rejects unknown ones (F9).
 
 ### 3. Resource functions
 
-All ids are guarded `when is_binary(id) and id != ""` and escaped as one segment (§2); bodies are maps (string or atom keys, encoded by
+All ids are guarded by `is_id/1` (non-empty binary, not `"."` / `".."`) and escaped as one segment (§2); bodies are maps (string or atom keys, encoded by
 Jason) passed through; every function returns `{:ok, map()} | {:error, APIError.t() | term()}`.
 
 **`Claudio.ManagedAgents.Agents`**
