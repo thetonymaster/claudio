@@ -1183,6 +1183,32 @@ defmodule Claudio.Messages.StreamTest do
                        %{input_tokens: 5, output_tokens: 9}}
     end
 
+    test "a non-map usage or message is ignored by both stages (same usage, no crash)" do
+      attach(@span ++ [[:claudio, :messages, :stream, :usage]])
+
+      body =
+        sse([
+          {"message_start", %{"type" => "message_start", "message" => "not a map"}},
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "m", "model" => "x", "usage" => %{"input_tokens" => 5}}
+           }},
+          {"message_delta", %{"type" => "message_delta", "usage" => "not a map"}},
+          {"message_delta", %{"type" => "message_delta", "usage" => %{"output_tokens" => 9}}},
+          {"message_stop", %{"type" => "message_stop"}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_received {:telemetry, [:claudio, :messages, :stream, :usage], %{},
+                       %{input_tokens: 5, output_tokens: 9} = usage}
+
+      assert map_size(usage) == 2
+      assert [{measurements, %{reason: :completed}}] = stops()
+      assert Map.take(measurements, [:input_tokens, :output_tokens]) == usage
+    end
+
     test "a %Req.Response{} with a link emits a linked span; a binary body parses as one chunk" do
       attach(@span)
       ctx = make_ref()

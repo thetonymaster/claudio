@@ -119,22 +119,26 @@ defmodule Claudio.Messages.Stream do
     }
   end
 
-  defp span_event(
-         {:ok, %{event: "message_start", data: %{"message" => %{} = message}}} = event,
-         %{started?: false} = span
-       ) do
-    span = start_span(span, message["model"], message["id"])
-    {[event], %{span | usage: merge_usage(nil, message["usage"])}}
+  defp span_event({:ok, %{event: "message_start", data: %{} = data} = parsed} = event, span) do
+    span =
+      if span.started? do
+        span
+      else
+        message = map_field(data, :message) || %{}
+        start_span(span, field(message, :model), field(message, :id))
+      end
+
+    {[event], %{span | usage: track_usage(span.usage, parsed)}}
   end
 
-  defp span_event({:ok, %{event: "message_delta", data: %{} = data}} = event, span) do
+  defp span_event({:ok, %{event: "message_delta", data: %{} = data} = parsed} = event, span) do
     stop_reason =
       case data do
         %{"delta" => %{"stop_reason" => reason}} when is_binary(reason) -> reason
         _ -> span.stop_reason
       end
 
-    {[event], %{span | usage: merge_usage(span.usage, data["usage"]), stop_reason: stop_reason}}
+    {[event], %{span | usage: track_usage(span.usage, parsed), stop_reason: stop_reason}}
   end
 
   defp span_event(
@@ -226,21 +230,47 @@ defmodule Claudio.Messages.Stream do
     # message_delta usage is cumulative but may omit fields message_start carried (e.g.
     # input_tokens, cache counters): merge, delta wins — as build_final_message/1 does.
     Stream.transform(event_stream, nil, fn
-      {:ok, %{event: "message_start", data: %{} = data}} = event, _usage ->
-        message = data["message"] || data[:message] || %{}
-        {[event], merge_usage(nil, message["usage"] || message[:usage])}
-
-      {:ok, %{event: "message_delta", data: %{} = data}} = event, usage ->
-        {[event], merge_usage(usage, data["usage"] || data[:usage])}
-
       {:ok, %{event: "message_stop"}} = event, latest_usage ->
         maybe_emit_stream_usage_telemetry(latest_usage)
         {[event], latest_usage}
+
+      {:ok, %{} = parsed} = event, usage ->
+        {[event], track_usage(usage, parsed)}
 
       event, latest_usage ->
         {[event], latest_usage}
     end)
   end
+
+  # The running usage after `event`, shared by the :usage and span stages so they cannot drift:
+  # message_start resets it to the message's usage, message_delta merges over it (delta wins).
+  defp track_usage(_usage, %{event: "message_start", data: %{}} = event),
+    do: merge_usage(nil, event_usage(event))
+
+  defp track_usage(usage, %{event: "message_delta", data: %{}} = event),
+    do: merge_usage(usage, event_usage(event))
+
+  defp track_usage(usage, _event), do: usage
+
+  # The usage map an event carries (message_start: data.message.usage; message_delta:
+  # data.usage), string or atom keys; nil when absent or not a map.
+  defp event_usage(%{event: "message_start", data: data}),
+    do: data |> map_field(:message) |> map_field(:usage)
+
+  defp event_usage(%{event: "message_delta", data: data}), do: map_field(data, :usage)
+
+  # A field under its string key, else its atom key.
+  defp field(map, key), do: Map.get(map, Atom.to_string(key)) || Map.get(map, key)
+
+  # A map-valued field; nil when absent or not a map.
+  defp map_field(%{} = map, key) do
+    case field(map, key) do
+      %{} = value -> value
+      _ -> nil
+    end
+  end
+
+  defp map_field(_not_a_map, _key), do: nil
 
   defp merge_usage(current, nil), do: current
   defp merge_usage(nil, %{} = usage), do: stringify_keys(usage)
