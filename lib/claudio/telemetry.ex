@@ -33,7 +33,11 @@ defmodule Claudio.Telemetry do
   @doc false
   # A bounded error classification, safe to use as OTel `error.type`.
   @spec error_type(term()) :: atom() | String.t()
-  def error_type(%Claudio.APIError{type: type}) when is_atom(type) or is_binary(type), do: type
+  def error_type(%Claudio.APIError{type: type})
+      when (is_atom(type) and type not in [nil, true, false]) or is_binary(type),
+      do: type
+
+  def error_type(%Claudio.APIError{}), do: :unknown
 
   def error_type(%{__exception__: true, reason: reason})
       when is_atom(reason) and reason not in [nil, true, false],
@@ -136,5 +140,11 @@ defmodule Claudio.Telemetry do
 
   defp http_result(exception), do: %{status_code: nil, error_type: error_type(exception)}
 
-  defp get(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  # The atom key wins when present (even as false or nil); the string key is only a fallback.
+  defp get(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
 end

@@ -38,12 +38,31 @@ defmodule Claudio.TelemetryTest do
       assert Telemetry.usage(nil) == %{}
       assert Telemetry.usage("x") == %{}
     end
+
+    test "a non-map output_tokens_details yields no :thinking_tokens" do
+      assert Telemetry.usage(%{"input_tokens" => 1, "output_tokens_details" => "x"}) ==
+               %{input_tokens: 1}
+
+      assert Telemetry.usage(%{output_tokens: 2, output_tokens_details: [1]}) ==
+               %{output_tokens: 2}
+    end
+
+    test "a present atom key wins, even when false; the string key is only a fallback" do
+      assert Telemetry.usage(%{:input_tokens => false, "input_tokens" => 5}) ==
+               %{input_tokens: false}
+
+      assert Telemetry.usage(%{"input_tokens" => 5}) == %{input_tokens: 5}
+    end
   end
 
   describe "error_type/1" do
     test "APIError → its type" do
       assert Telemetry.error_type(%Claudio.APIError{type: :rate_limit_error}) == :rate_limit_error
       assert Telemetry.error_type(%Claudio.APIError{type: "new_error"}) == "new_error"
+    end
+
+    test "APIError without a type → :unknown" do
+      assert Telemetry.error_type(%Claudio.APIError{type: nil}) == :unknown
     end
 
     test "transport errors → their atom reason" do
@@ -84,6 +103,10 @@ defmodule Claudio.TelemetryTest do
       Claudio.Client.new(%{token: "t", version: "2023-06-01"}, "http://api.example.test:4000/v1/")
 
     assert Telemetry.server_address(client) == "api.example.test"
+  end
+
+  test "server_address/1 is nil without a base_url" do
+    assert Telemetry.server_address(Req.new()) == nil
   end
 
   test "request_id/1 reads the request-id header" do
