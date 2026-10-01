@@ -1227,6 +1227,58 @@ defmodule Claudio.Messages.StreamTest do
       assert [{_, %{reason: :completed, parent_span_context: ^ctx}}] = stops()
     end
 
+    test "an unlinked %Req.Response{} emits a pair without link keys" do
+      attach(@span)
+
+      %Req.Response{status: 200, body: full_stream()}
+      |> ClaudioStream.parse_events()
+      |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      refute Map.has_key?(start, :parent_span_context)
+      refute Map.has_key?(start, :request_id)
+
+      assert [{_, stop}] = stops()
+      assert stop.reason == :completed
+      refute Map.has_key?(stop, :parent_span_context)
+      refute Map.has_key?(stop, :request_id)
+    end
+
+    test "end to end: a streaming create/2 links its stream span to the create span" do
+      bypass = Bypass.open()
+      attach(@span ++ [[:claudio, :messages, :create, :stop]])
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("request-id", "req_e2e")
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, full_stream())
+      end)
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      request =
+        Claudio.Messages.Request.new("claude-stream")
+        |> Claudio.Messages.Request.add_message(:user, "hi")
+        |> Claudio.Messages.Request.set_max_tokens(16)
+        |> Claudio.Messages.Request.enable_streaming()
+
+      assert {:ok, %Req.Response{} = resp} = Claudio.Messages.create(client, request)
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, create_stop}
+
+      resp |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.parent_span_context == create_stop.telemetry_span_context
+      assert start.request_id == "req_e2e"
+      assert create_stop.request_id == "req_e2e"
+      assert [{_, %{reason: :completed, stop_reason: :end_turn}}] = stops()
+    end
+
     test "a stream consumed in another process emits from that process, still linked" do
       model = "claude-task-#{System.unique_integer([:positive])}"
       attach(@span, filter: &(&1[:model] == model))
