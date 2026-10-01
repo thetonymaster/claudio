@@ -416,16 +416,25 @@ defmodule Claudio.ClientOptionsTest do
     test "retry: [...] retries a POST on a retryable status" do
       bypass = Bypass.open()
       count = :counters.new(1, [:atomics])
+      test_pid = self()
 
       Bypass.expect(bypass, "POST", "/messages", fn conn ->
         :counters.add(count, 1, 1)
 
         if :counters.get(count, 1) == 1 do
-          Plug.Conn.resp(
-            conn,
-            529,
-            ~s({"type":"error","error":{"type":"overloaded_error","message":"busy"}})
-          )
+          # 503, not 529: Plug rejects 529 as an unknown status when the response is written,
+          # Bypass answers 500 instead (also retryable), and the test passes without serving
+          # the status it meant to. send_resp writes here, so a bad status raises before the
+          # {:served, _} message. 529 retryability is covered by retryable?/2.
+          conn =
+            Plug.Conn.send_resp(
+              conn,
+              503,
+              ~s({"type":"error","error":{"type":"overloaded_error","message":"busy"}})
+            )
+
+          send(test_pid, {:served, 503})
+          conn
         else
           conn
           |> Plug.Conn.put_resp_content_type("application/json")
@@ -457,6 +466,7 @@ defmodule Claudio.ClientOptionsTest do
 
       assert {:ok, %Claudio.Messages.Response{}} = Claudio.Messages.create(client, request)
       assert :counters.get(count, 1) == 2
+      assert_received {:served, 503}
     end
 
     test "retry: true uses 3 retries; retry: false disables retries" do
