@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   around each stream consumption (full duration, tokens, exactly one `:stop`), linked to the
   `create` span when `parse_events/1` is given the whole response; new per-attempt
   `[:claudio, :http, :request, :start | :stop]` for every endpoint (retries visible as `attempt`).
-  No event carries headers, bodies, the API key or message content.
+  No event carries headers, bodies, the API key or message content, except the deprecated `error`
+  key on a failed `create :stop` (an `inspect` string that can include the API's error body;
+  use `error_type`). A linked stream `:start` also carries `request_model`.
 
 - `Claudio.Client.new/2` accepts `:timeout`, `:recv_timeout` and `:retry` per client.
   A per-client value wins over `config :claudio, Claudio.Client`, which remains the
@@ -45,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `timeout` / `recv_timeout` must be a non-negative integer (ms) or `:infinity`; anything
   else raises `ArgumentError` when the client is built (per-client and app config alike).
   Previously a bad value failed on the first request with an error that did not name it.
+
+### Deprecated
+
+- The `error` metadata key on `[:claudio, :messages, :create, :stop]` (an `inspect` string that can
+  contain the API's error response body). It will be removed in 0.8.0; use `error_type`.
 
 ### Fixed
 

@@ -1,6 +1,6 @@
 # Telemetry
 
-Claudio emits [`:telemetry`](https://hexdocs.pm/telemetry) events for message calls, streams and every HTTP attempt. It has no OpenTelemetry dependency; the events carry what an exporter needs, and this guide lists every event and metadata key and shows an OpenTelemetry GenAI bridge. No event carries request or response headers, bodies, the API key or message content.
+Claudio emits [`:telemetry`](https://hexdocs.pm/telemetry) events for message calls, streams and every HTTP attempt. It has no OpenTelemetry dependency; the events carry what an exporter needs, and this guide lists every event and metadata key and shows an OpenTelemetry GenAI bridge. No event carries request or response headers, bodies, the API key or message content. The one exception is the deprecated `error` key on a failed `create :stop`: an `inspect` string that can include the API's error response body. Exporters should use `error_type` instead.
 
 ## Events
 
@@ -15,7 +15,7 @@ Claudio emits [`:telemetry`](https://hexdocs.pm/telemetry) events for message ca
 Guarantees:
 
 - Exactly one `[:claudio, :messages, :stream, :stop]` per `:start`, whatever the ending, except when the consuming process dies. Enumerating the same lazy stream twice is two consumptions, so two start/stop pairs.
-- Exactly one `[:claudio, :http, :request, :stop]` per `:start`.
+- Exactly one `[:claudio, :http, :request, :stop]` per `:start`, unless the adapter raises; the enclosing `create` / `count_tokens` span's `:exception` then reports it.
 - Optional keys are **absent** (not `nil`) when there is no value, except `status_code`, which is `nil` for transport errors.
 - `duration` and `monotonic_time` are in native time units; token measurements are integers.
 
@@ -24,7 +24,7 @@ Guarantees:
 | Event | Measurements | Metadata |
 |---|---|---|
 | `:start` | `monotonic_time`, `system_time` | `model` (requested; `nil` if the payload has none), `stream`, `telemetry_span_context`. When set: `max_tokens`, `temperature`, `top_p`, `top_k`, `effort` (`output_config.effort`). `server_address` (host of the client's `base_url`). |
-| `:stop` | `duration`, `monotonic_time`. Token measurements `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `thinking_tokens` appear only when the response carried usage (non-streaming success). | The `:start` keys plus `status` (`:ok` / `:error`) and the same token keys as metadata. On success: `response_id`, `response_model` (the model that served the response; the fallback model if a `fallback` block is present), `stop_reason` (see below), `request_id` (from the `request-id` header). On error: `error` (an `inspect` string, kept for compatibility), `error_type`, `status_code`, and `request_id` when the response had one. |
+| `:stop` | `duration`, `monotonic_time`. Token measurements `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `thinking_tokens` appear only when the response carried usage (non-streaming success). | The `:start` keys plus `status` (`:ok` / `:error`) and the same token keys as metadata. On success: `response_id`, `response_model` (the model that served the response; the fallback model if a `fallback` block is present), `stop_reason` (see below), `request_id` (from the `request-id` header). On error: `error` (**deprecated**: an `inspect` string that can contain the API's error body; use `error_type`; to be removed in 0.8.0), `error_type`, `status_code`, and `request_id` when the response had one. |
 | `:exception` | `duration`, `monotonic_time` | The `:start` keys plus `kind`, `reason`, `stacktrace` (telemetry's own). |
 
 `stop_reason` is an atom for the values Claudio knows (`:end_turn`, `:max_tokens`, `:tool_use`, ...). A value the API adds later is passed through as a string: Claudio never creates atoms from API input. Handle both, for example with `to_string/1`, as the OpenTelemetry example below does. The same applies to the stream `:stop`.
@@ -47,7 +47,7 @@ Legacy `create_message/2` returns any 200 body unchanged. Its `:stop` carries th
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `:start` | `monotonic_time`, `system_time` | `model` (from `message_start`; falls back to the `create` span's model when linked) and `response_id` (both absent if the stream ended before `message_start`), `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`) and `request_id`. |
+| `:start` | `monotonic_time`, `system_time` | `model` (from `message_start`; falls back to the `create` span's model when linked) and `response_id` (both absent if the stream ended before `message_start`), `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`), `request_id` and `request_model` (the model requested in the `create` call; absent if that was `nil`). |
 | `:stop` | `duration`, `monotonic_time`, and the token measurements as for `create :stop` | The `:start` keys plus `reason`, `stop_reason` (from the last `message_delta`, when seen), `response_model` (the last `fallback` block's target model, else `model`), the token keys (`message_start` and `message_delta` usage merged, delta wins), and `error_type` when `reason` is `:error`. |
 
 `:start` is emitted when `message_start` arrives. If the stream ends before that (empty or garbage body), `:start` is emitted at the ending, immediately followed by `:stop`, so a broken stream is still visible.
@@ -68,7 +68,7 @@ Two caveats. An exception raised mid-enumeration (by the consumer, or by the ups
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `:start` | `monotonic_time`, `system_time` | `method` (atom, e.g. `:post`), `url` (scheme, host and path; no query string), `attempt` (0 for the first, +1 per retry), `telemetry_span_context` |
+| `:start` | `monotonic_time`, `system_time` | `method` (atom, e.g. `:post`), `url` (scheme, host, port and path; no userinfo, query string or fragment), `attempt` (0 for the first, +1 per retry), `telemetry_span_context` |
 | `:stop` | `duration`, `monotonic_time` | The `:start` keys plus `status_code` (`nil` on a transport error), `request_id` when present, `error_type` on a transport error |
 
 There is no `:exception` event for HTTP: a raise during a call surfaces as the `create` or `count_tokens` span's `:exception`.
@@ -189,11 +189,14 @@ defmodule MyApp.ClaudioOtel do
     compact(%{
       "gen_ai.operation.name" => "chat",
       "gen_ai.provider.name" => "anthropic",
-      "gen_ai.request.model" => meta[:model],
+      # A linked stream :start carries the requested model as request_model; `model` is then
+      # the served one.
+      "gen_ai.request.model" => meta[:request_model] || meta[:model],
       "gen_ai.request.max_tokens" => meta[:max_tokens],
       "gen_ai.request.temperature" => meta[:temperature],
       "gen_ai.request.top_p" => meta[:top_p],
       "gen_ai.request.top_k" => meta[:top_k],
+      "gen_ai.request.reasoning.level" => meta[:effort],
       # Set if and only if the request is streaming.
       "gen_ai.request.stream" => if(meta[:stream] == true, do: true),
       "server.address" => meta[:server_address]
@@ -224,6 +227,8 @@ end
 ```
 
 The handler skips the `create` span of a streaming call, except when it fails. A failed streaming `create` (a `:stop` with `status: :error`, or a `:exception`) is recorded as one error span, back-dated by the event's `duration`; for a `:exception` the span also records the exception. That span is started after the call has returned, so its parent is whatever OpenTelemetry context is current in the calling process: a root span unless the caller has a span open. That is expected, and it nests under the caller's span when there is one.
+
+`server.port` is not emitted; only `server.address` is.
 
 `gen_ai.request.stream` is set (to `true`) only for streaming requests, as the conventions require; it is absent otherwise.
 
