@@ -33,6 +33,8 @@ defmodule Claudio.Messages.Stream do
       end)
   """
 
+  alias Claudio.Messages.Response
+
   @type event :: %{
           event: String.t(),
           data: map() | nil
@@ -45,19 +47,31 @@ defmodule Claudio.Messages.Stream do
 
   Returns a Stream of `{:ok, event}` or `{:error, reason}` tuples.
 
+  Pass the whole `%Req.Response{}` from `Claudio.Messages.create/2` to link the stream span
+  to the `create` span; passing `response.body` still works, unlinked.
+
   ## Example
 
       response
       |> Stream.parse_events()
       |> Enum.to_list()
   """
-  @spec parse_events(Enumerable.t()) :: Enumerable.t()
-  def parse_events(stream) do
+  @spec parse_events(Req.Response.t() | Enumerable.t()) :: Enumerable.t()
+  def parse_events(%Req.Response{body: body} = response) do
+    # A non-async body (e.g. a Req.Test plug) is the whole SSE payload as one binary.
+    body = if is_binary(body), do: [body], else: body
+    do_parse_events(body, Req.Response.get_private(response, :claudio))
+  end
+
+  def parse_events(stream), do: do_parse_events(stream, nil)
+
+  defp do_parse_events(stream, link) do
     stream
     |> Stream.transform(fn -> "" end, &parse_chunk/2, &flush_buffer/1, fn _ -> :ok end)
     |> Stream.map(&parse_event/1)
     |> emit_usage_telemetry()
     |> halt_after_message_stop()
+    |> stream_span(link)
   end
 
   # Helper to stop consuming stream after message_stop event
@@ -79,6 +93,135 @@ defmodule Claudio.Messages.Stream do
         # Continue normally
         {[event], false}
     end)
+  end
+
+  # [:claudio, :messages, :stream] :start/:stop around one consumption. Exactly one :stop per
+  # :start: on message_stop, an SSE error, a parse error, the upstream ending without
+  # message_stop (last fun), or the consumer halting (after fun).
+  defp stream_span(events, link) do
+    Stream.transform(
+      events,
+      fn -> new_span(link) end,
+      &span_event/2,
+      fn span -> {[], finish_span(span, :error, :incomplete_stream)} end,
+      fn span -> finish_span(span, :halted, nil) end
+    )
+  end
+
+  defp new_span(link) do
+    %{
+      link: link,
+      started?: false,
+      stopped?: false,
+      start_time: nil,
+      metadata: %{},
+      usage: nil,
+      stop_reason: nil,
+      fallback_model: nil
+    }
+  end
+
+  defp span_event(
+         {:ok, %{event: "message_start", data: %{"message" => %{} = message}}} = event,
+         %{started?: false} = span
+       ) do
+    span = start_span(span, message["model"], message["id"])
+    {[event], %{span | usage: merge_usage(nil, message["usage"])}}
+  end
+
+  defp span_event({:ok, %{event: "message_delta", data: %{} = data}} = event, span) do
+    stop_reason =
+      case data do
+        %{"delta" => %{"stop_reason" => reason}} when is_binary(reason) -> reason
+        _ -> span.stop_reason
+      end
+
+    {[event], %{span | usage: merge_usage(span.usage, data["usage"]), stop_reason: stop_reason}}
+  end
+
+  defp span_event(
+         {:ok,
+          %{
+            event: "content_block_start",
+            data: %{"content_block" => %{"type" => "fallback", "to" => %{"model" => model}}}
+          }} = event,
+         span
+       )
+       when is_binary(model),
+       do: {[event], %{span | fallback_model: model}}
+
+  defp span_event({:ok, %{event: "message_stop"}} = event, span),
+    do: {[event], finish_span(span, :completed, nil)}
+
+  defp span_event({:ok, %{event: "error", data: data}} = event, span) do
+    error_type =
+      case data do
+        %{"error" => %{"type" => type}} when is_binary(type) -> type
+        _ -> :stream_error
+      end
+
+    {[event], finish_span(span, :error, error_type)}
+  end
+
+  defp span_event({:error, _reason} = event, span),
+    do: {[event], finish_span(span, :error, :parse_error)}
+
+  defp span_event(event, span), do: {[event], span}
+
+  defp start_span(span, model, response_id) do
+    now = System.monotonic_time()
+    link_model = if span.link, do: span.link[:model]
+
+    metadata =
+      %{telemetry_span_context: make_ref()}
+      |> Claudio.Telemetry.put_present(:model, model || link_model)
+      |> Claudio.Telemetry.put_present(:response_id, response_id)
+      |> put_link(span.link)
+
+    :telemetry.execute(
+      [:claudio, :messages, :stream, :start],
+      %{monotonic_time: now, system_time: System.system_time()},
+      metadata
+    )
+
+    %{span | started?: true, start_time: now, metadata: metadata}
+  end
+
+  defp put_link(metadata, %{span_context: ctx} = link) do
+    metadata
+    |> Map.put(:parent_span_context, ctx)
+    |> Claudio.Telemetry.put_present(:request_id, link[:request_id])
+  end
+
+  defp put_link(metadata, _link), do: metadata
+
+  defp finish_span(%{stopped?: true} = span, _reason, _error_type), do: span
+
+  defp finish_span(%{started?: false} = span, reason, error_type),
+    do: span |> start_span(nil, nil) |> finish_span(reason, error_type)
+
+  defp finish_span(span, reason, error_type) do
+    now = System.monotonic_time()
+    tokens = Claudio.Telemetry.usage(span.usage)
+
+    metadata =
+      span.metadata
+      |> Map.merge(tokens)
+      |> Map.put(:reason, reason)
+      |> Claudio.Telemetry.put_present(:stop_reason, Response.parse_stop_reason(span.stop_reason))
+      |> Claudio.Telemetry.put_present(
+        :response_model,
+        span.fallback_model || span.metadata[:model]
+      )
+      |> Claudio.Telemetry.put_present(:error_type, error_type)
+
+    :telemetry.execute(
+      [:claudio, :messages, :stream, :stop],
+      Map.merge(tokens, %{duration: now - span.start_time, monotonic_time: now}),
+      metadata
+    )
+
+    %{span | stopped?: true}
   end
 
   defp emit_usage_telemetry(event_stream) do

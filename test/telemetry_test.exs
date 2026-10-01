@@ -215,4 +215,73 @@ defmodule Claudio.TelemetryTest do
       refute_receive {:telemetry, _, _, _}, 50
     end
   end
+
+  test "no event carries the API key", %{} do
+    bypass = Bypass.open()
+    secret = "sk-test-SECRET-#{System.unique_integer([:positive])}"
+
+    events =
+      for prefix <- [
+            [:claudio, :messages, :create],
+            [:claudio, :messages, :count_tokens],
+            [:claudio, :http, :request],
+            [:claudio, :messages, :stream]
+          ],
+          suffix <- [:start, :stop, :exception],
+          do: prefix ++ [suffix]
+
+    attach(events)
+
+    Bypass.expect(bypass, "POST", "/messages", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(
+        200,
+        ~s({"id":"m","type":"message","role":"assistant","model":"x","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}})
+      )
+    end)
+
+    Bypass.expect(
+      bypass,
+      "POST",
+      "/messages/count_tokens",
+      &Plug.Conn.resp(&1, 200, ~s({"input_tokens":1}))
+    )
+
+    Bypass.expect(bypass, "GET", "/models", &Plug.Conn.resp(&1, 200, ~s({"data":[]})))
+
+    client =
+      Claudio.Client.new(
+        %{token: secret, version: "2023-06-01"},
+        "http://localhost:#{bypass.port}/"
+      )
+
+    payload = %{
+      "model" => "x",
+      "max_tokens" => 8,
+      "messages" => [%{"role" => "user", "content" => "hi"}]
+    }
+
+    assert {:ok, _} = Claudio.Messages.create(client, payload)
+    assert {:ok, _} = Claudio.Messages.count_tokens(client, payload)
+    assert {:ok, _} = Claudio.Models.list(client)
+
+    received =
+      Stream.repeatedly(fn ->
+        receive do
+          msg -> msg
+        after
+          50 -> :done
+        end
+      end)
+      |> Enum.take_while(&(&1 != :done))
+
+    assert length(received) >= 8
+
+    for {:telemetry, event, measurements, metadata} <- received do
+      refute inspect({measurements, metadata}, limit: :infinity, printable_limit: :infinity) =~
+               secret,
+             "#{inspect(event)} leaked the API key"
+    end
+  end
 end
