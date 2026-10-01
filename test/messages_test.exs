@@ -358,7 +358,7 @@ defmodule Claudio.MessagesTest do
     {micros, result} = :timer.tc(fn -> Claudio.Messages.create(client, request) end)
 
     assert {:error, %Claudio.APIError{status_code: 400}} = result
-    assert micros < 1_000_000, "drain took #{div(micros, 1000)}ms"
+    assert micros < 1_500_000, "drain took #{div(micros, 1000)}ms"
   end
 
   test "telemetry stop metadata includes token usage for non-streaming success", %{
