@@ -177,9 +177,11 @@ defmodule MyApp.ClaudioOtel do
   def handle_event([:claudio, :messages, :create, _phase], _measurements, %{stream: true}, _config), do: :ok
 
   # Stream events carry no `stream` key; every stream span is a streaming request.
-  def handle_event([:claudio, :messages, kind, :start], _measurements, meta, _config) do
+  def handle_event([:claudio, :messages, kind, :start], measurements, meta, _config) do
+    # The stream :start is emitted at message_start but back-dated to when consumption began.
     OpentelemetryTelemetry.start_telemetry_span(@tracer_id, span_name(meta), meta, %{
       kind: :client,
+      start_time: measurements.monotonic_time,
       attributes: start_attributes(Map.put_new(meta, :stream, kind == :stream))
     })
   end

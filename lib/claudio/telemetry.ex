@@ -83,6 +83,7 @@ defmodule Claudio.Telemetry do
   def server_address(%Req.Request{options: options}) do
     case options[:base_url] do
       url when is_binary(url) -> URI.parse(url).host
+      %URI{host: host} -> host
       _ -> nil
     end
   end
@@ -96,6 +97,7 @@ defmodule Claudio.Telemetry do
   def server_port(%Req.Request{options: options}) do
     case options[:base_url] do
       url when is_binary(url) -> URI.parse(url).port
+      %URI{port: port} -> port
       _ -> nil
     end
   end

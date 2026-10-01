@@ -277,6 +277,10 @@ defmodule Claudio.Messages do
     drain_loop(resp, ref, [], System.monotonic_time(:millisecond) + 2_000)
   end
 
+  # An adapter that ignores `into: :self` returns the body already read.
+  defp drain_async_body(%Req.Response{body: body}) when is_binary(body), do: try_decode(body)
+  defp drain_async_body(%Req.Response{body: body}), do: body
+
   defp drain_loop(resp, ref, acc, deadline) do
     if System.monotonic_time(:millisecond) > deadline do
       # Cancel so chunks still in flight don't reach the caller's mailbox after we return.
@@ -326,17 +330,20 @@ defmodule Claudio.Messages do
       ok_stop(
         {:ok, atomize_keys_to_strings(body)},
         resp,
-        body["usage"],
+        body_usage(body),
         response_fields(response)
       )
     else
-      ok_stop({:ok, atomize_keys_to_strings(body)}, resp, body["usage"], %{})
+      ok_stop({:ok, atomize_keys_to_strings(body)}, resp, body_usage(body), %{})
     end
   end
 
   defp parseable_content?(content), do: is_list(content) or content in [nil, false]
 
   defp payload_model(payload), do: payload["model"] || payload[:model]
+
+  # Decoded JSON is string-keyed; custom adapters / test doubles may return atom keys.
+  defp body_usage(body), do: body["usage"] || body[:usage]
 
   defp count_tokens_ok(body, resp) do
     tokens =
@@ -353,7 +360,7 @@ defmodule Claudio.Messages do
       case Req.post(client, url: "messages", json: payload) do
         {:ok, %Req.Response{status: 200, body: body} = resp} when is_map(body) ->
           response = Response.from_map(body)
-          ok_stop({:ok, response}, resp, body["usage"], response_fields(response))
+          ok_stop({:ok, response}, resp, body_usage(body), response_fields(response))
 
         # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
         {:ok, %Req.Response{status: status, body: body} = resp} ->

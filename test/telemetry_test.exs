@@ -148,6 +148,56 @@ defmodule Claudio.TelemetryTest do
     assert Telemetry.server_port(base_url: "https://x/") == nil
   end
 
+  test "server_address/1 and server_port/1 accept a %URI{} base_url" do
+    req = Req.new(base_url: URI.parse("https://api.example.test/v1/"))
+    assert Telemetry.server_address(req) == "api.example.test"
+    assert Telemetry.server_port(req) == 443
+  end
+
+  defmodule StaticAdapter do
+    @moduledoc false
+    # A custom Req adapter returning a canned response (ignores `into:`, keeps atom keys).
+    def run(request), do: {request, Req.Request.get_private(request, :static_response)}
+  end
+
+  describe "custom adapters" do
+    defp adapter_client(response) do
+      %{token: "t", version: "2023-06-01"}
+      |> Claudio.Client.new("http://localhost:1/")
+      |> Req.merge(retry: false, adapter: StaticAdapter)
+      |> Req.Request.put_private(:static_response, response)
+    end
+
+    test "an atom-keyed 200 body still yields create :stop token data" do
+      attach([[:claudio, :messages, :create, :stop]])
+
+      body = %{
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        model: "m",
+        content: [],
+        stop_reason: "end_turn",
+        usage: %{input_tokens: 3, output_tokens: 5}
+      }
+
+      client = adapter_client(Req.Response.new(status: 200, body: body))
+      payload = %{"model" => "m", "max_tokens" => 8, "messages" => []}
+
+      assert {:ok, _} = Claudio.Messages.create(client, payload)
+      assert_receive {:telemetry, _, %{input_tokens: 3, output_tokens: 5}, %{input_tokens: 3}}
+    end
+
+    test "a streaming non-200 with a plain binary body is an APIError" do
+      body = ~s({"type":"error","error":{"type":"overloaded_error","message":"busy"}})
+      client = adapter_client(Req.Response.new(status: 529, body: body))
+      payload = %{"model" => "m", "max_tokens" => 8, "messages" => [], "stream" => true}
+
+      assert {:error, %Claudio.APIError{type: :overloaded_error}} =
+               Claudio.Messages.create(client, payload)
+    end
+  end
+
   test "server_address/1 is nil without a base_url" do
     assert Telemetry.server_address(Req.new()) == nil
   end
