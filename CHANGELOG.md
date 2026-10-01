@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Claudio.Client.new/2` accepts `:timeout`, `:recv_timeout` and `:retry` per client.
+  A per-client value wins over `config :claudio, Claudio.Client`, which remains the
+  fallback, so one application can run clients with different retry behaviour.
+
+### Changed
+
+- An invalid `retry` value (anything but `true`, `false` or a keyword list) or an unknown
+  retry key now raises `ArgumentError`, for per-client and app config alike. Previously
+  it was silently ignored and Req's default (GET/HEAD-only retries) applied.
+
 ### Fixed
 
 - `Claudio.Tools.tool_definition` and `tool_result` typespecs described atom-keyed maps;

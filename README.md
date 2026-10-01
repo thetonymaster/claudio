@@ -449,9 +449,22 @@ config :claudio,
   default_beta_features: []
 ```
 
-### Timeout Configuration
+### Per-Client Options
 
-Configure timeouts for different use cases:
+Timeouts and retries can be set on each client. A key given to `Client.new/2` wins over
+the app config below, so one application can run differently-configured clients:
+
+```elixir
+# Polling a batch: safe to retry
+poller = Claudio.Client.new(%{token: key, recv_timeout: 600_000, retry: true})
+
+# Creating a batch: a retried POST could create it twice
+creator = Claudio.Client.new(%{token: key, retry: false})
+```
+
+### Timeout Configuration (app-wide defaults)
+
+Keys not passed to `Client.new/2` fall back to the application config:
 
 ```elixir
 # config/config.exs
@@ -481,6 +494,9 @@ config :claudio, Claudio.Client,
     max_delay: 10_000     # Max delay: 10s
   ]
 ```
+
+The same values work per client (`Client.new(%{token: key, retry: [max_retries: 5]})`).
+Any other `retry` value, or an unknown key, raises `ArgumentError`.
 
 ## Error Handling
 

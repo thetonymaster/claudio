@@ -68,7 +68,8 @@ Client initialization requires:
 - `version`: API version (e.g., "2023-06-01")
 - `auth_type`: (optional) `:api_key` (default) or `:bearer`. Claude-Code-style OAuth tokens also need `beta: ["oauth-2025-04-20"]`.
 - `beta`: (optional) list of beta feature flags
-- App config: `config :claudio, default_api_version: ..., default_beta_features: [...]`; `config :claudio, Claudio.Client, timeout:, recv_timeout:, retry: true | [delay:, max_retries:, max_delay:]` — `retry` retries 408/429/5xx/529 and connection errors on every method (Req's default only retries GET/HEAD)
+- `timeout`, `recv_timeout`, `retry: true | false | [delay:, max_retries:, max_delay:]`: pass per client to `new/2` (wins) or set app-wide via `config :claudio, Claudio.Client, ...` (fallback). `retry` retries 408/429/5xx/529 and connection errors on every method (Req's default only retries GET/HEAD); an invalid value or unknown key raises in both paths
+- App config: `config :claudio, default_api_version: ..., default_beta_features: [...]`. Prefer per-client options for anything new (the Elixir library guidelines discourage app-env config in libraries)
 - `Claudio.APIError.from_response/2` also handles non-JSON bodies (empty 5xx, proxy HTML), typed from the HTTP status
 
 > **Alt deployments (Bedrock / Vertex):** not implemented — they need SigV4 / GCP ADC signing, model-id prefixing, and per-feature masking (large effort, deferred until demand). The OAuth token-exchange flow (`POST /v1/oauth/token`) is likewise out of scope; supply an already-obtained bearer token.

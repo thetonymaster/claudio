@@ -53,6 +53,13 @@ config :claudio, Claudio.Client,
   ]
 ```
 
+These settings can also be passed per client, and a per-client value wins over the
+config above:
+
+```elixir
+client = Claudio.Client.new(%{token: api_key, recv_timeout: 600_000, retry: false})
+```
+
 ## Quick Start
 
 ### Creating a Client

@@ -350,4 +350,126 @@ defmodule Claudio.ClientTest do
       assert client.options[:retry] == false
     end
   end
+
+  describe "per-client options vs app env" do
+    setup do
+      saved = Application.get_env(:claudio, Claudio.Client)
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:claudio, Claudio.Client, saved),
+          else: Application.delete_env(:claudio, Claudio.Client)
+      end)
+    end
+
+    test "per-client values override the app env; unset keys fall back to it" do
+      Application.put_env(:claudio, Claudio.Client,
+        timeout: 30_000,
+        recv_timeout: 180_000,
+        retry: [max_retries: 5]
+      )
+
+      client =
+        Claudio.Client.new(%{token: "t", version: "2023-06-01", timeout: 1_000, retry: false})
+
+      assert client.options[:connect_options][:timeout] == 1_000
+      assert client.options[:receive_timeout] == 180_000
+      assert client.options[:retry] == false
+    end
+
+    test "an invalid app-env retry value raises instead of being ignored" do
+      Application.put_env(:claudio, Claudio.Client, retry: :yes)
+
+      assert_raise ArgumentError, ~r/:retry .*:yes/, fn ->
+        Claudio.Client.new(%{token: "t", version: "2023-06-01"})
+      end
+    end
+  end
+end
+
+defmodule Claudio.ClientOptionsTest do
+  # Per-client options never touch the application env, so these run async.
+  use ExUnit.Case, async: true
+
+  alias Claudio.Messages.Request
+
+  defp new(opts, endpoint \\ "https://api.anthropic.com/v1/"),
+    do: Claudio.Client.new(Map.merge(%{token: "t", version: "2023-06-01"}, opts), endpoint)
+
+  describe "per-client timeouts" do
+    test "timeout and recv_timeout set connect and receive timeouts" do
+      client = new(%{timeout: 5_000, recv_timeout: 7_000})
+
+      assert client.options[:connect_options][:timeout] == 5_000
+      assert client.options[:receive_timeout] == 7_000
+    end
+
+    test "unset timeouts keep the defaults" do
+      client = new(%{timeout: 5_000})
+
+      assert client.options[:connect_options][:timeout] == 5_000
+      assert client.options[:receive_timeout] == 120_000
+    end
+  end
+
+  describe "per-client retry" do
+    test "retry: [...] retries a POST on a retryable status" do
+      bypass = Bypass.open()
+      count = :counters.new(1, [:atomics])
+
+      Bypass.expect(bypass, "POST", "/messages", fn conn ->
+        :counters.add(count, 1, 1)
+
+        if :counters.get(count, 1) == 1 do
+          Plug.Conn.resp(
+            conn,
+            529,
+            ~s({"type":"error","error":{"type":"overloaded_error","message":"busy"}})
+          )
+        else
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            200,
+            Jason.encode!(%{
+              "id" => "msg_1",
+              "type" => "message",
+              "role" => "assistant",
+              "model" => "x",
+              "content" => [],
+              "stop_reason" => "end_turn",
+              "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+            })
+          )
+        end
+      end)
+
+      client =
+        new(
+          %{retry: [max_retries: 2, delay: 1, max_delay: 5]},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      request =
+        Request.new("x")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(8)
+
+      assert {:ok, %Claudio.Messages.Response{}} = Claudio.Messages.create(client, request)
+      assert :counters.get(count, 1) == 2
+    end
+
+    test "retry: true uses 3 retries; retry: false disables retries" do
+      assert new(%{retry: true}).options[:max_retries] == 3
+      assert new(%{retry: false}).options[:retry] == false
+    end
+
+    test "an invalid retry value raises, naming the value" do
+      assert_raise ArgumentError, ~r/:retry .*:yes/, fn -> new(%{retry: :yes}) end
+    end
+
+    test "an unknown retry option raises" do
+      assert_raise ArgumentError, ~r/max_retry/, fn -> new(%{retry: [max_retry: 2]}) end
+    end
+  end
 end
