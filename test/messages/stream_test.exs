@@ -1225,6 +1225,7 @@ defmodule Claudio.Messages.StreamTest do
       assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
       assert start.parent_span_context == ctx
       assert start.request_id == "req_link"
+      assert start.request_model == "claude-stream"
       assert [{_, %{reason: :completed, parent_span_context: ^ctx}}] = stops()
     end
 
@@ -1261,6 +1262,7 @@ defmodule Claudio.Messages.StreamTest do
       assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
       refute Map.has_key?(start, :parent_span_context)
       refute Map.has_key?(start, :request_id)
+      refute Map.has_key?(start, :request_model)
 
       assert [{_, stop}] = stops()
       assert stop.reason == :completed

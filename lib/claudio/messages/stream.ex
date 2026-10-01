@@ -194,6 +194,7 @@ defmodule Claudio.Messages.Stream do
     metadata
     |> Map.put(:parent_span_context, ctx)
     |> Claudio.Telemetry.put_present(:request_id, link[:request_id])
+    |> Claudio.Telemetry.put_present(:request_model, link[:model])
   end
 
   defp put_link(metadata, _link), do: metadata
