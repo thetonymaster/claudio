@@ -16,6 +16,9 @@ defmodule Claudio.MixProject do
       docs: docs(),
       aliases: aliases(),
       dialyzer: [plt_core_path: "_build/plts"],
+      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy) and 2.20.0, the latest
+      # release, has no fix for these yet. Hex warns once they no longer match the lock.
+      hex: [ignore_advisories: ["EEF-CVE-2026-43966", "EEF-CVE-2026-43969"]],
       name: "Claudio",
       source_url: @source_url
     ]

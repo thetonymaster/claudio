@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `define_tool/3` and `create_tool_result/4` return string-keyed maps. The types now match
   (documentation-only; no runtime change).
 
+### Security
+
+- Locked dependencies updated past Hex security advisories (req 0.5.15 → 0.7.4,
+  mint 1.6.2 → 1.11.0, hpax 1.0.0 → 1.1.0, and the test-only plug/cowboy stack).
+  `mix.lock` does not ship with the package: applications using Claudio should run
+  `mix deps.update req mint hpax` themselves. Two test-only cowlib advisories with no
+  upstream fix are acknowledged in `mix.exs` (`hex: [ignore_advisories: ...]`).
+
 ### Internal
 
 - Added Credo (`--strict`) and Dialyxir, a `mix precommit` alias, and CI checks for
