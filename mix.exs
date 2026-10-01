@@ -66,7 +66,7 @@ defmodule Claudio.MixProject do
       {:cowboy, "~> 2.18.0", only: :test},
       {:cowlib, "~> 2.19.0", only: :test},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.0"},
+      {:telemetry, "~> 1.3"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}

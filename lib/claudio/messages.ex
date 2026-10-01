@@ -117,6 +117,7 @@ defmodule Claudio.Messages do
 
   alias Claudio.APIError
   alias Claudio.Messages.{Request, Response}
+  alias Claudio.Telemetry
 
   @doc """
   Creates a message using the new structured API.
@@ -165,33 +166,33 @@ defmodule Claudio.Messages do
   """
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
-  def create_message(client, %{"stream" => true} = payload) do
-    # Same as create_streaming/2: not retried, and a non-200 body is drained off the mailbox.
-    case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
-      {:ok, %Req.Response{status: 200} = result} ->
-        {:ok, result}
-
-      {:ok, %Req.Response{status: status} = resp} ->
-        {:error, APIError.from_response(status, drain_async_body(resp))}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+  def create_message(client, %{"stream" => true} = payload), do: create_streaming(client, payload)
 
   def create_message(client, payload) do
-    case Req.post(client, url: "messages", json: payload) do
-      {:ok, %Req.Response{status: 200, body: body}} ->
-        # Convert atom keys to string keys for backward compatibility
-        body_with_string_keys = atomize_keys_to_strings(body)
-        {:ok, body_with_string_keys}
+    span([:claudio, :messages, :create], client, payload, create_start(payload, false), fn _ctx ->
+      case Req.post(client, url: "messages", json: payload) do
+        {:ok, %Req.Response{status: 200, body: body} = resp} when is_map(body) ->
+          # Convert atom keys to string keys for backward compatibility
+          response = Response.from_map(body)
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, APIError.from_response(status, body)}
+          ok_stop(
+            {:ok, atomize_keys_to_strings(body)},
+            resp,
+            response.usage,
+            response_fields(response)
+          )
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+        # A 200 whose body isn't a JSON object: returned exactly as before (Review Focus 2).
+        {:ok, %Req.Response{status: 200, body: body} = resp} ->
+          ok_stop({:ok, atomize_keys_to_strings(body)}, resp, nil, %{})
+
+        {:ok, %Req.Response{status: status, body: body} = resp} ->
+          error_stop({:error, APIError.from_response(status, body)}, resp)
+
+        {:error, reason} ->
+          error_stop({:error, reason}, nil)
+      end
+    end)
   end
 
   @doc """
@@ -237,27 +238,23 @@ defmodule Claudio.Messages do
   # Private functions
 
   defp create_streaming(client, payload) do
-    metadata = %{model: payload["model"] || payload[:model], stream: true}
-
-    :telemetry.span([:claudio, :messages, :create], metadata, fn ->
+    span([:claudio, :messages, :create], client, payload, create_start(payload, true), fn ctx ->
       # Not retried: a retried async request would leave the failed attempt's body
       # messages in the caller's mailbox.
-      result =
-        case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
-          {:ok, %Req.Response{status: 200} = r} ->
-            {:ok, r}
+      case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
+        {:ok, %Req.Response{status: 200} = resp} ->
+          resp = link_stream(resp, ctx, payload)
+          ok_stop({:ok, resp}, resp, nil, %{})
 
-          {:ok, %Req.Response{status: status} = resp} ->
-            # On non-200, Req with `into: :self` leaves the body as an async
-            # reference — drain the mailbox into a decoded body so the error
-            # message from Anthropic survives instead of being lost.
-            {:error, APIError.from_response(status, drain_async_body(resp))}
+        {:ok, %Req.Response{status: status} = resp} ->
+          # On non-200, Req with `into: :self` leaves the body as an async
+          # reference — drain the mailbox into a decoded body so the error
+          # message from Anthropic survives instead of being lost.
+          error_stop({:error, APIError.from_response(status, drain_async_body(resp))}, resp)
 
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {result, enrich_stop_metadata(metadata, result)}
+        {:error, reason} ->
+          error_stop({:error, reason}, nil)
+      end
     end)
   end
 
@@ -322,43 +319,91 @@ defmodule Claudio.Messages do
   end
 
   defp create_non_streaming(client, payload) do
-    metadata = %{model: payload["model"] || payload[:model], stream: false}
+    span([:claudio, :messages, :create], client, payload, create_start(payload, false), fn _ctx ->
+      case Req.post(client, url: "messages", json: payload) do
+        {:ok, %Req.Response{status: 200, body: body} = resp} when is_map(body) ->
+          response = Response.from_map(body)
+          ok_stop({:ok, response}, resp, response.usage, response_fields(response))
 
-    :telemetry.span([:claudio, :messages, :create], metadata, fn ->
-      result =
-        case Req.post(client, url: "messages", json: payload) do
-          {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
-            {:ok, Response.from_map(body)}
+        # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
+        {:ok, %Req.Response{status: status, body: body} = resp} ->
+          error_stop({:error, APIError.from_response(status, body)}, resp)
 
-          # Includes a 200 whose body isn't a JSON object (e.g. a proxy's text page).
-          {:ok, %Req.Response{status: status, body: body}} ->
-            {:error, APIError.from_response(status, body)}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {result, enrich_stop_metadata(metadata, result)}
+        {:error, reason} ->
+          error_stop({:error, reason}, nil)
+      end
     end)
   end
 
-  defp enrich_stop_metadata(metadata, result) do
-    stop_meta =
+  # Runs `fun` inside a :telemetry span. Claudio generates the span context (telemetry keeps a
+  # caller-supplied one) so a streaming response can carry it to Stream.parse_events/1.
+  # `fun` returns {result, measurements, stop_metadata}; extra stop measurements need telemetry >= 1.3.
+  defp span(event, client, payload, extra_start, fun) do
+    ctx = make_ref()
+
+    start_metadata =
+      %{model: payload["model"] || payload[:model], telemetry_span_context: ctx}
+      |> Map.merge(extra_start)
+      |> Telemetry.put_present(:server_address, Telemetry.server_address(client))
+
+    :telemetry.span(event, start_metadata, fn ->
+      {result, measurements, stop_metadata} = fun.(ctx)
+      {result, measurements, Map.merge(start_metadata, stop_metadata)}
+    end)
+  end
+
+  defp create_start(payload, stream?) do
+    Map.put(Telemetry.request_metadata(payload), :stream, stream?)
+  end
+
+  defp response_fields(%Response{} = response) do
+    %{}
+    |> Telemetry.put_present(:response_id, response.id)
+    |> Telemetry.put_present(:response_model, Response.served_by(response))
+    |> Telemetry.put_present(:stop_reason, response.stop_reason)
+  end
+
+  defp ok_stop(result, resp, usage, metadata) do
+    tokens = Telemetry.usage(usage)
+
+    metadata =
       metadata
-      |> Map.put(:status, elem(result, 0))
-      |> maybe_put_usage_metadata(result)
+      |> Map.merge(tokens)
+      |> Map.put(:status, :ok)
+      |> put_request_id(resp)
 
-    case result do
-      {:error, reason} -> Map.put(stop_meta, :error, inspect(reason))
-      _ -> stop_meta
-    end
+    {result, tokens, metadata}
   end
 
-  defp maybe_put_usage_metadata(metadata, {:ok, %Response{usage: usage}}) when is_map(usage) do
-    Map.merge(metadata, Claudio.Telemetry.usage(usage))
+  defp error_stop({:error, reason} = result, resp) do
+    metadata =
+      %{
+        status: :error,
+        error: inspect(reason),
+        error_type: Telemetry.error_type(reason),
+        status_code: status_code(reason)
+      }
+      |> put_request_id(resp)
+
+    {result, %{}, metadata}
   end
 
-  defp maybe_put_usage_metadata(metadata, _result), do: metadata
+  defp status_code(%APIError{status_code: code}), do: code
+  defp status_code(_reason), do: nil
+
+  defp put_request_id(metadata, nil), do: metadata
+
+  defp put_request_id(metadata, %Req.Response{} = resp),
+    do: Telemetry.put_present(metadata, :request_id, Telemetry.request_id(resp))
+
+  # The create span's link, read by Stream.parse_events/1 to emit a linked stream span.
+  defp link_stream(resp, ctx, payload) do
+    Req.Response.put_private(resp, :claudio, %{
+      span_context: ctx,
+      model: payload["model"] || payload[:model],
+      request_id: Telemetry.request_id(resp)
+    })
+  end
 
   # Recursively convert atom keys to string keys for backward compatibility
   defp atomize_keys_to_strings(map) when is_map(map) do

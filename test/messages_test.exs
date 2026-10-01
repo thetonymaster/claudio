@@ -1,7 +1,10 @@
+Code.require_file("telemetry_helper.exs", __DIR__)
+
 defmodule Claudio.MessagesTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
+  import Claudio.TelemetryTestSupport, only: [attach: 1, attach: 2]
 
   setup do
     # Create a client with Req.Test adapter for testing
@@ -816,5 +819,259 @@ defmodule Claudio.MessagesTest do
     assert error.message =~ "legacy busy"
     assert :counters.get(count, 1) == 1
     refute_receive _, 100
+  end
+
+  describe "create span (telemetry/OTel readiness)" do
+    @create [
+      [:claudio, :messages, :create, :start],
+      [:claudio, :messages, :create, :stop],
+      [:claudio, :messages, :create, :exception]
+    ]
+
+    defp json_resp(conn, status, body) do
+      conn
+      |> Plug.Conn.put_resp_header("request-id", "req_test_1")
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(status, Jason.encode!(body))
+    end
+
+    defp message_body(extra \\ %{}) do
+      Map.merge(
+        %{
+          "id" => "msg_span_1",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-span-model",
+          "content" => [%{"type" => "text", "text" => "ok"}],
+          "stop_reason" => "end_turn",
+          "usage" => %{"input_tokens" => 11, "output_tokens" => 3}
+        },
+        extra
+      )
+    end
+
+    defp span_request(model \\ "claude-span-model") do
+      Request.new(model)
+      |> Request.add_message(:user, "hi")
+      |> Request.set_max_tokens(16)
+      |> Request.set_temperature(0.5)
+    end
+
+    test "non-streaming start/stop carry request, response and token data", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, message_body()))
+
+      assert {:ok, _} = Claudio.Messages.create(client, span_request())
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :start], _, start}
+      assert start.model == "claude-span-model"
+      assert start.stream == false
+      assert start.max_tokens == 16
+      assert start.temperature == 0.5
+      assert start.server_address == "localhost"
+      assert is_reference(start.telemetry_span_context)
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements, stop}
+      assert stop.telemetry_span_context == start.telemetry_span_context
+      assert stop.status == :ok
+      assert stop.response_id == "msg_span_1"
+      assert stop.response_model == "claude-span-model"
+      assert stop.stop_reason == :end_turn
+      assert stop.request_id == "req_test_1"
+      assert stop.input_tokens == 11
+      assert measurements.input_tokens == 11
+      assert measurements.output_tokens == 3
+      assert is_integer(measurements.duration)
+    end
+
+    test "response_model is the fallback model that served the request", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      body =
+        message_body(%{
+          "model" => "claude-opus-5-5",
+          "content" => [
+            %{
+              "type" => "fallback",
+              "from" => %{"model" => "claude-opus-5-5"},
+              "to" => %{"model" => "claude-opus-4-8"},
+              "trigger" => "refusal"
+            },
+            %{"type" => "text", "text" => "ok"}
+          ]
+        })
+
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, body))
+      assert {:ok, _} = Claudio.Messages.create(client, span_request("claude-opus-5-5"))
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.model == "claude-opus-5-5"
+      assert stop.response_model == "claude-opus-4-8"
+    end
+
+    test "an API error has a bounded error_type, status_code and request_id", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        json_resp(conn, 429, %{
+          "type" => "error",
+          "error" => %{"type" => "rate_limit_error", "message" => "slow down"}
+        })
+      end)
+
+      assert {:error, %Claudio.APIError{}} = Claudio.Messages.create(client, span_request())
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements, stop}
+      assert stop.status == :error
+      assert stop.error_type == :rate_limit_error
+      assert stop.status_code == 429
+      assert stop.request_id == "req_test_1"
+      assert is_binary(stop.error)
+      refute Map.has_key?(measurements, :input_tokens)
+    end
+
+    test "a transport error has its reason as error_type and a nil status_code", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+      Bypass.down(bypass)
+
+      assert {:error, %Req.TransportError{}} = Claudio.Messages.create(client, span_request())
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.error_type == :econnrefused
+      assert Map.has_key?(stop, :status_code)
+      assert stop.status_code == nil
+    end
+
+    test "a raise inside the call emits :exception and reaches the caller", %{client: client} do
+      attach(@create)
+      payload = %{"model" => "m", "max_tokens" => 8, "messages" => [self()]}
+
+      assert_raise Protocol.UndefinedError, fn -> Claudio.Messages.create(client, payload) end
+      assert_receive {:telemetry, [:claudio, :messages, :create, :exception], _, meta}
+      assert meta.model == "m"
+      assert meta.kind == :error
+    end
+
+    test "streaming stop fires at headers and the response carries the span link", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("request-id", "req_stream_1")
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, "event: ping\ndata: {}\n\n")
+      end)
+
+      assert {:ok, %Req.Response{} = resp} =
+               Claudio.Messages.create(client, Request.enable_streaming(span_request()))
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.stream == true
+      assert stop.status == :ok
+      assert stop.request_id == "req_stream_1"
+      refute Map.has_key?(stop, :input_tokens)
+
+      assert resp.private.claudio == %{
+               span_context: stop.telemetry_span_context,
+               model: "claude-span-model",
+               request_id: "req_stream_1"
+             }
+    end
+
+    test "legacy create_message/2 emits the create span", %{client: client, bypass: bypass} do
+      attach(@create)
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, message_body()))
+
+      assert {:ok, %{"id" => "msg_span_1"}} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "claude-span-model",
+                 "max_tokens" => 8,
+                 "messages" => [%{"role" => "user", "content" => "hi"}]
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], measurements, stop}
+      assert stop.stream == false
+      assert stop.response_id == "msg_span_1"
+      assert stop.stop_reason == :end_turn
+      assert measurements.input_tokens == 11
+    end
+
+    test "legacy create_message/2 with a non-object 200 body still returns it", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn |> Plug.Conn.put_resp_content_type("text/plain") |> Plug.Conn.resp(200, "plain text")
+      end)
+
+      assert {:ok, "plain text"} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.status == :ok
+      refute Map.has_key?(stop, :response_id)
+    end
+
+    test "legacy streaming create_message/2 emits the create span", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.resp(200, "")
+      end)
+
+      assert {:ok, %Req.Response{}} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "stream" => true,
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _,
+                      %{stream: true, status: :ok}}
+    end
+
+    test "atom-keyed payload maps report model and request params", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, message_body()))
+
+      assert {:ok, _} =
+               Claudio.Messages.create(client, %{
+                 model: "claude-atom",
+                 max_tokens: 9,
+                 messages: [%{role: "user", content: "hi"}]
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :start], _, start}
+      assert start.model == "claude-atom"
+      assert start.max_tokens == 9
+    end
   end
 end
