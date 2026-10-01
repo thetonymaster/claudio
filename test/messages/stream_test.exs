@@ -3,6 +3,7 @@ Code.require_file("../telemetry_helper.exs", __DIR__)
 defmodule Claudio.Messages.StreamTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Request
   alias Claudio.Messages.Response
   alias Claudio.Messages.Stream, as: ClaudioStream
   import Claudio.TelemetryTestSupport, only: [attach: 1, attach: 2]
@@ -1262,10 +1263,10 @@ defmodule Claudio.Messages.StreamTest do
         )
 
       request =
-        Claudio.Messages.Request.new("claude-stream")
-        |> Claudio.Messages.Request.add_message(:user, "hi")
-        |> Claudio.Messages.Request.set_max_tokens(16)
-        |> Claudio.Messages.Request.enable_streaming()
+        Request.new("claude-stream")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(16)
+        |> Request.enable_streaming()
 
       assert {:ok, %Req.Response{} = resp} = Claudio.Messages.create(client, request)
       assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, create_stop}
