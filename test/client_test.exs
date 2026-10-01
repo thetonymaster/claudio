@@ -384,6 +384,24 @@ defmodule Claudio.ClientTest do
         Claudio.Client.new(%{token: "t", version: "2023-06-01"})
       end
     end
+
+    test "an explicit nil falls back to the app env, like an omitted key" do
+      Application.put_env(:claudio, Claudio.Client, timeout: 30_000, retry: [max_retries: 5])
+
+      client =
+        Claudio.Client.new(%{token: "t", version: "2023-06-01", timeout: nil, retry: nil})
+
+      assert client.options[:connect_options][:timeout] == 30_000
+      assert client.options[:max_retries] == 5
+    end
+
+    test "an invalid app-env timeout raises" do
+      Application.put_env(:claudio, Claudio.Client, recv_timeout: "120000")
+
+      assert_raise ArgumentError, ~r/:recv_timeout .*"120000"/, fn ->
+        Claudio.Client.new(%{token: "t", version: "2023-06-01"})
+      end
+    end
   end
 end
 
@@ -409,6 +427,18 @@ defmodule Claudio.ClientOptionsTest do
 
       assert client.options[:connect_options][:timeout] == 5_000
       assert client.options[:receive_timeout] == 120_000
+    end
+
+    test ":infinity and 0 are accepted" do
+      client = new(%{timeout: 0, recv_timeout: :infinity})
+
+      assert client.options[:connect_options][:timeout] == 0
+      assert client.options[:receive_timeout] == :infinity
+    end
+
+    test "a non-integer or negative timeout raises, naming the option and value" do
+      assert_raise ArgumentError, ~r/:timeout .*"5000"/, fn -> new(%{timeout: "5000"}) end
+      assert_raise ArgumentError, ~r/:recv_timeout .*-1/, fn -> new(%{recv_timeout: -1}) end
     end
   end
 

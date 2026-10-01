@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An invalid `retry` value (anything but `true`, `false` or a keyword list) or an unknown
   retry key now raises `ArgumentError`, for per-client and app config alike. Previously
   it was silently ignored and Req's default (GET/HEAD-only retries) applied.
+- `timeout` / `recv_timeout` must be a non-negative integer (ms) or `:infinity`; anything
+  else raises `ArgumentError` when the client is built (per-client and app config alike).
+  Previously a bad value failed on the first request with an error that did not name it.
 
 ### Fixed
 

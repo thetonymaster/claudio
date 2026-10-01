@@ -17,8 +17,8 @@ defmodule Claudio.Client do
         retry: true
       })
 
-  Each key given to `new/2` wins. Keys you leave out fall back to the application
-  environment, then to the built-in defaults:
+  Each key given to `new/2` wins. Keys you leave out, or pass as `nil`, fall back to
+  the application environment, then to the built-in defaults:
 
       # config/config.exs
       config :claudio,
@@ -34,7 +34,8 @@ defmodule Claudio.Client do
 
   `timeout` controls connection establishment; `recv_timeout` controls how long to
   wait for data once connected. For long streaming operations, raise `recv_timeout`
-  (e.g. `recv_timeout: 600_000` for 10 minutes).
+  (e.g. `recv_timeout: 600_000` for 10 minutes). Both take a non-negative integer (ms)
+  or `:infinity`; anything else raises `ArgumentError` when the client is built.
 
   ### Retries
 
@@ -47,7 +48,8 @@ defmodule Claudio.Client do
       attempt, capped at `max_delay` (all in ms)
     * `retry: false` — no retries at all (not even Req's GET/HEAD default)
 
-  Without `retry:`, Req's default applies: only GET/HEAD requests are retried. Any
+  Without `retry:` (unset or `nil` at every level), Req's default applies: only GET/HEAD
+  requests are retried. Any
   other value, or an unknown key in the keyword list, raises `ArgumentError`.
   Streaming requests are never retried.
 
@@ -102,8 +104,8 @@ defmodule Claudio.Client do
       * `:version` (optional) - API version string (default: "2023-06-01")
       * `:beta` (optional) - List of beta feature flags
       * `:auth_type` (optional) - `:api_key` (default) or `:bearer`
-      * `:timeout` (optional) - Connection timeout in ms (default: 60_000)
-      * `:recv_timeout` (optional) - Receive timeout in ms (default: 120_000)
+      * `:timeout` (optional) - Connection timeout in ms or `:infinity` (default: 60_000)
+      * `:recv_timeout` (optional) - Receive timeout in ms or `:infinity` (default: 120_000)
       * `:retry` (optional) - `true`, `false`, or `[delay:, max_retries:, max_delay:]`;
         see "Retries" in the module docs
     * `endpoint` (optional) - API endpoint URL (default: "https://api.anthropic.com/v1/")
@@ -191,8 +193,8 @@ defmodule Claudio.Client do
 
   defp build_request(auth, endpoint) do
     env = config()
-    timeout = setting(auth, env, :timeout, 60_000)
-    recv_timeout = setting(auth, env, :recv_timeout, 120_000)
+    timeout = validate_timeout!(:timeout, setting(auth, env, :timeout, 60_000))
+    recv_timeout = validate_timeout!(:recv_timeout, setting(auth, env, :recv_timeout, 120_000))
     retry_opts = auth |> setting(env, :retry, nil) |> normalize_retry!()
 
     opts = [
@@ -266,12 +268,28 @@ defmodule Claudio.Client do
   defp auth_header(_auth, token), do: {"x-api-key", token}
 
   # A key given to new/2 wins over `config :claudio, Claudio.Client`, which wins over
-  # the built-in default.
+  # the built-in default. `nil` counts as not given at either level, so passing through
+  # an absent option (`retry: opts[:retry]`) cannot silently override the app config.
   defp setting(auth, env, key, default) do
-    case Map.fetch(auth, key) do
-      {:ok, value} -> value
-      :error -> Keyword.get(env, key, default)
+    case Map.get(auth, key) do
+      nil ->
+        case Keyword.get(env, key) do
+          nil -> default
+          value -> value
+        end
+
+      value ->
+        value
     end
+  end
+
+  defp validate_timeout!(_key, :infinity), do: :infinity
+  defp validate_timeout!(_key, ms) when is_integer(ms) and ms >= 0, do: ms
+
+  defp validate_timeout!(key, other) do
+    raise ArgumentError,
+          "Claudio.Client.new/2 #{inspect(key)} must be a non-negative integer (ms) or " <>
+            ":infinity; got #{inspect(other)}"
   end
 
   @retry_keys [:delay, :max_retries, :max_delay]
