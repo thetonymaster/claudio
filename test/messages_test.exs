@@ -280,6 +280,87 @@ defmodule Claudio.MessagesTest do
     assert_received {:sentinel, :second}
   end
 
+  # Regression: a drain that hits its 2s deadline must cancel the async response,
+  # or chunks arriving after create/2 returns land in the caller's mailbox. A raw TCP
+  # server: Bypass/Cowboy kills a handler whose client hung up and re-raises that exit.
+  test "streaming 400 drain cancels the response at the deadline (no late chunks)" do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
+
+    server =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        {:ok, _request} = :gen_tcp.recv(socket, 0)
+        first = ~s({"type":"error",)
+
+        :ok =
+          :gen_tcp.send(
+            socket,
+            "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\n" <>
+              "transfer-encoding: chunked\r\n\r\n" <> chunk(first)
+          )
+
+        :timer.sleep(2_600)
+        # The client has cancelled by now; the write may fail.
+        _ = :gen_tcp.send(socket, chunk(~s("error":{"type":"x","message":"late"}})))
+        :gen_tcp.close(socket)
+      end)
+
+    client = Claudio.Client.new(%{token: "t", version: "2023-06-01"}, "http://localhost:#{port}/")
+
+    request =
+      Request.new("x")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(8)
+      |> Request.enable_streaming()
+
+    assert {:error, %Claudio.APIError{status_code: 400}} =
+             Claudio.Messages.create(client, request)
+
+    Task.await(server, 5_000)
+    :gen_tcp.close(listen)
+    refute_receive _, 500
+  end
+
+  defp chunk(data), do: Integer.to_string(byte_size(data), 16) <> "\r\n" <> data <> "\r\n"
+
+  # Regression: a transport error while draining ends the drain at once instead of
+  # being ignored until the 2s deadline.
+  # (A server that dies mid-body ends the stream with :done, not an error; a receive
+  # timeout is what delivers `{:error, _}`.)
+  test "streaming 400 drain stops on a stream error", %{bypass: bypass} do
+    Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+      # The client times out mid-handler; see the test above.
+      Process.flag(:trap_exit, true)
+
+      conn =
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_chunked(400)
+
+      {:ok, conn} = Plug.Conn.chunk(conn, ~s({"type":"error",))
+      :timer.sleep(1_500)
+      conn
+    end)
+
+    client =
+      Claudio.Client.new(
+        %{token: "t", version: "2023-06-01", recv_timeout: 300},
+        "http://localhost:#{bypass.port}/"
+      )
+
+    request =
+      Request.new("x")
+      |> Request.add_message(:user, "Hello")
+      |> Request.set_max_tokens(8)
+      |> Request.enable_streaming()
+
+    {micros, result} = :timer.tc(fn -> Claudio.Messages.create(client, request) end)
+
+    assert {:error, %Claudio.APIError{status_code: 400}} = result
+    assert micros < 1_000_000, "drain took #{div(micros, 1000)}ms"
+  end
+
   test "telemetry stop metadata includes token usage for non-streaming success", %{
     client: client,
     bypass: bypass

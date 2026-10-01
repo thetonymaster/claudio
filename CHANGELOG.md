@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never retried (a retried `into: :self` request left the failed attempt's body messages in
   the caller's mailbox), and a non-200 error body is drained off the mailbox, so the
   `APIError` carries the API's message instead of a generic "Streaming request failed".
+- Draining a streaming error body (both streaming paths) now cancels the response when its 2s
+  deadline expires, so chunks still in flight no longer land in the caller's mailbox after
+  the call returns, and a transport error mid-body ends the drain at once instead of
+  waiting out the deadline. The `APIError` keeps the HTTP status either way.
 
 ### Security
 

@@ -271,6 +271,8 @@ defmodule Claudio.Messages do
 
   defp drain_loop(resp, acc, unknown, deadline) do
     if System.monotonic_time(:millisecond) > deadline do
+      # Cancel so chunks still in flight don't reach the caller's mailbox after we return.
+      Req.cancel_async_response(resp)
       finish_drain(acc, unknown)
     else
       receive do
@@ -282,6 +284,10 @@ defmodule Claudio.Messages do
             {:ok, [:done]} ->
               finish_drain(acc, unknown)
 
+            # A transport error ends the body; keep what arrived (the status is authoritative).
+            {:error, _reason} ->
+              finish_drain(acc, unknown)
+
             :unknown ->
               drain_loop(resp, acc, [msg | unknown], deadline)
 
@@ -289,12 +295,7 @@ defmodule Claudio.Messages do
               drain_loop(resp, acc, unknown, deadline)
           end
       after
-        200 ->
-          if System.monotonic_time(:millisecond) > deadline do
-            finish_drain(acc, unknown)
-          else
-            drain_loop(resp, acc, unknown, deadline)
-          end
+        200 -> drain_loop(resp, acc, unknown, deadline)
       end
     end
   end
