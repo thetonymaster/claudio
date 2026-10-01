@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The `req` requirement is now `~> 0.6 and >= 0.6.1`** (was `~> 0.5`). Every req
+  release before 0.6.1 carries EEF-CVE-2026-49755 (decompression-bomb DoS) and
+  everything before 0.6.0 carries EEF-CVE-2026-49756 (multipart header injection, which
+  `Files.upload/3` and `Skills.create/2` uploads would reach). Applications locked to an
+  older req will be asked to update it. Verified: the suite passes on req 0.6.1
+  (with finch 0.22.0, mint 1.11.0) as well as the locked 0.7.4.
 - Locked dependencies updated past Hex security advisories (req 0.5.15 → 0.7.4,
   mint 1.6.2 → 1.11.0, hpax 1.0.0 → 1.1.0, and the test-only plug/cowboy stack).
   `mix.lock` does not ship with the package: applications using Claudio should run
