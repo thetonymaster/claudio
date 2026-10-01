@@ -159,7 +159,11 @@ defmodule Claudio.Messages.StreamTest do
   end
 
   describe "stream usage telemetry (pre-release audit)" do
-    def forward_usage(_name, _measurements, metadata, pid), do: send(pid, {:usage, metadata})
+    # Handlers run in the emitting process, and this module is async: forward only the
+    # events this test emitted, not ones from concurrent tests parsing their own streams.
+    def forward_usage(_name, _measurements, metadata, pid) do
+      if self() == pid, do: send(pid, {:usage, metadata})
+    end
 
     test "message_start usage is merged with message_delta usage (delta wins)" do
       id = "stream-usage-#{System.unique_integer([:positive])}"

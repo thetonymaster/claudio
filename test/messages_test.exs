@@ -695,4 +695,45 @@ defmodule Claudio.MessagesTest do
 
     assert error.message =~ "503"
   end
+
+  # The legacy streaming path must match create/2: a retried `into: :self` request
+  # leaves the failed attempt's body messages in the caller's mailbox, and a non-200
+  # body sits on the mailbox rather than in `resp.body`.
+  test "legacy streaming create_message/2 is not retried and surfaces the error body", %{
+    bypass: bypass
+  } do
+    count = :counters.new(1, [:atomics])
+
+    Bypass.expect(bypass, "POST", "/messages", fn conn ->
+      :counters.add(count, 1, 1)
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(
+        503,
+        Jason.encode!(%{
+          "type" => "error",
+          "error" => %{"type" => "overloaded_error", "message" => "legacy busy"}
+        })
+      )
+    end)
+
+    client =
+      Claudio.Client.new(
+        %{token: "t", version: "2023-06-01", retry: [max_retries: 2, delay: 1]},
+        "http://localhost:#{bypass.port}/"
+      )
+
+    assert {:error, %Claudio.APIError{status_code: 503} = error} =
+             Claudio.Messages.create_message(client, %{
+               "model" => "x",
+               "max_tokens" => 8,
+               "stream" => true,
+               "messages" => [%{"role" => "user", "content" => "hi"}]
+             })
+
+    assert error.message =~ "legacy busy"
+    assert :counters.get(count, 1) == 1
+    refute_receive _, 100
+  end
 end

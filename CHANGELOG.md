@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Claudio.Tools.tool_definition` and `tool_result` typespecs described atom-keyed maps;
   `define_tool/3` and `create_tool_result/4` return string-keyed maps. The types now match
   (documentation-only; no runtime change).
+- The legacy streaming `Claudio.Messages.create_message/2` now matches `create/2`: it is
+  never retried (a retried `into: :self` request left the failed attempt's body messages in
+  the caller's mailbox), and a non-200 error body is drained off the mailbox, so the
+  `APIError` carries the API's message instead of a generic "Streaming request failed".
 
 ### Security
 

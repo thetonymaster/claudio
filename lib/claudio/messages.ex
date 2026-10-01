@@ -166,12 +166,13 @@ defmodule Claudio.Messages do
   @spec create_message(Req.Request.t(), map()) ::
           {:ok, map() | Req.Response.t()} | {:error, term()}
   def create_message(client, %{"stream" => true} = payload) do
-    case Req.post(client, url: "messages", json: payload, into: :self) do
+    # Same as create_streaming/2: not retried, and a non-200 body is drained off the mailbox.
+    case Req.post(client, url: "messages", json: payload, into: :self, retry: false) do
       {:ok, %Req.Response{status: 200} = result} ->
         {:ok, result}
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, APIError.from_response(status, body)}
+      {:ok, %Req.Response{status: status} = resp} ->
+        {:error, APIError.from_response(status, drain_async_body(resp))}
 
       {:error, reason} ->
         {:error, reason}
