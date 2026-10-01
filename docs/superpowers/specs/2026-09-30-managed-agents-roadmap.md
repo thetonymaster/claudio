@@ -48,7 +48,7 @@ The exact handler contract is fixed in the MA2 spec.
 
 | Spec | Scope | Status |
 |------|-------|--------|
-| **MA1** | Foundation: shared HTTP helper (beta, bracketed query encoding), `ManagedAgents.stream/2`; Agents, Environments, Sessions (CRUD, archive/delete, events send + list, session resources) | spec `2026-09-30-ma1-foundation-design.md` |
+| **MA1** | Foundation: shared HTTP helper (beta, bracketed query encoding), `ManagedAgents.stream/2`; Agents, Environments, Sessions (CRUD, archive/delete, events send + list, session resources) | implemented (MA1 PR); spec `2026-09-30-ma1-foundation-design.md`, plan `plans/2026-09-30-ma1-foundation.md` |
 | MA2 | Running sessions: SSE event stream, `Event` structs + builders, session runner (custom tool handlers, confirmation callback, reconnect + dedupe by event id), session output files (`/v1/files?scope_id=`), `Claudio.Agent` deprecation | not started |
 | MA3 | Deployments + deployment runs (pause/unpause/run), Vaults + credentials (archive, `mcp_oauth_validate`), Memory stores + memories + memory versions (separate beta), session threads | not started |
 | MA4 | Dreams (research preview, access-gated; labelled preview), self-hosted environment work queue, webhook signature verification (pure function) | not started |
