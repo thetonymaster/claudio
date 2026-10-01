@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Locked dependencies updated past Hex security advisories (req 0.5.15 → 0.7.4,
   mint 1.6.2 → 1.11.0, hpax 1.0.0 → 1.1.0, and the test-only plug/cowboy stack).
   `mix.lock` does not ship with the package: applications using Claudio should run
-  `mix deps.update req mint hpax` themselves. Two test-only cowlib advisories with no
-  upstream fix are acknowledged in `mix.exs` (`hex: [ignore_advisories: ...]`).
+  `mix deps.update req mint hpax` themselves. Test-only cowboy/cowlib are pinned to
+  2.18.0/2.19.0 (cowlib 2.20.0 does not compile on OTP 26); three cowlib advisories in
+  that test-only server are acknowledged in `mix.exs` (`hex: [ignore_advisories: ...]`).
 
 ### Internal
 

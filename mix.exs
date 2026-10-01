@@ -16,9 +16,12 @@ defmodule Claudio.MixProject do
       docs: docs(),
       aliases: aliases(),
       dialyzer: [plt_core_path: "_build/plts"],
-      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy) and 2.20.0, the latest
-      # release, has no fix for these yet. Hex warns once they no longer match the lock.
-      hex: [ignore_advisories: ["EEF-CVE-2026-43966", "EEF-CVE-2026-43969"]],
+      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy). 43966 and 43969 have no fix in
+      # any release; 43971 is fixed in 2.20.0, which is pinned out (see deps/0: OTP 26).
+      # Hex warns once an entry no longer matches the lock.
+      hex: [
+        ignore_advisories: ["EEF-CVE-2026-43966", "EEF-CVE-2026-43969", "EEF-CVE-2026-43971"]
+      ],
       name: "Claudio",
       source_url: @source_url
     ]
@@ -54,6 +57,11 @@ defmodule Claudio.MixProject do
       {:req, "~> 0.5"},
       {:bypass, "~> 2.1", only: :test},
       {:plug_cowboy, "~> 2.0", only: :test},
+      # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
+      # fails to compile on OTP 26, which CI still tests. Lift these pins when OTP 26 leaves
+      # the matrix.
+      {:cowboy, "~> 2.18.0", only: :test},
+      {:cowlib, "~> 2.19.0", only: :test},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
