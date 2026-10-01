@@ -121,11 +121,9 @@ defmodule Claudio.Messages.Stream do
 
   defp span_event({:ok, %{event: "message_start", data: %{} = data} = parsed} = event, span) do
     span =
-      if span.started? do
-        span
-      else
-        message = map_field(data, :message) || %{}
-        start_span(span, field(message, :model), field(message, :id))
+      case {span.started?, map_field(data, :message)} do
+        {false, %{} = message} -> start_span(span, field(message, :model), field(message, :id))
+        _ -> span
       end
 
     {[event], %{span | usage: track_usage(span.usage, parsed)}}
@@ -260,7 +258,13 @@ defmodule Claudio.Messages.Stream do
   defp event_usage(%{event: "message_delta", data: data}), do: map_field(data, :usage)
 
   # A field under its string key, else its atom key.
-  defp field(map, key), do: Map.get(map, Atom.to_string(key)) || Map.get(map, key)
+  # A stored `false` is a value, not an absent key.
+  defp field(map, key) do
+    case Map.fetch(map, Atom.to_string(key)) do
+      {:ok, value} -> value
+      :error -> Map.get(map, key)
+    end
+  end
 
   # A map-valued field; nil when absent or not a map.
   defp map_field(%{} = map, key) do

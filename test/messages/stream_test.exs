@@ -1228,6 +1228,29 @@ defmodule Claudio.Messages.StreamTest do
       assert [{_, %{reason: :completed, parent_span_context: ^ctx}}] = stops()
     end
 
+    test "a malformed message_start does not start the span; a later valid one does" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start", %{"type" => "message_start", "message" => "oops"}},
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "id2", "model" => "m2", "content" => []}
+           }},
+          {"message_stop", %{"type" => "message_stop"}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.model == "m2"
+      assert start.response_id == "id2"
+      refute_receive {:telemetry, [:claudio, :messages, :stream, :start], _, _}, 20
+      assert [{_, %{reason: :completed}}] = stops()
+    end
+
     test "an unlinked %Req.Response{} emits a pair without link keys" do
       attach(@span)
 
