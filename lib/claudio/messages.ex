@@ -321,10 +321,12 @@ defmodule Claudio.Messages do
     end
   end
 
-  # Keys are converted to strings for backward compatibility. Only a message-shaped body is
-  # parsed (for its telemetry fields); anything else is returned as it always was.
+  # Keys are converted to strings for backward compatibility. The body is parsed (for its
+  # telemetry fields) only when Response.from_map/1 accepts it: its sole raising path is a
+  # `content` that is neither a list nor absent/nil/false (any list item is accepted, unknown
+  # items pass through). Anything else is returned as it always was.
   defp legacy_ok(body, resp) do
-    if is_list(Map.get(body, "content", [])) do
+    if parseable_content?(body["content"]) do
       response = Response.from_map(body)
 
       ok_stop(
@@ -337,6 +339,8 @@ defmodule Claudio.Messages do
       ok_stop({:ok, atomize_keys_to_strings(body)}, resp, body["usage"], %{})
     end
   end
+
+  defp parseable_content?(content), do: is_list(content) or content in [nil, false]
 
   defp payload_model(payload), do: payload["model"] || payload[:model]
 

@@ -1100,6 +1100,44 @@ defmodule Claudio.MessagesTest do
       refute Map.has_key?(measurements, :input_tokens)
     end
 
+    test "legacy 200 with non-map content items returns the body unchanged", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, %{"content" => [1]}))
+
+      assert {:ok, %{"content" => [1]}} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, %{status: :ok}}
+    end
+
+    test "legacy 200 with null content still reports the response fields", %{
+      client: client,
+      bypass: bypass
+    } do
+      attach(@create)
+      body = Map.put(message_body(), "content", nil)
+      Bypass.expect_once(bypass, "POST", "/messages", &json_resp(&1, 200, body))
+
+      assert {:ok, %{"content" => nil}} =
+               Claudio.Messages.create_message(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "messages" => []
+               })
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, stop}
+      assert stop.status == :ok
+      assert stop.response_id == "msg_span_1"
+      assert stop.stop_reason == :end_turn
+    end
+
     test "a 200 without usage emits no token measurements", %{client: client, bypass: bypass} do
       attach(@create)
       body = Map.delete(message_body(), "usage")
