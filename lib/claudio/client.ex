@@ -112,7 +112,8 @@ defmodule Claudio.Client do
 
   ## Returns
 
-  Returns a `Req.Request` struct configured for Anthropic API calls.
+  Returns a `Req.Request` struct configured for Anthropic API calls. Requests made with it emit
+  `[:claudio, :http, :request, :start | :stop]` per attempt. See the [telemetry guide](telemetry.html).
 
   ## Examples
 
@@ -210,7 +211,9 @@ defmodule Claudio.Client do
         finch -> [{:finch, finch} | Keyword.delete(opts, :connect_options)]
       end
 
-    Req.new(opts ++ req_retry_options(retry_opts))
+    (opts ++ req_retry_options(retry_opts))
+    |> Req.new()
+    |> Claudio.Telemetry.attach_http()
   end
 
   # Maps the documented `retry:` config onto Req's retry step. Req's own default only

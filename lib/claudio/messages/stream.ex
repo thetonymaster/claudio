@@ -2,10 +2,8 @@ defmodule Claudio.Messages.Stream do
   @moduledoc """
   Utilities for parsing and consuming Server-Sent Events (SSE) from streaming Messages API responses.
 
-  Streaming usage telemetry is emitted via `[:claudio, :messages, :stream, :usage]`
-  when `parse_events/1` reaches the terminal `message_stop` event; the usage is
-  `message_start`'s merged with the `message_delta` frames (delta wins). Metadata carries `:input_tokens`,
-  `:output_tokens`, the cache counters and `:thinking_tokens` when present.
+  `parse_events/1` emits `[:claudio, :messages, :stream, :start | :stop]` around each consumption
+  (and the older `[:claudio, :messages, :stream, :usage]`); see the [telemetry guide](telemetry.html).
 
   ## Event Types
 
@@ -25,13 +23,15 @@ defmodule Claudio.Messages.Stream do
       {:ok, response} =
         Claudio.Messages.create(client, Claudio.Messages.Request.enable_streaming(request))
 
-      response.body
+      response
       |> Claudio.Messages.Stream.parse_events()
       |> Stream.filter(&match?({:ok, %{event: "content_block_delta"}}, &1))
       |> Enum.each(fn {:ok, event} ->
         IO.puts(event.data["delta"]["text"])
       end)
   """
+
+  alias Claudio.Messages.Response
 
   @type event :: %{
           event: String.t(),
@@ -45,19 +45,34 @@ defmodule Claudio.Messages.Stream do
 
   Returns a Stream of `{:ok, event}` or `{:error, reason}` tuples.
 
+  Pass the whole `%Req.Response{}` from `Claudio.Messages.create/2` to link the stream span
+  to the `create` span; passing `response.body` still works, unlinked.
+
+  Emits `[:claudio, :messages, :stream, :start | :stop]` around each consumption of the
+  returned stream; see the [telemetry guide](telemetry.html).
+
   ## Example
 
       response
       |> Stream.parse_events()
       |> Enum.to_list()
   """
-  @spec parse_events(Enumerable.t()) :: Enumerable.t()
-  def parse_events(stream) do
+  @spec parse_events(Req.Response.t() | Enumerable.t()) :: Enumerable.t()
+  def parse_events(%Req.Response{body: body} = response) do
+    # A non-async body (e.g. a Req.Test plug) is the whole SSE payload as one binary.
+    body = if is_binary(body), do: [body], else: body
+    do_parse_events(body, Req.Response.get_private(response, :claudio))
+  end
+
+  def parse_events(stream), do: do_parse_events(stream, nil)
+
+  defp do_parse_events(stream, link) do
     stream
     |> Stream.transform(fn -> "" end, &parse_chunk/2, &flush_buffer/1, fn _ -> :ok end)
     |> Stream.map(&parse_event/1)
     |> emit_usage_telemetry()
     |> halt_after_message_stop()
+    |> stream_span(link)
   end
 
   # Helper to stop consuming stream after message_stop event
@@ -81,32 +96,201 @@ defmodule Claudio.Messages.Stream do
     end)
   end
 
+  # [:claudio, :messages, :stream] :start/:stop around one consumption. Exactly one :stop per
+  # :start: on message_stop, an SSE error, a parse error, the upstream ending without
+  # message_stop (last fun), or the consumer halting (after fun).
+  defp stream_span(events, link) do
+    Stream.transform(
+      events,
+      fn -> new_span(link) end,
+      &span_event/2,
+      fn span -> {[], finish_span(span, :error, :incomplete_stream)} end,
+      fn span -> finish_span(span, :halted, nil) end
+    )
+  end
+
+  defp new_span(link) do
+    %{
+      link: link,
+      started?: false,
+      stopped?: false,
+      # The span covers the whole consumption: its clock starts here, not at message_start.
+      start_time: System.monotonic_time(),
+      start_system_time: System.system_time(),
+      metadata: %{},
+      usage: nil,
+      stop_reason: nil,
+      fallback_model: nil
+    }
+  end
+
+  defp span_event({:ok, %{event: "message_start", data: %{} = data} = parsed} = event, span) do
+    span =
+      case {span.started?, map_field(data, :message)} do
+        {false, %{} = message} -> start_span(span, field(message, :model), field(message, :id))
+        _ -> span
+      end
+
+    {[event], %{span | usage: track_usage(span.usage, parsed)}}
+  end
+
+  defp span_event({:ok, %{event: "message_delta", data: %{} = data} = parsed} = event, span) do
+    stop_reason =
+      case data do
+        %{"delta" => %{"stop_reason" => reason}} when is_binary(reason) -> reason
+        _ -> span.stop_reason
+      end
+
+    {[event], %{span | usage: track_usage(span.usage, parsed), stop_reason: stop_reason}}
+  end
+
+  defp span_event(
+         {:ok,
+          %{
+            event: "content_block_start",
+            data: %{"content_block" => %{"type" => "fallback", "to" => %{"model" => model}}}
+          }} = event,
+         span
+       )
+       when is_binary(model),
+       do: {[event], %{span | fallback_model: model}}
+
+  defp span_event({:ok, %{event: "message_stop"}} = event, span),
+    do: {[event], finish_span(span, :completed, nil)}
+
+  defp span_event({:ok, %{event: "error", data: data}} = event, span) do
+    error_type =
+      case data do
+        %{"error" => %{"type" => type}} when is_binary(type) ->
+          Claudio.Telemetry.bounded_type(type) || :unknown
+
+        _ ->
+          :stream_error
+      end
+
+    {[event], finish_span(span, :error, error_type)}
+  end
+
+  defp span_event({:error, _reason} = event, span),
+    do: {[event], finish_span(span, :error, :parse_error)}
+
+  defp span_event(event, span), do: {[event], span}
+
+  defp start_span(span, model, response_id) do
+    link_model = if span.link, do: span.link[:model]
+
+    metadata =
+      %{telemetry_span_context: make_ref()}
+      |> Claudio.Telemetry.put_present(:model, model || link_model)
+      |> Claudio.Telemetry.put_present(:response_id, response_id)
+      |> put_link(span.link)
+
+    :telemetry.execute(
+      [:claudio, :messages, :stream, :start],
+      %{monotonic_time: span.start_time, system_time: span.start_system_time},
+      metadata
+    )
+
+    %{span | started?: true, metadata: metadata}
+  end
+
+  defp put_link(metadata, %{span_context: ctx} = link) do
+    metadata
+    |> Map.put(:parent_span_context, ctx)
+    |> Claudio.Telemetry.put_present(:request_id, link[:request_id])
+    |> Claudio.Telemetry.put_present(:request_model, link[:model])
+    |> Map.merge(link[:request_metadata] || %{})
+  end
+
+  defp put_link(metadata, _link), do: metadata
+
+  defp finish_span(%{stopped?: true} = span, _reason, _error_type), do: span
+
+  defp finish_span(%{started?: false} = span, reason, error_type),
+    do: span |> start_span(nil, nil) |> finish_span(reason, error_type)
+
+  defp finish_span(span, reason, error_type) do
+    now = System.monotonic_time()
+    tokens = Claudio.Telemetry.usage(span.usage)
+
+    metadata =
+      span.metadata
+      |> Map.merge(tokens)
+      |> Map.put(:reason, reason)
+      |> Claudio.Telemetry.put_present(:stop_reason, Response.parse_stop_reason(span.stop_reason))
+      |> Claudio.Telemetry.put_present(
+        :response_model,
+        span.fallback_model || span.metadata[:model]
+      )
+      |> Claudio.Telemetry.put_present(:error_type, error_type)
+
+    :telemetry.execute(
+      [:claudio, :messages, :stream, :stop],
+      Map.merge(tokens, %{duration: now - span.start_time, monotonic_time: now}),
+      metadata
+    )
+
+    %{span | stopped?: true}
+  end
+
   defp emit_usage_telemetry(event_stream) do
     # message_delta usage is cumulative but may omit fields message_start carried (e.g.
     # input_tokens, cache counters): merge, delta wins — as build_final_message/1 does.
     Stream.transform(event_stream, nil, fn
-      {:ok, %{event: "message_start", data: %{} = data}} = event, _usage ->
-        message = data["message"] || data[:message] || %{}
-        {[event], merge_usage(nil, message["usage"] || message[:usage])}
-
-      {:ok, %{event: "message_delta", data: %{} = data}} = event, usage ->
-        {[event], merge_usage(usage, data["usage"] || data[:usage])}
-
       {:ok, %{event: "message_stop"}} = event, latest_usage ->
         maybe_emit_stream_usage_telemetry(latest_usage)
         {[event], latest_usage}
+
+      {:ok, %{} = parsed} = event, usage ->
+        {[event], track_usage(usage, parsed)}
 
       event, latest_usage ->
         {[event], latest_usage}
     end)
   end
 
+  # The running usage after `event`, shared by the :usage and span stages so they cannot drift:
+  # message_start resets it to the message's usage, message_delta merges over it (delta wins).
+  defp track_usage(_usage, %{event: "message_start", data: %{}} = event),
+    do: merge_usage(nil, event_usage(event))
+
+  defp track_usage(usage, %{event: "message_delta", data: %{}} = event),
+    do: merge_usage(usage, event_usage(event))
+
+  defp track_usage(usage, _event), do: usage
+
+  # The usage map an event carries (message_start: data.message.usage; message_delta:
+  # data.usage), string or atom keys; nil when absent or not a map.
+  defp event_usage(%{event: "message_start", data: data}),
+    do: data |> map_field(:message) |> map_field(:usage)
+
+  defp event_usage(%{event: "message_delta", data: data}), do: map_field(data, :usage)
+
+  # A field under its string key, else its atom key.
+  # A stored `false` is a value, not an absent key.
+  defp field(map, key) do
+    case Map.fetch(map, Atom.to_string(key)) do
+      {:ok, value} -> value
+      :error -> Map.get(map, key)
+    end
+  end
+
+  # A map-valued field; nil when absent or not a map.
+  defp map_field(%{} = map, key) do
+    case field(map, key) do
+      %{} = value -> value
+      _ -> nil
+    end
+  end
+
+  defp map_field(_not_a_map, _key), do: nil
+
   defp merge_usage(current, nil), do: current
   defp merge_usage(nil, %{} = usage), do: stringify_keys(usage)
   defp merge_usage(%{} = current, %{} = usage), do: Map.merge(current, stringify_keys(usage))
 
   defp maybe_emit_stream_usage_telemetry(usage) when is_map(usage) do
-    metadata = usage_to_metadata(usage)
+    metadata = Claudio.Telemetry.usage(usage)
 
     if map_size(metadata) > 0 do
       :telemetry.execute([:claudio, :messages, :stream, :usage], %{}, metadata)
@@ -114,36 +298,6 @@ defmodule Claudio.Messages.Stream do
   end
 
   defp maybe_emit_stream_usage_telemetry(_), do: :ok
-
-  defp usage_to_metadata(usage) when is_map(usage) do
-    %{}
-    |> maybe_put_usage_key(:input_tokens, usage)
-    |> maybe_put_usage_key(:output_tokens, usage)
-    |> maybe_put_usage_key(:cache_creation_input_tokens, usage)
-    |> maybe_put_usage_key(:cache_read_input_tokens, usage)
-    |> maybe_put_thinking_tokens(usage)
-  end
-
-  # The final message_delta carries usage.output_tokens_details.thinking_tokens.
-  defp maybe_put_thinking_tokens(metadata, usage) do
-    case usage["output_tokens_details"] || usage[:output_tokens_details] do
-      %{} = details ->
-        case details["thinking_tokens"] || details[:thinking_tokens] do
-          nil -> metadata
-          tokens -> Map.put(metadata, :thinking_tokens, tokens)
-        end
-
-      _ ->
-        metadata
-    end
-  end
-
-  defp maybe_put_usage_key(metadata, key, usage) do
-    case Map.get(usage, key) || Map.get(usage, Atom.to_string(key)) do
-      nil -> metadata
-      value -> Map.put(metadata, key, value)
-    end
-  end
 
   @doc """
   Accumulates text deltas from streaming events into complete text chunks.

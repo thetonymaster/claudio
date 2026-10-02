@@ -793,16 +793,17 @@ defmodule Claudio.Messages.Response do
   defp put_present(map, _key, nil), do: map
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
-  defp parse_stop_reason("end_turn"), do: :end_turn
-  defp parse_stop_reason("max_tokens"), do: :max_tokens
-  defp parse_stop_reason("stop_sequence"), do: :stop_sequence
-  defp parse_stop_reason("tool_use"), do: :tool_use
-  defp parse_stop_reason("pause_turn"), do: :pause_turn
-  defp parse_stop_reason("refusal"), do: :refusal
-  defp parse_stop_reason("model_context_window_exceeded"), do: :model_context_window_exceeded
-  defp parse_stop_reason("compaction"), do: :compaction
-  defp parse_stop_reason(nil), do: nil
-  defp parse_stop_reason(other), do: other
+  @doc false
+  def parse_stop_reason("end_turn"), do: :end_turn
+  def parse_stop_reason("max_tokens"), do: :max_tokens
+  def parse_stop_reason("stop_sequence"), do: :stop_sequence
+  def parse_stop_reason("tool_use"), do: :tool_use
+  def parse_stop_reason("pause_turn"), do: :pause_turn
+  def parse_stop_reason("refusal"), do: :refusal
+  def parse_stop_reason("model_context_window_exceeded"), do: :model_context_window_exceeded
+  def parse_stop_reason("compaction"), do: :compaction
+  def parse_stop_reason(nil), do: nil
+  def parse_stop_reason(other), do: other
 
   # Documented usage fields become atom keys; every other field keeps the key it
   # arrived with, so fields Claudio does not know about yet are not dropped.

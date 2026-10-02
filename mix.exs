@@ -66,7 +66,7 @@ defmodule Claudio.MixProject do
       {:cowboy, "~> 2.18.0", only: :test},
       {:cowlib, "~> 2.19.0", only: :test},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.0"},
+      {:telemetry, "~> 1.3"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
@@ -98,9 +98,15 @@ defmodule Claudio.MixProject do
       main: "Claudio",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "CHANGELOG.md", "LICENSE", "guides/GETTING_STARTED.md"],
+      extras: [
+        "README.md",
+        "CHANGELOG.md",
+        "LICENSE",
+        "guides/GETTING_STARTED.md",
+        "guides/telemetry.md"
+      ],
       groups_for_extras: %{
-        "Guides" => ["guides/GETTING_STARTED.md"]
+        "Guides" => ["guides/GETTING_STARTED.md", "guides/telemetry.md"]
       },
       groups_for_modules: [
         "Messages API": [

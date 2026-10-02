@@ -1,8 +1,12 @@
+Code.require_file("../telemetry_helper.exs", __DIR__)
+
 defmodule Claudio.Messages.StreamTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Request
   alias Claudio.Messages.Response
   alias Claudio.Messages.Stream, as: ClaudioStream
+  import Claudio.TelemetryTestSupport, only: [attach: 1, attach: 2]
 
   describe "parse_events/1 SSE framing (pre-release audit)" do
     # A realistic stream with a multi-byte character, so byte-level splits can land inside
@@ -1008,6 +1012,408 @@ defmodule Claudio.Messages.StreamTest do
     test "an empty stream is an error" do
       assert {:error, {:incomplete_stream, :no_message_stop}} =
                [""] |> ClaudioStream.parse_events() |> ClaudioStream.build_final_message()
+    end
+  end
+
+  describe "stream span" do
+    @span [[:claudio, :messages, :stream, :start], [:claudio, :messages, :stream, :stop]]
+
+    defp sse(frames) do
+      Enum.map_join(frames, "", fn {event, data} ->
+        "event: #{event}\ndata: #{Jason.encode!(data)}\n\n"
+      end)
+    end
+
+    defp full_stream(model \\ "claude-stream") do
+      sse([
+        {"message_start",
+         %{
+           "type" => "message_start",
+           "message" => %{
+             "id" => "msg_s1",
+             "model" => model,
+             "content" => [],
+             "usage" => %{"input_tokens" => 5, "output_tokens" => 1}
+           }
+         }},
+        {"content_block_start",
+         %{
+           "type" => "content_block_start",
+           "index" => 0,
+           "content_block" => %{"type" => "text", "text" => ""}
+         }},
+        {"content_block_delta",
+         %{
+           "type" => "content_block_delta",
+           "index" => 0,
+           "delta" => %{"type" => "text_delta", "text" => "hi"}
+         }},
+        {"content_block_stop", %{"type" => "content_block_stop", "index" => 0}},
+        {"message_delta",
+         %{
+           "type" => "message_delta",
+           "delta" => %{"stop_reason" => "end_turn"},
+           "usage" => %{"output_tokens" => 9}
+         }},
+        {"message_stop", %{"type" => "message_stop"}}
+      ])
+    end
+
+    defp stops do
+      receive do
+        {:telemetry, [:claudio, :messages, :stream, :stop], m, meta} -> [{m, meta} | stops()]
+      after
+        100 -> []
+      end
+    end
+
+    test "a completed stream emits one start and one stop with tokens and duration" do
+      attach(@span)
+      [full_stream()] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.model == "claude-stream"
+      assert start.response_id == "msg_s1"
+      assert is_reference(start.telemetry_span_context)
+      refute Map.has_key?(start, :parent_span_context)
+
+      assert [{measurements, stop}] = stops()
+      assert stop.reason == :completed
+      assert stop.stop_reason == :end_turn
+      assert stop.response_model == "claude-stream"
+      assert stop.telemetry_span_context == start.telemetry_span_context
+      assert stop.input_tokens == 5
+      assert stop.output_tokens == 9
+      assert measurements.output_tokens == 9
+      assert is_integer(measurements.duration)
+    end
+
+    test "an SSE error event stops with reason :error and the API's error type" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "m", "model" => "x", "content" => []}
+           }},
+          {"error",
+           %{"type" => "error", "error" => %{"type" => "overloaded_error", "message" => "busy"}}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+      assert [{_, %{reason: :error, error_type: "overloaded_error"}}] = stops()
+    end
+
+    test "a malformed data line stops with :parse_error" do
+      attach(@span)
+
+      ["event: message_start\ndata: {not json\n\n"]
+      |> ClaudioStream.parse_events()
+      |> Stream.run()
+
+      assert [{_, %{reason: :error, error_type: :parse_error}}] = stops()
+    end
+
+    test "halting early emits :halted exactly once" do
+      attach(@span)
+      _ = [full_stream()] |> ClaudioStream.parse_events() |> Enum.take(2)
+      assert [{_, %{reason: :halted}}] = stops()
+    end
+
+    test "a stream that ends without message_stop is :incomplete_stream, once" do
+      attach(@span)
+
+      truncated =
+        sse([
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "m", "model" => "x", "content" => []}
+           }}
+        ])
+
+      [truncated] |> ClaudioStream.parse_events() |> Stream.run()
+      assert [{_, %{reason: :error, error_type: :incomplete_stream}}] = stops()
+    end
+
+    test "an empty body still emits a start/stop pair" do
+      attach(@span)
+      [] |> ClaudioStream.parse_events() |> Stream.run()
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, _}
+      assert [{_, %{reason: :error, error_type: :incomplete_stream}}] = stops()
+    end
+
+    test "a mid-stream fallback block sets response_model" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "m", "model" => "claude-opus-5-5", "content" => []}
+           }},
+          {"content_block_start",
+           %{
+             "type" => "content_block_start",
+             "index" => 0,
+             "content_block" => %{
+               "type" => "fallback",
+               "from" => %{"model" => "claude-opus-5-5"},
+               "to" => %{"model" => "claude-opus-4-8"}
+             }
+           }},
+          {"message_stop", %{"type" => "message_stop"}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+      assert [{_, %{response_model: "claude-opus-4-8", model: "claude-opus-5-5"}}] = stops()
+    end
+
+    test "enumerating twice gives two pairs; the :usage event is unchanged" do
+      attach(@span ++ [[:claudio, :messages, :stream, :usage]])
+      events = ClaudioStream.parse_events([full_stream()])
+      Stream.run(events)
+      Stream.run(events)
+
+      assert length(stops()) == 2
+
+      assert_received {:telemetry, [:claudio, :messages, :stream, :usage], %{},
+                       %{input_tokens: 5, output_tokens: 9}}
+    end
+
+    test "a non-map usage or message is ignored by both stages (same usage, no crash)" do
+      attach(@span ++ [[:claudio, :messages, :stream, :usage]])
+
+      body =
+        sse([
+          {"message_start", %{"type" => "message_start", "message" => "not a map"}},
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "m", "model" => "x", "usage" => %{"input_tokens" => 5}}
+           }},
+          {"message_delta", %{"type" => "message_delta", "usage" => "not a map"}},
+          {"message_delta", %{"type" => "message_delta", "usage" => %{"output_tokens" => 9}}},
+          {"message_stop", %{"type" => "message_stop"}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_received {:telemetry, [:claudio, :messages, :stream, :usage], %{},
+                       %{input_tokens: 5, output_tokens: 9} = usage}
+
+      assert map_size(usage) == 2
+      assert [{measurements, %{reason: :completed}}] = stops()
+      assert Map.take(measurements, [:input_tokens, :output_tokens]) == usage
+    end
+
+    test "a %Req.Response{} with a link emits a linked span; a binary body parses as one chunk" do
+      attach(@span)
+      ctx = make_ref()
+
+      resp = %Req.Response{
+        status: 200,
+        body: full_stream(),
+        private: %{claudio: %{span_context: ctx, model: "claude-stream", request_id: "req_link"}}
+      }
+
+      resp |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.parent_span_context == ctx
+      assert start.request_id == "req_link"
+      assert start.request_model == "claude-stream"
+      assert [{_, %{reason: :completed, parent_span_context: ^ctx}}] = stops()
+    end
+
+    test "a malformed message_start does not start the span; a later valid one does" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start", %{"type" => "message_start", "message" => "oops"}},
+          {"message_start",
+           %{
+             "type" => "message_start",
+             "message" => %{"id" => "id2", "model" => "m2", "content" => []}
+           }},
+          {"message_stop", %{"type" => "message_stop"}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.model == "m2"
+      assert start.response_id == "id2"
+      refute_receive {:telemetry, [:claudio, :messages, :stream, :start], _, _}, 20
+      assert [{_, %{reason: :completed}}] = stops()
+    end
+
+    test "an unlinked %Req.Response{} emits a pair without link keys" do
+      attach(@span)
+
+      %Req.Response{status: 200, body: full_stream()}
+      |> ClaudioStream.parse_events()
+      |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      refute Map.has_key?(start, :parent_span_context)
+      refute Map.has_key?(start, :request_id)
+      refute Map.has_key?(start, :request_model)
+
+      assert [{_, stop}] = stops()
+      assert stop.reason == :completed
+      refute Map.has_key?(stop, :parent_span_context)
+      refute Map.has_key?(stop, :request_id)
+    end
+
+    test "end to end: a streaming create/2 links its stream span to the create span" do
+      bypass = Bypass.open()
+      attach(@span ++ [[:claudio, :messages, :create, :stop]])
+
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("request-id", "req_e2e")
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, full_stream())
+      end)
+
+      client =
+        Claudio.Client.new(
+          %{token: "t", version: "2023-06-01"},
+          "http://localhost:#{bypass.port}/"
+        )
+
+      request =
+        Request.new("claude-stream")
+        |> Request.add_message(:user, "hi")
+        |> Request.set_max_tokens(16)
+        |> Request.enable_streaming()
+
+      assert {:ok, %Req.Response{} = resp} = Claudio.Messages.create(client, request)
+      assert_receive {:telemetry, [:claudio, :messages, :create, :stop], _, create_stop}
+
+      resp |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.parent_span_context == create_stop.telemetry_span_context
+      assert start.request_id == "req_e2e"
+      assert start.max_tokens == 16
+      assert start.server_address == "localhost"
+      assert start.server_port == bypass.port
+      assert create_stop.request_id == "req_e2e"
+      assert [{_, %{reason: :completed, stop_reason: :end_turn}}] = stops()
+    end
+
+    test "a stream consumed in another process emits from that process, still linked" do
+      model = "claude-task-#{System.unique_integer([:positive])}"
+      attach(@span, filter: &(&1[:model] == model))
+      ctx = make_ref()
+
+      resp = %Req.Response{
+        status: 200,
+        body: [full_stream(model)],
+        private: %{claudio: %{span_context: ctx, model: model, request_id: nil}}
+      }
+
+      Task.async(fn -> resp |> ClaudioStream.parse_events() |> Stream.run() end) |> Task.await()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _,
+                      %{parent_span_context: ^ctx}}
+
+      assert [{_, %{reason: :completed}}] = stops()
+    end
+  end
+
+  describe "stream span (audit hardening)" do
+    test "the span clock starts at consumption, not at message_start" do
+      attach(@span)
+
+      delayed =
+        Stream.flat_map([:go], fn _ ->
+          Process.sleep(60)
+          [full_stream()]
+        end)
+
+      before = System.monotonic_time()
+      delayed |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], start_m, _}
+      assert [{stop_m, _}] = stops()
+
+      slack = System.convert_time_unit(20, :millisecond, :native)
+      assert start_m.monotonic_time <= before + slack
+      assert stop_m.duration >= System.convert_time_unit(60, :millisecond, :native)
+    end
+
+    test "a body with no message_start still gets consumption-start timing" do
+      attach(@span)
+      delayed = Stream.flat_map([:go], fn _ -> Process.sleep(40) && [""] end)
+
+      before = System.monotonic_time()
+      delayed |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], start_m, _}
+      assert [{stop_m, %{reason: :error}}] = stops()
+
+      assert start_m.monotonic_time <=
+               before + System.convert_time_unit(20, :millisecond, :native)
+
+      assert stop_m.duration >= System.convert_time_unit(40, :millisecond, :native)
+    end
+
+    test "a free-text SSE error type becomes :unknown" do
+      attach(@span)
+
+      body =
+        sse([
+          {"message_start",
+           %{"type" => "message_start", "message" => %{"id" => "m", "model" => "x"}}},
+          {"error",
+           %{"type" => "error", "error" => %{"type" => "overloaded: RESPCONTENT detail"}}}
+        ])
+
+      [body] |> ClaudioStream.parse_events() |> Stream.run()
+      assert [{_, %{reason: :error, error_type: :unknown}}] = stops()
+    end
+
+    test "a linked start carries the request params and server info; an unlinked one does not" do
+      attach(@span)
+
+      link = %{
+        span_context: make_ref(),
+        model: "claude-req",
+        request_id: nil,
+        request_metadata: %{
+          max_tokens: 10,
+          temperature: 0.5,
+          effort: "high",
+          server_address: "api.example.test",
+          server_port: 443
+        }
+      }
+
+      resp = %Req.Response{status: 200, body: [full_stream()], private: %{claudio: link}}
+      resp |> ClaudioStream.parse_events() |> Stream.run()
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert start.max_tokens == 10
+      assert start.temperature == 0.5
+      assert start.effort == "high"
+      assert start.server_address == "api.example.test"
+      assert start.server_port == 443
+      refute Map.has_key?(start, :top_p)
+      _ = stops()
+
+      [full_stream()] |> ClaudioStream.parse_events() |> Stream.run()
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, unlinked}
+
+      for key <- [:max_tokens, :temperature, :effort, :server_address, :server_port] do
+        refute Map.has_key?(unlinked, key)
+      end
     end
   end
 end

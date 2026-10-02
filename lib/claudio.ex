@@ -68,9 +68,9 @@ defmodule Claudio do
       |> Request.set_max_tokens(1024)
       |> Request.enable_streaming()
 
-      {:ok, stream} = Claudio.Messages.create(client, request)
+      {:ok, response} = Claudio.Messages.create(client, request)
 
-      stream
+      response
       |> Claudio.Messages.Stream.parse_events()
       |> Claudio.Messages.Stream.accumulate_text()
       |> Enum.each(&IO.write/1)
