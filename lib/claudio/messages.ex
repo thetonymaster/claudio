@@ -324,7 +324,7 @@ defmodule Claudio.Messages do
   # `content` that is neither a list nor absent/nil/false (any list item is accepted, unknown
   # items pass through). Anything else is returned as it always was.
   defp legacy_ok(body, resp) do
-    if parseable_content?(body["content"]) do
+    if parseable_content?(body[:content] || body["content"]) do
       response = Response.from_map(body)
 
       ok_stop(

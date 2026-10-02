@@ -188,6 +188,15 @@ defmodule Claudio.TelemetryTest do
       assert_receive {:telemetry, _, %{input_tokens: 3, output_tokens: 5}, %{input_tokens: 3}}
     end
 
+    test "legacy create_message/2 returns an atom-keyed body with unparseable content as before" do
+      body = %{id: "msg_1", model: "m", content: "x", usage: %{input_tokens: 1}}
+      client = adapter_client(Req.Response.new(status: 200, body: body))
+      payload = %{"model" => "m", "max_tokens" => 8, "messages" => []}
+
+      assert {:ok, %{"content" => "x", "id" => "msg_1"}} =
+               Claudio.Messages.create_message(client, payload)
+    end
+
     test "a streaming non-200 with a plain binary body is an APIError" do
       body = ~s({"type":"error","error":{"type":"overloaded_error","message":"busy"}})
       client = adapter_client(Req.Response.new(status: 529, body: body))
