@@ -101,7 +101,7 @@ defmodule Claudio.A2A.Transport.HTTP do
   end
 
   defp http_get(url, opts) do
-    headers = build_headers(opts)
+    headers = build_headers([], opts)
     req_opts = [headers: headers, decode_body: false] ++ timeout_opts(opts)
 
     case Req.get(url, req_opts) do
@@ -112,7 +112,7 @@ defmodule Claudio.A2A.Transport.HTTP do
   end
 
   defp http_post(endpoint, body, opts) do
-    headers = [{"content-type", "application/json"}] ++ build_headers(opts)
+    headers = build_headers([{"content-type", "application/json"}], opts)
 
     encoded = Jason.encode!(body)
     req_opts = [body: encoded, headers: headers, decode_body: false] ++ timeout_opts(opts)
@@ -133,11 +133,24 @@ defmodule Claudio.A2A.Transport.HTTP do
     end)
   end
 
-  defp build_headers(opts) do
-    case Keyword.get(opts, :auth_token) do
-      nil -> []
-      token -> [{"authorization", "Bearer #{token}"}]
-    end
+  # The transport's own headers (content type, bearer token) come first, and an
+  # extra `:headers` entry with the same name (any case) is dropped, so caller
+  # metadata such as a W3C `traceparent` can never replace them.
+  defp build_headers(base, opts) do
+    own =
+      case Keyword.get(opts, :auth_token) do
+        nil -> base
+        token -> base ++ [{"authorization", "Bearer #{token}"}]
+      end
+
+    taken = MapSet.new(own, fn {name, _} -> String.downcase(name) end)
+
+    extra =
+      opts
+      |> Keyword.get(:headers, [])
+      |> Enum.reject(fn {name, _} -> MapSet.member?(taken, String.downcase(to_string(name))) end)
+
+    own ++ extra
   end
 
   defp build_send_params(message, opts) do

@@ -49,6 +49,8 @@ defmodule Claudio.A2A.Client do
     - `:configuration` — SendMessageConfiguration map
     - `:metadata` — Additional metadata
     - `:auth_token` — Bearer token for authentication
+    - `:headers` — Extra request headers as `[{name, value}]`, e.g. W3C
+      `traceparent`/`tracestate` (HTTP transport)
     - `:transport` — Transport module (default: `Claudio.A2A.Transport.HTTP`)
   """
   @spec send_message(String.t(), Message.t(), keyword()) ::

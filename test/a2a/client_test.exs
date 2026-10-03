@@ -259,6 +259,78 @@ defmodule Claudio.A2A.ClientTest do
     end
   end
 
+  describe "extra headers" do
+    @traceparent "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+    test "send_message/3 sends :headers alongside the transport's own", %{
+      bypass: bypass,
+      base_url: base_url
+    } do
+      Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "traceparent") == [@traceparent]
+        assert Plug.Conn.get_req_header(conn, "tracestate") == ["k=v"]
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer tok"]
+        assert Plug.Conn.get_req_header(conn, "content-type") == ["application/json"]
+        working_task(conn)
+      end)
+
+      message = Message.new(:user, [Part.text("Hi")])
+
+      {:ok, _task} =
+        Client.send_message("#{base_url}/a2a", message,
+          auth_token: "tok",
+          headers: [{"traceparent", @traceparent}, {"tracestate", "k=v"}]
+        )
+    end
+
+    test "discover/2 sends :headers on the GET", %{bypass: bypass, base_url: base_url} do
+      Bypass.expect_once(bypass, "GET", "/.well-known/agent-card.json", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "traceparent") == [@traceparent]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"name" => "A", "description" => "d"}))
+      end)
+
+      {:ok, _card} = Client.discover(base_url, headers: [{"traceparent", @traceparent}])
+    end
+
+    test ":headers cannot replace authorization or content-type", %{
+      bypass: bypass,
+      base_url: base_url
+    } do
+      Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer tok"]
+        assert Plug.Conn.get_req_header(conn, "content-type") == ["application/json"]
+        working_task(conn)
+      end)
+
+      message = Message.new(:user, [Part.text("Hi")])
+
+      {:ok, _task} =
+        Client.send_message("#{base_url}/a2a", message,
+          auth_token: "tok",
+          headers: [{"Authorization", "Bearer other"}, {"content-type", "text/plain"}]
+        )
+    end
+
+    defp working_task(conn) do
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      request = Jason.decode!(body)
+
+      response =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => request["id"],
+          "result" => %{"id" => "t-1", "status" => %{"state" => "working"}}
+        })
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, response)
+    end
+  end
+
   describe "transport option" do
     test "uses explicit HTTP transport", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "POST", "/a2a", fn conn ->
