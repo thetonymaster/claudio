@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A2A HTTP transport `:headers` option**: extra request headers (`[{name, value}]`, e.g. W3C
+  `traceparent`/`tracestate` for cross-service tracing) are sent on every request. They cannot
+  replace the transport's own `content-type` or `authorization` (same name in any case is
+  dropped).
 - **Telemetry for OpenTelemetry/GenAI dashboards** (see `guides/telemetry.md`):
   `[:claudio, :messages, :create]` gains request params (`max_tokens`, `temperature`, `top_p`,
   `top_k`, `effort`), `server_address`, response fields (`response_id`, `response_model` — the

@@ -30,6 +30,9 @@ defmodule Claudio.A2A.Transport do
   ## Common options
 
     - `:auth_token` — Bearer token for authentication
+    - `:headers` — Extra request headers as `[{name, value}]` (e.g. W3C
+      `traceparent`/`tracestate`); they cannot replace the transport's own
+      `content-type` or `authorization`
     - `:receive_timeout` — HTTP receive timeout in ms
     - `:connect_options` — Connection options (e.g., transport opts)
   """
@@ -41,6 +44,7 @@ defmodule Claudio.A2A.Transport do
   ## Common options
 
     - `:auth_token` — Bearer token for authentication
+    - `:headers` — Extra request headers, as for `c:discover/2`
     - `:configuration` — SendMessageConfiguration map
     - `:metadata` — Additional metadata
     - `:receive_timeout` — HTTP receive timeout in ms
