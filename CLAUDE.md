@@ -45,7 +45,7 @@ mix precommit         # compile --warnings-as-errors, unused deps, format, credo
 
 CI (`.github/workflows/ci.yml`) runs the test matrix, a `quality` job (credo, dialyzer,
 `docs --warnings-as-errors`, `hex.audit`, unused deps) and an `unlocked-deps` job that
-tests against the newest dependency versions `mix.exs` allows. Complexity/nesting
+tests against the newest dependency versions `mix.exs` allows. Live integration tests run once, in the `integration` job, on main pushes after every other job passes (non-blocking). Complexity/nesting
 exceptions are inline `credo:disable-for-next-line` comments — grep for them to find
 refactor candidates.
 

@@ -57,13 +57,6 @@ jobs:
     - name: Run unit tests
       run: mix test --exclude integration
 
-    - name: Run integration tests
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      run: mix test --only integration
-      continue-on-error: true
-
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
@@ -152,3 +145,39 @@ jobs:
 
     - name: Check the OTel guide handler
       run: elixir scripts/check_otel_guide.exs
+
+  # Live API tests cost money: run them once, on main pushes, after every other job passes.
+  integration:
+    name: Integration tests
+    needs: [test, quality, unlocked-deps, otel-guide]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: '1.19'
+        otp-version: '28'
+
+    - name: Restore dependencies cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-28-1.19-${{ hashFiles('**/mix.lock') }}
+        restore-keys: ${{ runner.os }}-mix-28-1.19-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Run integration tests
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: mix test --only integration
