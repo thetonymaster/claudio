@@ -1803,9 +1803,9 @@ defmodule Claudio.Messages.Request do
   - `:max_uses` — cap the number of searches per request.
   - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
   - `:user_location` — approximate-location map for localized results.
-  - `:response_inclusion` — `"excluded"` drops search blocks consumed by a
-    completed code-execution call from the response (API default `"full"`).
-    Requires `version: :"20260318"` or later; passed through verbatim.
+  - `:response_inclusion` — `"excluded"` drops the nested `server_tool_use` and
+    result block pairs whose result was consumed by a completed code execution
+    call in the same turn; the API default is `"full"`. Requires `version: :"20260318"` or later; passed through verbatim.
   - `:allowed_callers` — `[:direct]`, `[:code_execution]` or raw strings (see
     `add_tool/3`); accepted by every web search version.
 
@@ -1851,9 +1851,9 @@ defmodule Claudio.Messages.Request do
   - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
   - `:citations` — `true` enables citations on fetched content.
   - `:max_content_tokens` — approximate cap on fetched content size.
-  - `:response_inclusion` — `"excluded"` drops fetch blocks consumed by a
-    completed code-execution call from the response (API default `"full"`).
-    Requires `version: :"20260318"` or later; passed through verbatim.
+  - `:response_inclusion` — `"excluded"` drops the nested `server_tool_use` and
+    result block pairs whose result was consumed by a completed code execution
+    call in the same turn; the API default is `"full"`. Requires `version: :"20260318"` or later; passed through verbatim.
   - `:allowed_callers` — `[:direct]`, `[:code_execution]` or raw strings (see
     `add_tool/3`).
 
