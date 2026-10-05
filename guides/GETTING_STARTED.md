@@ -276,6 +276,27 @@ children = [
 {:ok, answer} = MyApp.ClaudeClient.ask("Hello!")
 ```
 
+## Migrating from `create_message/2` to `create/2`
+
+`Messages.create_message/2` (raw maps in, raw maps out) still works. `Messages.create/2`
+takes a `Request` and returns a `Response`, and errors arrive as `Claudio.APIError` structs
+instead of raw bodies:
+
+```elixir
+# Before
+case Messages.create_message(client, payload) do
+  {:ok, result} -> handle_success(result)
+  {:error, body} -> handle_error(body)
+end
+
+# After
+case Messages.create(client, request) do
+  {:ok, response} -> handle_success(response)
+  {:error, %Claudio.APIError{type: :rate_limit_error}} -> handle_rate_limit()
+  {:error, error} -> handle_error(error)
+end
+```
+
 ## Next Steps
 
 - **[Full Documentation](https://hexdocs.pm/claudio)** - Complete API reference
