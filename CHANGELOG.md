@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cache helpers (`set_system_with_cache/3`, `add_message_with_cache/4`, `add_tool_with_cache/3`,
+  `set_cache_control/2`) raise on unknown options and on a `ttl` other than `"5m"`/`"1h"`;
+  `add_message_with_document/5` and `search_result_block/4` raise on unknown options
+  (previously ignored).
 - `APIError.type` is an atom for `billing_error`, `request_too_large` and `timeout_error` (was a
   string); a JSON error body without `error.type` is typed from the HTTP status, and its
   top-level `message` is used.

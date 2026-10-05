@@ -2182,4 +2182,54 @@ defmodule Claudio.Messages.RequestTest do
       end
     end
   end
+
+  describe "cache and document option validation" do
+    test "misspelled cache option raises" do
+      assert_raise ArgumentError,
+                   ~r/Request.set_system_with_cache\/3: unknown option :cache_ttl/,
+                   fn ->
+                     Request.new("m") |> Request.set_system_with_cache("s", cache_ttl: "1h")
+                   end
+    end
+
+    test "bad ttl value raises on every cache helper" do
+      r = Request.new("m")
+
+      assert_raise ArgumentError, ~r/:ttl must be "5m" or "1h"; got :one_hour/, fn ->
+        Request.set_system_with_cache(r, "s", ttl: :one_hour)
+      end
+
+      assert_raise ArgumentError, ~r/:ttl must be "5m" or "1h"; got 3600/, fn ->
+        Request.set_cache_control(r, ttl: 3600)
+      end
+
+      assert_raise ArgumentError, ~r/:ttl/, fn ->
+        Request.add_message_with_cache(r, :user, "t", ttl: "2h")
+      end
+
+      assert_raise ArgumentError, ~r/:ttl/, fn ->
+        Request.add_tool_with_cache(r, %{"name" => "t"}, ttl: "2h")
+      end
+    end
+
+    test "valid ttls still work" do
+      r = Request.new("m") |> Request.set_cache_control(ttl: "1h")
+      assert Request.to_map(r)["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
+    end
+
+    test "misspelled document option raises" do
+      assert_raise ArgumentError,
+                   ~r/add_message_with_document\/5: unknown option :citation/,
+                   fn ->
+                     Request.new("m")
+                     |> Request.add_message_with_document(:user, "t", "file_1", citation: true)
+                   end
+    end
+
+    test "search_result_block/4 rejects unknown options" do
+      assert_raise ArgumentError, ~r/search_result_block\/4: unknown option :ttl/, fn ->
+        Request.search_result_block("src", "title", ["x"], ttl: "1h")
+      end
+    end
+  end
 end

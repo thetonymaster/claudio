@@ -315,6 +315,13 @@ defmodule Claudio.Messages.Request do
   @spec add_message_with_document(t(), role(), String.t(), String.t(), keyword()) :: t()
   def add_message_with_document(%__MODULE__{} = request, role, text, file_id, opts \\ [])
       when role in [:user, :assistant] do
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:citations, :title, :context],
+        "Request.add_message_with_document/5"
+      )
+
     document =
       %{
         "type" => "document",
@@ -359,6 +366,13 @@ defmodule Claudio.Messages.Request do
   @spec search_result_block(String.t(), String.t(), [String.t() | map()], keyword()) :: map()
   def search_result_block(source, title, contents, opts \\ [])
       when is_binary(source) and is_binary(title) and is_list(contents) do
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:citations, :cache_control],
+        "Request.search_result_block/4"
+      )
+
     %{
       "type" => "search_result",
       "source" => source,
@@ -409,11 +423,13 @@ defmodule Claudio.Messages.Request do
   """
   @spec set_system_with_cache(t(), String.t(), keyword()) :: t()
   def set_system_with_cache(%__MODULE__{} = request, text, opts \\ []) do
+    opts = Claudio.Options.validate!(opts, [:ttl], "Request.set_system_with_cache/3")
+
     system = [
       %{
         "type" => "text",
         "text" => text,
-        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl), "set_system_with_cache/3")
       }
     ]
 
@@ -600,7 +616,13 @@ defmodule Claudio.Messages.Request do
     opts =
       Claudio.Options.validate!(opts, [:ttl, :allowed_callers], "Request.add_tool_with_cache/3")
 
-    tool = put_tool_key(tool, "cache_control", cache_control_map(Keyword.get(opts, :ttl)))
+    tool =
+      put_tool_key(
+        tool,
+        "cache_control",
+        cache_control_map(Keyword.get(opts, :ttl), "add_tool_with_cache/3")
+      )
+
     add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
 
@@ -1893,11 +1915,13 @@ defmodule Claudio.Messages.Request do
   @spec add_message_with_cache(t(), role(), String.t(), keyword()) :: t()
   def add_message_with_cache(%__MODULE__{} = request, role, text, opts \\ [])
       when role in [:user, :assistant] and is_binary(text) do
+    opts = Claudio.Options.validate!(opts, [:ttl], "Request.add_message_with_cache/4")
+
     content = [
       %{
         "type" => "text",
         "text" => text,
-        "cache_control" => cache_control_map(Keyword.get(opts, :ttl))
+        "cache_control" => cache_control_map(Keyword.get(opts, :ttl), "add_message_with_cache/4")
       }
     ]
 
@@ -1921,7 +1945,8 @@ defmodule Claudio.Messages.Request do
   """
   @spec set_cache_control(t(), keyword()) :: t()
   def set_cache_control(%__MODULE__{} = request, opts \\ []) do
-    %{request | cache_control: cache_control_map(Keyword.get(opts, :ttl))}
+    opts = Claudio.Options.validate!(opts, [:ttl], "Request.set_cache_control/2")
+    %{request | cache_control: cache_control_map(Keyword.get(opts, :ttl), "set_cache_control/2")}
   end
 
   @doc """
@@ -1957,8 +1982,14 @@ defmodule Claudio.Messages.Request do
     |> maybe_put("compaction", request.compaction)
   end
 
-  defp cache_control_map(nil), do: %{"type" => "ephemeral"}
-  defp cache_control_map(ttl), do: %{"type" => "ephemeral", "ttl" => ttl}
+  defp cache_control_map(nil, _fun), do: %{"type" => "ephemeral"}
+
+  defp cache_control_map(ttl, _fun) when ttl in ["5m", "1h"],
+    do: %{"type" => "ephemeral", "ttl" => ttl}
+
+  defp cache_control_map(other, fun) do
+    raise ArgumentError, ~s(Request.#{fun} :ttl must be "5m" or "1h"; got #{inspect(other)})
+  end
 
   # Magic bytes of the image formats the API accepts; decodes only the first 16 bytes.
   defp detect_image_type(base64_data) do
@@ -2043,8 +2074,10 @@ defmodule Claudio.Messages.Request do
 
   defp search_result_cache(nil), do: nil
   defp search_result_cache(false), do: nil
-  defp search_result_cache(true), do: cache_control_map(nil)
-  defp search_result_cache(ttl) when is_binary(ttl), do: cache_control_map(ttl)
+  defp search_result_cache(true), do: cache_control_map(nil, "search_result_block/4")
+
+  defp search_result_cache(ttl) when is_binary(ttl),
+    do: cache_control_map(ttl, "search_result_block/4")
 
   defp search_result_cache(other) do
     raise ArgumentError,
