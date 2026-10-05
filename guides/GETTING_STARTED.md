@@ -278,23 +278,19 @@ children = [
 
 ## Migrating from `create_message/2` to `create/2`
 
-`Messages.create_message/2` (raw maps in, raw maps out) still works. `Messages.create/2`
-takes a `Request` and returns a `Response`, and errors arrive as `Claudio.APIError` structs
-instead of raw bodies:
+`Messages.create_message/2` still works. Both functions return `{:error, %Claudio.APIError{}}`
+on failure. They differ in input and result: `create/2` accepts a `Request` struct (or a map)
+and returns a `%Claudio.Messages.Response{}` with helpers such as `Response.get_text/1`, where
+`create_message/2` takes a map and returns the raw string-keyed map.
 
 ```elixir
 # Before
-case Messages.create_message(client, payload) do
-  {:ok, result} -> handle_success(result)
-  {:error, body} -> handle_error(body)
-end
+{:ok, result} = Messages.create_message(client, payload)
+text = result["content"] |> Enum.find(&(&1["type"] == "text")) |> Map.get("text")
 
 # After
-case Messages.create(client, request) do
-  {:ok, response} -> handle_success(response)
-  {:error, %Claudio.APIError{type: :rate_limit_error}} -> handle_rate_limit()
-  {:error, error} -> handle_error(error)
-end
+{:ok, response} = Messages.create(client, request)
+text = Response.get_text(response)
 ```
 
 ## Next Steps
