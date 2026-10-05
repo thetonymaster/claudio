@@ -606,4 +606,32 @@ defmodule Claudio.ClientOptionsTest do
                new(%{retry: [delay: 0, max_retries: 0, max_delay: 10]})
     end
   end
+
+  describe "new/2 config validation" do
+    test "token: nil raises and mentions ANTHROPIC_API_KEY" do
+      assert_raise ArgumentError, ~r/:token must be a non-empty string.*ANTHROPIC_API_KEY/s, fn ->
+        Claudio.Client.new(%{token: nil})
+      end
+    end
+
+    test "a missing token raises" do
+      assert_raise ArgumentError, ~r/:token/, fn -> Claudio.Client.new(%{}) end
+    end
+
+    test "unknown keys raise with the allowed list" do
+      assert_raise ArgumentError, ~r/unknown option :api_key; allowed: :token/, fn ->
+        Claudio.Client.new(%{api_key: "x"})
+      end
+    end
+
+    test "a keyword list is accepted" do
+      client = Claudio.Client.new(token: "t", timeout: 5_000)
+      assert Req.Request.get_header(client, "x-api-key") == ["t"]
+    end
+
+    test "version: nil falls back to the default version" do
+      client = Claudio.Client.new(%{token: "t", version: nil})
+      assert Req.Request.get_header(client, "anthropic-version") == ["2023-06-01"]
+    end
+  end
 end

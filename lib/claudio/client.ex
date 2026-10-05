@@ -94,14 +94,16 @@ defmodule Claudio.Client do
   """
 
   @default_api_version "2023-06-01"
+  @config_keys [:token, :version, :beta, :auth_type, :timeout, :recv_timeout, :retry, :finch]
 
   @doc """
   Creates a new HTTP client for the Anthropic API.
 
   ## Parameters
 
-    * `config` - Configuration map with the following keys:
-      * `:token` (required) - Your Anthropic API key
+    * `config` - Configuration map or keyword list with the following keys (any other key
+      raises `ArgumentError`):
+      * `:token` (required) - Your Anthropic API key; a non-empty string, else `ArgumentError`
       * `:version` (optional) - API version string (default: "2023-06-01")
       * `:beta` (optional) - List of beta feature flags
       * `:auth_type` (optional) - `:api_key` (default) or `:bearer`
@@ -131,10 +133,27 @@ defmodule Claudio.Client do
       %Req.Request{...}
 
   """
-  @spec new(map(), String.t()) :: Req.Request.t()
-  def new(config, endpoint \\ "https://api.anthropic.com/v1/") do
-    config = merge_defaults(config)
-    build_request(config, endpoint)
+  @spec new(map() | keyword(), String.t()) :: Req.Request.t()
+  def new(config, endpoint \\ "https://api.anthropic.com/v1/")
+
+  def new(config, endpoint) when is_list(config), do: new(Map.new(config), endpoint)
+
+  def new(config, endpoint) when is_map(config) do
+    config
+    |> Map.to_list()
+    |> Claudio.Options.validate!(@config_keys, "Claudio.Client.new/2")
+
+    case Map.get(config, :token) do
+      token when is_binary(token) and token != "" ->
+        :ok
+
+      other ->
+        raise ArgumentError,
+              "Claudio.Client.new/2 :token must be a non-empty string; got #{inspect(other)} " <>
+                "(if you read it from the environment, is ANTHROPIC_API_KEY set?)"
+    end
+
+    config |> merge_defaults() |> build_request(endpoint)
   end
 
   @doc """
@@ -181,8 +200,10 @@ defmodule Claudio.Client do
         end
       end)
 
+    default_version = Keyword.get(app_config, :default_api_version, @default_api_version)
+
     config
-    |> Map.put_new(:version, Keyword.get(app_config, :default_api_version, @default_api_version))
+    |> Map.update(:version, default_version, &(&1 || default_version))
     |> maybe_add_default_beta(app_config)
   end
 
