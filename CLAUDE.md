@@ -68,9 +68,10 @@ Client initialization requires:
 - `version`: API version (e.g., "2023-06-01")
 - `auth_type`: (optional) `:api_key` (default) or `:bearer`. Claude-Code-style OAuth tokens also need `beta: ["oauth-2025-04-20"]`.
 - `beta`: (optional) list of beta feature flags
-- `timeout`, `recv_timeout`, `retry: true | false | [delay:, max_retries:, max_delay:]`: pass per client to `new/2` (wins) or set app-wide via `config :claudio, Claudio.Client, ...` (fallback). `retry` retries 408/429/5xx/529 and connection errors on every method (Req's default only retries GET/HEAD); an invalid value or unknown key raises in both paths
+- `timeout`, `recv_timeout`, `retry: true | false | [delay:, max_retries:, max_delay:]`: pass per client to `new/2` (wins) or set app-wide via `config :claudio, Claudio.Client, ...` (fallback). `retry` retries 408/429/5xx/529 and connection errors on every method (Req's default only retries GET/HEAD); an invalid value or unknown key raises in both paths; `delay`/`max_delay`/`max_retries` must be non-negative integers. `Retry-After` is honoured on 429/503/529, even with `delay:`
+- `new/2` takes a map or keyword list; it raises on unknown keys and on a missing/empty `:token`; `version: nil` falls back to the default
 - App config: `config :claudio, default_api_version: ..., default_beta_features: [...]`. Prefer per-client options for anything new (the Elixir library guidelines discourage app-env config in libraries)
-- `Claudio.APIError.from_response/2` also handles non-JSON bodies (empty 5xx, proxy HTML), typed from the HTTP status
+- `Claudio.APIError.from_response/2` also handles non-JSON bodies (empty 5xx, proxy HTML), typed from the HTTP status; a JSON body without `error.type` is typed from the status too
 
 > **Alt deployments (Bedrock / Vertex):** not implemented — they need SigV4 / GCP ADC signing, model-id prefixing, and per-feature masking (large effort, deferred until demand). The OAuth token-exchange flow (`POST /v1/oauth/token`) is likewise out of scope; supply an already-obtained bearer token.
 
@@ -96,14 +97,14 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - Support for system prompts, stop sequences, and metadata
 - Tool definitions and tool choice configuration
 - Thinking mode configuration
-- **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`, plus `add_message_with_cache/4` for message-level breakpoints and `set_cache_control/2` for top-level auto-placement — all GA, no beta header)
-- **Vision/image support** (`add_message_with_image/5` — detects PNG/GIF/WebP/JPEG when no media type is given; `add_message_with_image_url/4`)
+- **Prompt caching support** (`set_system_with_cache/2`, `add_tool_with_cache/2`, plus `add_message_with_cache/4` for message-level breakpoints and `set_cache_control/2` for top-level auto-placement — all GA, no beta header; `ttl:` must be `"5m"` or `"1h"`, unknown options raise)
+- **Vision/image support** (`add_message_with_image/5` — detects PNG/GIF/WebP/JPEG when no media type is given, or takes `media_type:` as a keyword; `add_message_with_image_url/4`)
 - **Document support** (`add_message_with_document/5` — opts `:citations` / `:title` / `:context`; backward-compatible with the original `/4` arity)
 - **Citations + search results** (`add_message_with_document/5` with `citations: true` for grounded document citations; `search_result_block/4` builds RAG `search_result` content blocks — both GA, no beta header. ⚠️ Citations are **incompatible with structured outputs** — combining them returns 400.)
 - **MCP servers** (`add_mcp_server/2` — accepts `ServerConfig` structs or raw maps; adds the `mcp_toolset` and declares `mcp-client-2025-11-20`)
 - **Per-feature beta headers** (`add_beta/2` — declares an `anthropic-beta` flag that the send path merges into the header; feature setters like `set_context_management/2` declare theirs automatically. `required_betas/1` returns them.)
 - **Structured outputs** (`set_output_format/2` builds `output_config.format` from a JSON schema; `set_output_config/2` is the raw setter — GA, no beta header)
-- **Thinking & effort** (`enable_adaptive_thinking/2` with `display:` — `:updates` declares `thinking-display-updates-2026-08-18`; `disable_thinking/1`; `block_binding:` / `set_thinking_block_binding/2` (`:error` / `:drop_block`) declare `thinking-binding-controls-2026-08-01`; `set_effort/2` → `output_config.effort`, GA; `set_task_budget/3` → `output_config.task_budget`, declares `task-budgets-2026-03-13`. Output-config helpers merge; `set_output_config/2` replaces. No per-model validation — the API's 400 is authoritative.)
+- **Thinking & effort** (`enable_adaptive_thinking/2` with `display:` — `:updates` declares `thinking-display-updates-2026-08-18`; `disable_thinking/1` / `disable_thinking/2` with `mode: :between_tools` (Sonnet 5.5 — sends `thinking: {"type": "between_tools"}`); `block_binding:` / `set_thinking_block_binding/2` (`:error` / `:drop_block`) declare `thinking-binding-controls-2026-08-01`; `set_effort/2` → `output_config.effort`, GA; `set_task_budget/3` → `output_config.task_budget`, declares `task-budgets-2026-03-13`. Output-config helpers merge; `set_output_config/2` replaces. No per-model validation — the API's 400 is authoritative.)
 - **5.x request surface** (`add_system_message/3` — mid-conversation `role: "system"` messages, GA; `clear_at:` declares `mid-conversation-system-clear-at-2026-08-21`, `effort:` declares `mid-conversation-output-config-2026-07-01`. `set_speed/2` always declares `fast-mode-2026-02-01`; `set_inference_geo/2` and `enable_cache_diagnostics/2` are GA. Placement rules are left to the API.)
 - **Refusal fallbacks** (`set_fallbacks/2` — `:default` or a list of model strings / override maps; declares `server-side-fallback-2026-07-01`. Entry cap, distinctness and `allowed_fallback_models` are left to the API; not sent by `count_tokens`; unsupported in Batches.)
 - **Context management** (`add_clear_tool_uses/2`, `add_clear_thinking/2` — declare `context-management-2025-06-27`, clear_thinking always first; `add_compaction/2` — threshold `compact_20260112`, declares `compact-2026-01-12`; `request_compaction/2` — on-demand `compaction` field, declares `compact-2026-09-04`; `apply_compaction/2` replaces history with the last compaction block onward for either kind; `set_context_management/2` is the raw setter. Limits and incompatibilities are left to the API.)
@@ -111,6 +112,7 @@ The `Claudio.Messages.Request` module provides a fluent API for building request
 - **Server-side tool helpers** (each appends the correctly-versioned tool map; only computer-use declares a beta):
   - `add_web_search_tool/2` — `web_search_20260209` (default) / `web_search_20250305` (`version: :basic`); GA
   - `add_web_fetch_tool/2` — `web_fetch_20260209` (default) / `web_fetch_20250910` (`version: :basic`); `:citations`; GA
+  - Web search/fetch also take `allowed_callers:` and `response_inclusion:` (the latter needs `version: :"20260318"`)
   - `add_code_execution_tool/2` — `code_execution_20260521` (default; `version:` `:"20260120"` / `:"20250825"`); GA (pairs with `set_container/2`)
   - `add_bash_tool/1` / `add_text_editor_tool/2` — schema-less client tools (`bash_20250124`, `text_editor_20250728` / `str_replace_based_edit_tool`)
   - `add_memory_tool/1` — `memory_20250818`; GA, client-side
@@ -161,6 +163,8 @@ The `Claudio.Messages.Stream` module parses Server-Sent Events (SSE) from stream
 - `accumulate_thinking/1`: Emits `{block_index, text}` per non-empty `thinking_delta`
 - `filter_events/2`: Filters to specific event types
 - `build_final_message/1`: Accumulates all events into a final message
+- `to_response/2`: Consumes a stream in one pass (`on_text:` / `on_event:` callbacks) into a `%Response{}`; an SSE `error` event becomes an `APIError`
+- **Consume once:** a streaming body is readable once, and only by the process that called `create/2`
 
 Event types handled:
 - message_start, content_block_start, content_block_delta
@@ -225,15 +229,18 @@ Server-hosted agents (`managed-agents-2026-04-01`, merged into the client's beta
 - List options: list → `key[]`, keyword → `key[sub]`, `DateTime` → ISO 8601; `nil` / `[]` / maps raise. Ids are escaped as one path segment. `Claudio.ManagedAgents.stream/2` pages lazily (stops on absent or nil `next_page`, raises on errors)
 - Tests: `test/managed_agents/` (Bypass, shared helpers in `managed_agents_helper.exs`), live flow in `test/integration/managed_agents_integration_test.exs` (no model call)
 
+### Files API (lib/claudio/files.ex)
+- `upload/3` takes `expires_in_seconds:` (API range 3600..7776000) and rejects unknown options
+
 ### Message Batches API (lib/claudio/batches.ex)
 The `Claudio.Batches` module handles asynchronous batch processing:
 - `create/2`: Submit up to 100,000 requests in a single batch
 - `get/2`: Retrieve batch status
 - `get_results/2`: Download results — a list of decoded, string-keyed maps (JSONL parsed; a malformed line is `{:error, {:invalid_result_line, n, line}}`)
-- `list/2`: List all batches with pagination
+- `list/2`: List all batches with pagination (unknown options raise)
 - `cancel/2`: Cancel in-progress batch
 - `delete/2`: Delete batch and results
-- `wait_for_completion/3`: Poll until batch completes (with callback support)
+- `wait_for_completion/3`: Poll until batch completes (with callback support; unknown options raise)
 
 Batch processing is asynchronous (up to 24 hours) and supports all Messages API features.
 
@@ -267,18 +274,18 @@ Returns raw body (`{:ok, map()}`), non-2xx → `Claudio.APIError`. **Prompt-tool
 ### Error Handling (lib/claudio/api_error.ex)
 The `Claudio.APIError` exception provides structured error handling:
 - Parses API error responses into typed exceptions
-- Error types: :authentication_error, :invalid_request_error, :rate_limit_error, :overloaded_error, etc.
+- Error types: :authentication_error, :invalid_request_error, :rate_limit_error, :overloaded_error, :billing_error, :request_too_large, :timeout_error, etc. (atoms); a body without `error.type` is typed from the HTTP status
 - Includes status code, error message, and raw response body
 - Used consistently across all API modules
 
 ### Telemetry (lib/claudio/telemetry.ex)
-- `[:claudio, :messages, :create]` — span for `create/2` and legacy `create_message/2` (request params, response fields, `error_type`, token measurements)
+- `[:claudio, :messages, :create]` — span for `create/2` and legacy `create_message/2` (request params incl. `output_type` / `stop_sequences`, response fields, `error_type`, token measurements)
 - `[:claudio, :messages, :count_tokens]` — span for `count_tokens/2`
-- `[:claudio, :messages, :stream, :start | :stop]` — per consumption in `parse_events/1` (exactly one `:stop`; linked to `create` when given the whole response)
+- `[:claudio, :messages, :stream, :start | :stop]` — per consumption in `parse_events/1` (exactly one `:stop`; linked to `create` when given the whole response; the linked `:start` carries `output_type` / `stop_sequences`; `error_type` is an atom for known API error types)
 - `[:claudio, :messages, :stream, :usage]` — older single event at `message_stop`, kept
 - `[:claudio, :http, :request, :start | :stop]` — per attempt, every `Client.new/2` client
 
-Mappings live in the private `Claudio.Telemetry`; the contract is `guides/telemetry.md`.
+Mappings live in the private `Claudio.Telemetry`; the contract is `guides/telemetry.md`. `scripts/check_otel_guide.exs` checks the guide's OTel examples; CI runs it in the `otel-guide` job.
 
 ### Testing Strategy
 - Uses Bypass for mocking HTTP calls
