@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Claudio.Messages.Response.get_text/1` accepts the legacy `Claudio.Messages.create_message/2` map.
 - Builder functions raise `ArgumentError` naming the fix for common mistakes
   (`add_message(:system, …)`, string roles, `nil` content, out-of-range sampling values, string
   `max_tokens` / `tool_choice`, keyword tools / thinking configs) instead of
@@ -97,6 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- `Claudio.Tools.create_tool_result_message/1` (identity function): pass the result list straight to
+  `Claudio.Messages.Request.add_message/3`.
 - The `error` metadata key on `[:claudio, :messages, :create, :stop]` (an `inspect` string that can
   contain the API's error response body, or a malformed 200's body). It will be removed in 0.8.0; use `error_type`.
 

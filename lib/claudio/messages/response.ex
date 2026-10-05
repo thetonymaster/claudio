@@ -249,12 +249,21 @@ defmodule Claudio.Messages.Response do
 
   @doc """
   Extracts all text content from the response.
+
+  Also accepts the legacy string-keyed map returned by `Claudio.Messages.create_message/2`.
   """
-  @spec get_text(t()) :: String.t()
+  @spec get_text(t() | map()) :: String.t()
   def get_text(%__MODULE__{content: content}) do
     content
     |> Enum.filter(&(&1[:type] == :text))
     |> Enum.map_join("", & &1.text)
+  end
+
+  # After the struct clause: a `%Response{}` has an atom `:content` key, never "content".
+  def get_text(%{"content" => content}) when is_list(content) do
+    content
+    |> Enum.filter(&match?(%{"type" => "text", "text" => text} when is_binary(text), &1))
+    |> Enum.map_join("", & &1["text"])
   end
 
   # Exact text of an interrupted `display: "updates"` thinking block

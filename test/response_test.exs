@@ -125,6 +125,18 @@ defmodule Claudio.Messages.ResponseTest do
   end
 
   describe "get_text/1" do
+    test "accepts the legacy string-keyed map" do
+      legacy = %{
+        "content" => [
+          %{"type" => "text", "text" => "a"},
+          %{"type" => "tool_use"},
+          %{"type" => "text", "text" => "b"}
+        ]
+      }
+
+      assert Response.get_text(legacy) == "ab"
+    end
+
     test "extracts text from single text block" do
       response = %Response{
         content: [%{type: :text, text: "Hello world"}]

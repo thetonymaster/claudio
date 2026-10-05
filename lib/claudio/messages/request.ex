@@ -11,6 +11,19 @@ defmodule Claudio.Messages.Request do
       |> Request.set_system("You are a helpful assistant")
       |> Request.set_max_tokens(1024)
       |> Request.to_map()
+
+  ## Caching options
+
+  Cache breakpoints are GA (no beta header). `ttl:` is `"5m"` (default) or `"1h"`; anything
+  else raises `ArgumentError`.
+
+    * `set_system_with_cache/3`, `add_message_with_cache/4`, `add_tool_with_cache/3` and
+      `set_cache_control/2` take `ttl:`.
+    * `search_result_block/4` takes `cache_control:` — `true` (default ephemeral), `false`/`nil`
+      (none), or a ttl string (`"5m"` / `"1h"`).
+    * `add_computer_toolset/2` and `add_browser_toolset/2` take `cache_control:` as a raw map
+      (e.g. `%{"type" => "ephemeral"}`), sent verbatim and not validated.
+    * `add_advisor_tool/3` takes `caching:` (`"5m"` / `"1h"`), which caches the advisor's context.
   """
 
   alias Claudio.MCP.ServerConfig

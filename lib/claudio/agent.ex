@@ -37,6 +37,20 @@ defmodule Claudio.Agent do
       # response is the final Response struct
       # messages is the full conversation history (for continuing later)
 
+  ## Errors
+
+  `run/4` returns `{:error, reason, last_response, messages}` — a 4-tuple, not
+  `{:error, reason}` — so a failed run is resumable: `messages` is the history up to the
+  failure (tool results already executed included) and `last_response` the previous
+  successful response (`nil` on the first call).
+
+  A tool handler that raises, throws or exits does not abort the run: the failure is
+  reported to the model as a tool result with `is_error: true` (e.g. `"Tool error: boom"`)
+  and the loop continues, so the model can retry or explain. Use `:on_tool_call` to observe
+  it — the callback receives `{:error, message}` as the result. A handler that returns
+  anything other than `{:ok, content}` / `{:error, reason}` is a programming error and
+  raises `ArgumentError` instead.
+
   ## Client toolsets
 
   Calls from `Request.add_computer_toolset/2` / `add_browser_toolset/2` carry a

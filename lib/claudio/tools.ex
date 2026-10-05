@@ -257,6 +257,8 @@ defmodule Claudio.Tools do
     extract_tool_uses(response) != []
   end
 
+  @doc deprecated:
+         "Pass the list of tool results straight to Request.add_message(request, :user, results)"
   @doc """
   Creates a complete tool result message for adding to the conversation.
 
