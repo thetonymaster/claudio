@@ -76,6 +76,20 @@ defmodule Claudio.Files do
     end
   end
 
+  defp expiry_field(opts) do
+    case Keyword.fetch(opts, :expires_in_seconds) do
+      {:ok, seconds} when is_integer(seconds) ->
+        [expires_in_seconds: Integer.to_string(seconds)]
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "Files.upload/3: :expires_in_seconds must be an integer; got #{inspect(other)}"
+
+      :error ->
+        []
+    end
+  end
+
   @doc """
   Upload bytes to the Anthropic Files API.
 
@@ -83,9 +97,16 @@ defmodule Claudio.Files do
 
     * `client` — A `Req.Request` from `Claudio.Client.new/2`.
     * `bytes` — The raw file contents as a binary.
-    * `opts` — Required keyword list:
+    * `opts` — Keyword list. Required:
         * `:content_type` — MIME type (e.g. `"application/pdf"`).
         * `:filename` — Filename string (used for the multipart `filename` part).
+
+    Optional:
+
+        * `:expires_in_seconds` — Integer seconds from upload until the file expires
+          (sent as a multipart form field). The API documents a range of 3600 (one hour)
+          to 7776000 (ninety days) and rejects other values with a 400. Without it the
+          file does not expire.
 
   ## Returns
 
@@ -97,6 +118,13 @@ defmodule Claudio.Files do
   @spec upload(Req.Request.t(), binary(), keyword()) ::
           {:ok, map()} | {:error, APIError.t() | term()}
   def upload(client, bytes, opts) when is_binary(bytes) and is_list(opts) do
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:content_type, :filename, :expires_in_seconds],
+        "Files.upload/3"
+      )
+
     content_type =
       case Keyword.fetch(opts, :content_type) do
         {:ok, value} ->
@@ -124,9 +152,9 @@ defmodule Claudio.Files do
     # expects multipart/form-data, not JSON.
     case Req.post(client,
            url: "files",
-           form_multipart: [
-             file: {bytes, filename: filename, content_type: content_type}
-           ]
+           form_multipart:
+             expiry_field(opts) ++
+               [file: {bytes, filename: filename, content_type: content_type}]
          ) do
       {:ok, %Req.Response{status: 200, body: %{"id" => _} = body}} ->
         {:ok, body}

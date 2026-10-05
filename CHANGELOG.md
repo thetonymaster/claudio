@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Files.upload/3` accepts `expires_in_seconds:`** (sent as a multipart form field; the API
+  documents 3600..7776000). `upload/3` now also rejects unknown options.
 - **A2A HTTP transport `:headers` option**: extra request headers (`[{name, value}]`, e.g. W3C
   `traceparent`/`tracestate` for cross-service tracing) are sent on every request. They cannot
   replace the transport's own `content-type` or `authorization` (same name in any case is

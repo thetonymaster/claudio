@@ -74,11 +74,12 @@ defmodule Claudio.Client do
         version: "2023-06-01"
       })
 
-      # With beta features
+      # With beta features (per-feature betas are normally declared by the
+      # `Claudio.Messages.Request` helpers; set them here only for ad-hoc flags)
       client = Claudio.Client.new(%{
         token: "your-api-key",
         version: "2023-06-01",
-        beta: ["prompt-caching-2024-07-31"]
+        beta: ["context-management-2025-06-27"]
       })
 
       # Custom endpoint (for testing or proxies)
@@ -124,11 +125,11 @@ defmodule Claudio.Client do
       iex> client = Claudio.Client.new(%{token: "sk-ant-..."})
       %Req.Request{...}
 
-      # With beta features
+      # With beta features (normally declared by the `Request` helpers instead)
       iex> client = Claudio.Client.new(%{
       ...>   token: "sk-ant-...",
       ...>   version: "2023-06-01",
-      ...>   beta: ["prompt-caching-2024-07-31"]
+      ...>   beta: ["context-management-2025-06-27"]
       ...> })
       %Req.Request{...}
 

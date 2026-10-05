@@ -59,6 +59,53 @@ defmodule Claudio.FilesTest do
                )
     end
 
+    test "sends :expires_in_seconds as a multipart form field", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/files", fn conn ->
+        conn =
+          Plug.Parsers.call(
+            conn,
+            Plug.Parsers.init(parsers: [:multipart], pass: ["*/*"])
+          )
+
+        assert conn.body_params["expires_in_seconds"] == "3600"
+        assert %Plug.Upload{filename: "f.pdf"} = conn.body_params["file"]
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"id" => "file_abc123", "type" => "file"}))
+      end)
+
+      assert {:ok, %{"id" => "file_abc123"}} =
+               Claudio.Files.upload(client, "bytes",
+                 content_type: "application/pdf",
+                 filename: "f.pdf",
+                 expires_in_seconds: 3600
+               )
+    end
+
+    test "omits expires_in_seconds when not given", %{client: client, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/files", fn conn ->
+        conn =
+          Plug.Parsers.call(
+            conn,
+            Plug.Parsers.init(parsers: [:multipart], pass: ["*/*"])
+          )
+
+        refute Map.has_key?(conn.body_params, "expires_in_seconds")
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"id" => "file_abc123", "type" => "file"}))
+      end)
+
+      assert {:ok, _} =
+               Claudio.Files.upload(client, "bytes",
+                 content_type: "application/pdf",
+                 filename: "f.pdf"
+               )
+    end
+
     test "raises ArgumentError when :content_type is missing", %{client: client} do
       assert_raise ArgumentError, ~r/:content_type/, fn ->
         Claudio.Files.upload(client, "bytes", filename: "f.pdf")
