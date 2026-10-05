@@ -126,6 +126,23 @@ defmodule Claudio.TelemetryTest do
              }
     end
 
+    test "adds output_type and stop_sequences" do
+      payload = %{
+        "output_config" => %{"format" => %{"type" => "json_schema"}},
+        "stop_sequences" => ["END"]
+      }
+
+      meta = Telemetry.request_metadata(payload)
+      assert meta.output_type == "json"
+      assert meta.stop_sequences == ["END"]
+    end
+
+    test "omits output_type and stop_sequences when unset or empty" do
+      meta = Telemetry.request_metadata(%{"max_tokens" => 1, "stop_sequences" => []})
+      refute Map.has_key?(meta, :output_type)
+      refute Map.has_key?(meta, :stop_sequences)
+    end
+
     test "atom-keyed payload" do
       assert Telemetry.request_metadata(%{model: "m", max_tokens: 8, top_k: 5}) ==
                %{max_tokens: 8, top_k: 5}

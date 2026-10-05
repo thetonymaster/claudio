@@ -69,13 +69,25 @@ defmodule Claudio.Telemetry do
     base =
       Enum.reduce(@request_keys, %{}, fn key, acc -> put_present(acc, key, get(payload, key)) end)
 
-    effort =
+    {effort, output_type} =
       case get(payload, :output_config) do
-        %{} = output_config -> get(output_config, :effort)
+        %{} = output_config ->
+          {get(output_config, :effort), if(get(output_config, :format), do: "json")}
+
+        _ ->
+          {nil, nil}
+      end
+
+    stop_sequences =
+      case get(payload, :stop_sequences) do
+        [_ | _] = sequences -> sequences
         _ -> nil
       end
 
-    put_present(base, :effort, effort)
+    base
+    |> put_present(:effort, effort)
+    |> put_present(:output_type, output_type)
+    |> put_present(:stop_sequences, stop_sequences)
   end
 
   @doc false

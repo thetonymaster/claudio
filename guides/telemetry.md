@@ -23,7 +23,7 @@ Guarantees:
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `:start` | `monotonic_time`, `system_time` | `model` (requested; `nil` if the payload has none), `stream`, `telemetry_span_context`. When set: `max_tokens`, `temperature`, `top_p`, `top_k`, `effort` (`output_config.effort`). `server_address` (host of the client's `base_url`) and `server_port` (its port; the scheme default, 443 or 80, when the URL names none). Both are absent when the client has no `base_url`. |
+| `:start` | `monotonic_time`, `system_time` | `model` (requested; `nil` if the payload has none), `stream`, `telemetry_span_context`. When set: `max_tokens`, `temperature`, `top_p`, `top_k`, `effort` (`output_config.effort`), `output_type` (`"json"` when `output_config.format` is set), `stop_sequences`. `server_address` (host of the client's `base_url`) and `server_port` (its port; the scheme default, 443 or 80, when the URL names none). Both are absent when the client has no `base_url`. |
 | `:stop` | `duration`, `monotonic_time`. Token measurements `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `thinking_tokens` appear only when the response carried usage (non-streaming success). | The `:start` keys plus `status` (`:ok` / `:error`) and the same token keys as metadata. On success: `response_id`, `response_model` (the model that served the response; the fallback model if a `fallback` block is present), `stop_reason` (see below), `request_id` (from the `request-id` header). On error: `error` (**deprecated**: an `inspect` string that can contain the API's error body or, for a malformed 200, the response body; use `error_type`; to be removed in 0.8.0), `error_type`, `status_code`, and `request_id` when the response had one. |
 | `:exception` | `duration`, `monotonic_time` | The `:start` keys plus `kind`, `reason`, `stacktrace` (telemetry's own; they can include request or response data, see the top of this guide). |
 
@@ -47,7 +47,7 @@ Legacy `create_message/2` returns any 200 body unchanged. Its `:stop` carries th
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `:start` | `monotonic_time`, `system_time` (both taken when consumption began, not when `message_start` arrived) | `model` (from `message_start`; falls back to the `create` span's model when linked) and `response_id` (`response_id` is absent if the stream ended before `message_start`; `model` is then present only when linked), `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`), `request_id`, `request_model` (the model requested in the `create` call; absent if that was `nil`), the request params that were set (`max_tokens`, `temperature`, `top_p`, `top_k`, `effort`), `server_address` and `server_port`. |
+| `:start` | `monotonic_time`, `system_time` (both taken when consumption began, not when `message_start` arrived) | `model` (from `message_start`; falls back to the `create` span's model when linked) and `response_id` (`response_id` is absent if the stream ended before `message_start`; `model` is then present only when linked), `telemetry_span_context` (fresh for this stream). Only when linked (see below): `parent_span_context` (the `create` span's `telemetry_span_context`), `request_id`, `request_model` (the model requested in the `create` call; absent if that was `nil`), the request params that were set (`max_tokens`, `temperature`, `top_p`, `top_k`, `effort`, `output_type`, `stop_sequences`), `server_address` and `server_port`. |
 | `:stop` | `duration`, `monotonic_time`, and the token measurements as for `create :stop` | The `:start` keys plus `reason`, `stop_reason` (from the last `message_delta`, when seen), `response_model` (the last `fallback` block's target model, else `model`; for a linked stream that ended before `message_start` this is the `create` span's requested model, not a served one), the token keys (`message_start` and `message_delta` usage merged, delta wins), and `error_type` when `reason` is `:error`. |
 
 The span covers the whole consumption: its clock starts when enumeration begins, so `:stop`'s `duration` runs from the start of consumption to its end, including the wait for the first event. `:start` is still emitted when `message_start` arrives (it needs the model and id), but its `monotonic_time` and `system_time` are the consumption-start values. If the stream ends before that (empty or garbage body), `:start` is emitted at the ending, immediately followed by `:stop`, with the same consumption-start time, so a broken stream is still visible.
@@ -230,6 +230,8 @@ defmodule MyApp.ClaudioOtel do
       "gen_ai.request.top_p" => meta[:top_p],
       "gen_ai.request.top_k" => meta[:top_k],
       "gen_ai.request.reasoning.level" => meta[:effort],
+      "gen_ai.output.type" => meta[:output_type],
+      "gen_ai.request.stop_sequences" => meta[:stop_sequences],
       # Set if and only if the request is streaming.
       "gen_ai.request.stream" => if(meta[:stream] == true, do: true),
       "server.address" => meta[:server_address],
