@@ -76,7 +76,8 @@ defmodule Claudio.Messages.Stream do
   process raises. Use `:on_text` / `:on_event` instead of enumerating the response twice.
 
   An SSE `error` event is returned as `{:error, %Claudio.APIError{}}`; other failures are
-  as for `build_final_message/1`.
+  as for `build_final_message/1`. That error's `status_code` is `200` (the stream's HTTP
+  status), so match on its `type`.
   """
   @spec to_response(Req.Response.t() | Enumerable.t(), keyword()) ::
           {:ok, Response.t()} | {:error, term()}

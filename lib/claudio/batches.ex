@@ -104,7 +104,7 @@ defmodule Claudio.Batches do
       {:ok, batches} = Batches.list(client)
 
       # Cancel a batch
-      {:ok, _} = Batches.cancel(client, batch.id)
+      {:ok, _} = Batches.cancel(client, batch["id"])
   """
 
   alias Claudio.APIError
@@ -265,7 +265,9 @@ defmodule Claudio.Batches do
   """
   @spec list(Req.Request.t(), keyword()) :: {:ok, map()} | {:error, APIError.t()}
   def list(client, opts \\ []) do
-    opts = Claudio.Options.validate!(opts, [:limit, :before_id, :after_id], "Batches.list/2")
+    opts =
+      Claudio.Options.validate!(opts, [:limit, :before_id, :after_id], "Claudio.Batches.list/2")
+
     query_params = build_query_params(opts)
 
     case Req.get(client, url: "messages/batches", params: query_params) do
@@ -338,7 +340,10 @@ defmodule Claudio.Batches do
 
   - `:poll_interval` - Seconds between status checks (default: 30)
   - `:timeout` - Maximum seconds to wait (default: 86400 = 24 hours)
-  - `:callback` - Function called with batch status on each poll
+  - `:callback` - 1-arity function called with the batch on each poll
+
+  `:poll_interval` and `:timeout` must be positive integers and `:callback` a 1-arity
+  function (or `nil`); anything else raises `ArgumentError`.
 
   ## Example
 
@@ -358,8 +363,10 @@ defmodule Claudio.Batches do
       Claudio.Options.validate!(
         opts,
         [:poll_interval, :timeout, :callback],
-        "Batches.wait_for_completion/3"
+        "Claudio.Batches.wait_for_completion/3"
       )
+
+    validate_wait_opts!(opts)
 
     poll_interval = Keyword.get(opts, :poll_interval, 30) * 1000
     timeout = Keyword.get(opts, :timeout, 86_400) * 1000
@@ -370,6 +377,28 @@ defmodule Claudio.Batches do
   end
 
   # Private functions
+
+  defp validate_wait_opts!(opts) do
+    for key <- [:poll_interval, :timeout], Keyword.has_key?(opts, key) do
+      value = Keyword.fetch!(opts, key)
+
+      unless is_integer(value) and value > 0 do
+        raise ArgumentError,
+              "Claudio.Batches.wait_for_completion/3: #{inspect(key)} must be a positive " <>
+                "integer (seconds); got #{inspect(value)}"
+      end
+    end
+
+    callback = Keyword.get(opts, :callback)
+
+    unless is_nil(callback) or is_function(callback, 1) do
+      raise ArgumentError,
+            "Claudio.Batches.wait_for_completion/3: :callback must be nil or a 1-arity " <>
+              "function; got #{inspect(callback)}"
+    end
+
+    :ok
+  end
 
   # Batch items are never streamed: a request built with enable_streaming/1 drops `stream`.
   defp prepare_item(%{params: %Request{} = req} = item),

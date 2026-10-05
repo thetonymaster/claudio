@@ -321,6 +321,12 @@ defmodule Claudio.ClientTest do
     end
 
     @tag :capture_log
+    test "retry: true honours retry-after over its 1s first backoff" do
+      gap = measure_retry_gap(529, [{"retry-after", "2"}], retry: true)
+      assert gap >= 1950
+    end
+
+    @tag :capture_log
     test "429 retry-after wins over delay:" do
       gap = measure_retry_gap(429, [{"retry-after", "1"}], retry: [delay: 10, max_retries: 1])
       assert gap >= 950

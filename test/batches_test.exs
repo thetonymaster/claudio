@@ -118,6 +118,22 @@ defmodule Claudio.BatchesTest do
                  end
   end
 
+  test "wait_for_completion/3 rejects bad option values" do
+    client = Claudio.Client.new(%{token: "t"})
+
+    assert_raise ArgumentError,
+                 ~r/Claudio.Batches.wait_for_completion\/3: :poll_interval must be a positive integer \(seconds\); got "5"/,
+                 fn -> Claudio.Batches.wait_for_completion(client, "b", poll_interval: "5") end
+
+    assert_raise ArgumentError, ~r/:timeout must be a positive integer/, fn ->
+      Claudio.Batches.wait_for_completion(client, "b", timeout: 0)
+    end
+
+    assert_raise ArgumentError, ~r/:callback must be nil or a 1-arity function/, fn ->
+      Claudio.Batches.wait_for_completion(client, "b", callback: fn -> :ok end)
+    end
+  end
+
   test "list/2 rejects unknown options" do
     client = Claudio.Client.new(%{token: "t"})
 

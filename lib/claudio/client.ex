@@ -47,6 +47,7 @@ defmodule Claudio.Client do
     * `retry: [delay: 1000, max_retries: 3, max_delay: 10_000]` — delay doubles per
       attempt, capped at `max_delay` (all in ms); Retry-After still wins when the server
       sends it
+      (Retry-After is not capped by `max_delay`)
     * `retry: false` — no retries at all (not even Req's GET/HEAD default)
 
   Without `retry:` (unset or `nil` at every level), Req's default applies: only GET/HEAD
@@ -112,6 +113,10 @@ defmodule Claudio.Client do
       * `:recv_timeout` (optional) - Receive timeout in ms or `:infinity` (default: 120_000)
       * `:retry` (optional) - `true`, `false`, or `[delay:, max_retries:, max_delay:]`;
         see "Retries" in the module docs
+      * `:finch` (optional) - name of a started Finch pool; the request is made through it
+        (`Req`'s `:finch` option) and `:timeout` is then not applied, since connect options
+        belong to the pool. `:recv_timeout` still applies. Per client only, not read from
+        app config
     * `endpoint` (optional) - API endpoint URL (default: "https://api.anthropic.com/v1/")
 
   ## Returns

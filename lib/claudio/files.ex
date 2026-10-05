@@ -83,7 +83,7 @@ defmodule Claudio.Files do
 
       {:ok, other} ->
         raise ArgumentError,
-              "Files.upload/3: :expires_in_seconds must be an integer; got #{inspect(other)}"
+              "Claudio.Files.upload/3: :expires_in_seconds must be an integer; got #{inspect(other)}"
 
       :error ->
         []
@@ -122,7 +122,7 @@ defmodule Claudio.Files do
       Claudio.Options.validate!(
         opts,
         [:content_type, :filename, :expires_in_seconds],
-        "Files.upload/3"
+        "Claudio.Files.upload/3"
       )
 
     content_type =

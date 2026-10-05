@@ -17,11 +17,11 @@ Everything here can break a 0.6 caller; the details are in the sections below.
 - **`:poison` is no longer pulled in by Claudio.** If your app used it only through Claudio, add it to your own deps.
 - **`Claudio.Client.new/2` validates its config:** a missing/empty `:token` or an unknown key raises `ArgumentError`. Fix the config; `version: nil` now means the default version.
 - **Invalid `retry` / `timeout` / `recv_timeout` raise** `ArgumentError` when the client is built (they were ignored or failed on first request). Use `true`/`false`/a keyword list for `retry`, and a non-negative integer (ms) or `:infinity` for timeouts.
-- **Retries now actually happen** (408, 429, 5xx, 529, connection errors, every method; streams excepted). Set `retry: false` to keep the old no-retry behaviour. `Retry-After` is honoured on 429/503/529, also over `delay:`.
+- **Retries now actually happen** (408, 429, 5xx, 529, connection errors, every method; streams excepted). If you had `retry: true` (or a keyword list) configured, it used to have no effect and now retries; set `retry: false` to keep the old no-retry behaviour. Apps with no `retry:` keep Req's default (GET/HEAD only). `Retry-After` is honoured on 429/503/529, also over `delay:`.
 - **`[:claudio, :messages, :create, :stop]` token keys are absent (not `0`)** when a 200 carries no `usage`. Read them with `Map.get/3`. The `error` metadata key is deprecated; use `error_type`.
 - **`APIError.type` is an atom** for `billing_error`, `request_too_large` and `timeout_error` (was a string), and a body without `error.type` is typed from the HTTP status. Match the atoms.
 - **Builder functions raise `ArgumentError`** on common mistakes (`add_message(:system, ...)`, string roles, `nil` content, out-of-range sampling values, string `max_tokens`/`tool_choice`, keyword tools/thinking configs); `set_max_tokens/2` also rejects non-positive integers. Fix the call as the message says.
-- **Option validation:** the cache helpers, `add_message_with_document/5`, `search_result_block/4`, `add_computer_tool/4`, `Files.upload/3`, `Batches.list/2`, `Batches.wait_for_completion/3` and `Claudio.Agent.run/4` raise on unknown options (previously ignored), and cache helpers on a `ttl` other than `"5m"`/`"1h"`. Remove the stray option.
+- **Option validation:** the cache helpers, `add_message_with_document/5`, `search_result_block/4`, `add_computer_tool/4`, `Files.upload/3`, `Batches.list/2`, `Batches.wait_for_completion/3` and `Claudio.Agent.run/4` raise on unknown options (previously ignored; `wait_for_completion/3` also on bad `:poll_interval` / `:timeout` / `:callback` values), and cache helpers on a `ttl` other than `"5m"`/`"1h"`. Remove the stray option.
 - **A streaming `Req.Response` carries `private.claudio`.** Code matching `private: %{}` exactly or comparing whole responses must relax the match.
 - **`Claudio.Agent.run/4` errors are 4-tuples:** `{:error, reason, last_response_or_nil, messages}` (was `{:error, reason}`). Match the 4-tuple.
 - **`Batches.get_results/2` returns string-keyed maps** (was atom keys). Read `"custom_id"`, not `:custom_id`.
@@ -233,7 +233,9 @@ Everything here can break a 0.6 caller; the details are in the sections below.
   asserts on the step lists will see it.
 - `Claudio.Messages.Stream.parse_events/1` no longer raises on a malformed `message_start` /
   `message_delta` (a non-map `message` or `usage`): it passes the events through.
-- `Batches.wait_for_completion/3` and `Batches.list/2` raise on unknown options.
+- `Batches.wait_for_completion/3` and `Batches.list/2` raise on unknown options;
+  `wait_for_completion/3` also raises on a non-positive-integer `:poll_interval` / `:timeout`
+  or a `:callback` that is not a 1-arity function.
 - `Claudio.Messages.Stream.parse_events/1` also accepts the whole `%Req.Response{}`.
 - **The `:telemetry` requirement is now `~> 1.3`** (was `~> 1.0`): span stop measurements need
   1.3. Applications locked to an older `:telemetry` will be asked to update it.
