@@ -137,6 +137,16 @@ defmodule Claudio.TelemetryTest do
       assert meta.stop_sequences == ["END"]
     end
 
+    test "format-only output_config gives output_type without effort" do
+      meta =
+        Telemetry.request_metadata(%{
+          "output_config" => %{"format" => %{"type" => "json_schema"}}
+        })
+
+      assert meta.output_type == "json"
+      refute Map.has_key?(meta, :effort)
+    end
+
     test "omits output_type and stop_sequences when unset or empty" do
       meta = Telemetry.request_metadata(%{"max_tokens" => 1, "stop_sequences" => []})
       refute Map.has_key?(meta, :output_type)

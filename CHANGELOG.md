@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`create` / `count_tokens` / linked stream `:start` carry `output_type` and `stop_sequences`** when set (OTel `gen_ai.output.type`, `gen_ai.request.stop_sequences`).
+- **`create` and linked stream `:start` carry `output_type` and `stop_sequences`** when set (OTel `gen_ai.output.type`, `gen_ai.request.stop_sequences`).
 - **`Claudio.Messages.Stream.to_response/2`** — consume a stream in one pass (`on_text:` / `on_event:` callbacks) and get a `%Response{}`; an SSE `error` event becomes an `APIError`.
 - **`add_web_search_tool/2` / `add_web_fetch_tool/2`: `response_inclusion:`** (needs `version: :"20260318"`) **and `allowed_callers:`**.
 - **`Request.disable_thinking/2` `mode: :between_tools`** — Claude Sonnet 5.5's way to turn off
