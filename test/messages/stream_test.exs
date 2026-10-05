@@ -1416,4 +1416,83 @@ defmodule Claudio.Messages.StreamTest do
       end
     end
   end
+
+  describe "to_response/2" do
+    defp sse(event, data), do: "event: #{event}\ndata: #{Jason.encode!(data)}\n\n"
+
+    defp text_stream_chunks do
+      [
+        sse("message_start", %{
+          "type" => "message_start",
+          "message" => %{
+            "id" => "m",
+            "role" => "assistant",
+            "model" => "x",
+            "content" => [],
+            "usage" => %{"input_tokens" => 3, "output_tokens" => 0}
+          }
+        }),
+        sse("content_block_start", %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{"type" => "text", "text" => ""}
+        }),
+        sse("content_block_delta", %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "text_delta", "text" => "Hel"}
+        }),
+        sse("content_block_delta", %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "text_delta", "text" => "lo"}
+        }),
+        sse("content_block_stop", %{"type" => "content_block_stop", "index" => 0}),
+        sse("message_delta", %{
+          "type" => "message_delta",
+          "delta" => %{"stop_reason" => "end_turn"},
+          "usage" => %{"output_tokens" => 5}
+        }),
+        sse("message_stop", %{"type" => "message_stop"})
+      ]
+    end
+
+    test "returns a Response with text and usage, calling on_text per delta" do
+      parent = self()
+
+      {:ok, %Response{} = resp} =
+        ClaudioStream.to_response(text_stream_chunks(), on_text: &send(parent, {:text, &1}))
+
+      assert Response.get_text(resp) == "Hello"
+      assert resp.stop_reason == :end_turn
+      assert resp.usage.output_tokens == 5
+      assert_received {:text, "Hel"}
+      assert_received {:text, "lo"}
+    end
+
+    test "on_event sees every parsed event" do
+      parent = self()
+
+      {:ok, _} =
+        ClaudioStream.to_response(text_stream_chunks(), on_event: &send(parent, {:ev, &1}))
+
+      assert_received {:ev, {:ok, %{event: "message_start"}}}
+      assert_received {:ev, {:ok, %{event: "message_stop"}}}
+    end
+
+    test "an SSE error event becomes an APIError" do
+      chunks = [
+        ~s(event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"busy"}}\n\n)
+      ]
+
+      assert {:error, %Claudio.APIError{type: :overloaded_error, message: "busy"}} =
+               ClaudioStream.to_response(chunks)
+    end
+
+    test "unknown options raise" do
+      assert_raise ArgumentError, ~r/Stream.to_response\/2: unknown option :on_txt/, fn ->
+        ClaudioStream.to_response([], on_txt: & &1)
+      end
+    end
+  end
 end

@@ -34,7 +34,7 @@ defmodule Claudio.Messages do
 
   ## Streaming
 
-  For streaming responses, enable streaming and consume events:
+  For streaming responses, enable streaming and consume the stream in one pass:
 
       request = Request.new("claude-opus-5-5")
       |> Request.add_message(:user, "Tell me a story")
@@ -43,12 +43,10 @@ defmodule Claudio.Messages do
 
       {:ok, stream_response} = Claudio.Messages.create(client, request)
 
-      # Parse and accumulate text
-      text = stream_response
-      |> Claudio.Messages.Stream.parse_events()
-      |> Claudio.Messages.Stream.accumulate_text()
+      {:ok, response} =
+        Claudio.Messages.Stream.to_response(stream_response, on_text: &IO.write/1)
 
-      IO.puts(text)
+      IO.inspect(response.usage)
 
   ## Tool Calling
 

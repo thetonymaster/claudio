@@ -20,15 +20,30 @@ defmodule Claudio.Messages.Stream do
 
   ## Example
 
-      {:ok, response} =
+  The simplest way to stream is `to_response/2`: print text as it arrives and still get
+  `usage`, `stop_reason` and tool calls at the end.
+
+      {:ok, stream_response} =
         Claudio.Messages.create(client, Claudio.Messages.Request.enable_streaming(request))
 
-      response
+      {:ok, response} =
+        Claudio.Messages.Stream.to_response(stream_response, on_text: &IO.write/1)
+
+  For lower-level control, enumerate the parsed events:
+
+      stream_response
       |> Claudio.Messages.Stream.parse_events()
       |> Stream.filter(&match?({:ok, %{event: "content_block_delta"}}, &1))
       |> Enum.each(fn {:ok, event} ->
         IO.puts(event.data["delta"]["text"])
       end)
+
+  ## Consume once
+
+  A streaming body can be read **once**, and only by the process that called
+  `Claudio.Messages.create/2`: a second read waits forever, and a read from another
+  process raises. Use the `:on_text` / `:on_event` options of `to_response/2` instead of
+  enumerating the response twice.
   """
 
   alias Claudio.Messages.Response
@@ -39,6 +54,63 @@ defmodule Claudio.Messages.Stream do
         }
 
   @type parsed_event :: {:ok, event()} | {:error, term()}
+
+  @doc """
+  Consumes a streaming response in one pass and returns the final `Claudio.Messages.Response`.
+
+  The simplest way to stream: print text as it arrives and still get `usage`,
+  `stop_reason` and tool calls at the end.
+
+      {:ok, response} =
+        Claudio.Messages.Stream.to_response(stream_response, on_text: &IO.write/1)
+
+      response.usage.output_tokens
+
+  ## Options
+
+  - `:on_text` — called with each text delta, in order.
+  - `:on_event` — called with each parsed event (`{:ok, event} | {:error, reason}`).
+
+  A streaming body can be read **once**, and only by the process that called
+  `Claudio.Messages.create/2`: a second read waits forever, and a read from another
+  process raises. Use `:on_text` / `:on_event` instead of enumerating the response twice.
+
+  An SSE `error` event is returned as `{:error, %Claudio.APIError{}}`; other failures are
+  as for `build_final_message/1`.
+  """
+  @spec to_response(Req.Response.t() | Enumerable.t(), keyword()) ::
+          {:ok, Response.t()} | {:error, term()}
+  def to_response(source, opts \\ []) do
+    opts = Claudio.Options.validate!(opts, [:on_text, :on_event], "Stream.to_response/2")
+    on_text = Keyword.get(opts, :on_text)
+    on_event = Keyword.get(opts, :on_event)
+
+    source
+    |> parse_events()
+    |> Elixir.Stream.each(fn event ->
+      if on_event, do: on_event.(event)
+      if on_text, do: maybe_text(event, on_text)
+    end)
+    |> build_final_message()
+    |> case do
+      {:ok, message} -> {:ok, Response.from_map(message)}
+      {:error, %{"type" => "error"} = data} -> {:error, Claudio.APIError.from_response(200, data)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp maybe_text(
+         {:ok,
+          %{
+            event: "content_block_delta",
+            data: %{"delta" => %{"type" => "text_delta", "text" => text}}
+          }},
+         fun
+       )
+       when is_binary(text),
+       do: fun.(text)
+
+  defp maybe_text(_event, _fun), do: :ok
 
   @doc """
   Parses Server-Sent Events from a streaming response body.
@@ -300,14 +372,16 @@ defmodule Claudio.Messages.Stream do
   defp maybe_emit_stream_usage_telemetry(_), do: :ok
 
   @doc """
-  Accumulates text deltas from streaming events into complete text chunks.
+  Emits the text of each `text_delta` event as a stream of text *chunks*.
+
+  Enumerate them, or `Enum.join/1` them for the full text.
 
   ## Example
 
       response
       |> Stream.parse_events()
       |> Stream.accumulate_text()
-      |> Enum.each(&IO.puts/1)
+      |> Enum.each(&IO.write/1)
   """
   @spec accumulate_text(Enumerable.t()) :: Enumerable.t()
   def accumulate_text(event_stream) do
