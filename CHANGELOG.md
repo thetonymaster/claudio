@@ -89,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `retry:` values (`delay`, `max_delay`, `max_retries`) must be non-negative integers; anything
   else raises `ArgumentError` at `Client.new/2` (previously a bad `delay` raised `ArithmeticError`
   from inside the request).
+- `add_message_with_image/5` also takes `media_type:` as a keyword option; `Agent.run/4` raises on unknown options.
 
 ### Deprecated
 

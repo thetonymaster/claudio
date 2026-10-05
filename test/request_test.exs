@@ -2114,6 +2114,21 @@ defmodule Claudio.Messages.RequestTest do
              |> Request.add_message_with_image(:user, "?", png, "image/webp")
              |> image_media_type() == "image/webp"
     end
+
+    test "add_message_with_image/5 accepts media_type: as a keyword" do
+      r =
+        Request.new("m")
+        |> Request.add_message_with_image(:user, "t", "AAAA", media_type: "image/png")
+
+      [%{"content" => [%{"source" => source}, _]}] = Request.to_map(r)["messages"]
+      assert source["media_type"] == "image/png"
+    end
+
+    test "add_message_with_image/5 rejects unknown keyword options" do
+      assert_raise ArgumentError, ~r/add_message_with_image\/5: unknown option :mime/, fn ->
+        Request.new("m") |> Request.add_message_with_image(:user, "t", "AAAA", mime: "image/png")
+      end
+    end
   end
 
   describe "re-audit: typed blocks keep cache_control" do

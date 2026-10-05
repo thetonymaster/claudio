@@ -1096,6 +1096,14 @@ defmodule Claudio.AgentTest do
         end
       end
     end
+
+    test "run/4 rejects unknown options", %{client: client} do
+      request = Request.new("m") |> Request.add_message(:user, "hi")
+
+      assert_raise ArgumentError, ~r/Agent.run\/4: unknown option :max_turn/, fn ->
+        Agent.run(client, request, %{}, max_turn: 1)
+      end
+    end
   end
 
   describe "re-audit fixes" do

@@ -110,6 +110,7 @@ defmodule Claudio.Agent do
   """
   @spec run(Req.Request.t(), Request.t(), handlers(), keyword()) :: run_result()
   def run(client, %Request{} = request, tool_handlers, opts \\ []) do
+    opts = Claudio.Options.validate!(opts, [:max_turns, :on_tool_call], "Claudio.Agent.run/4")
     max_turns = Keyword.get(opts, :max_turns, @default_max_turns)
     on_tool_call = Keyword.get(opts, :on_tool_call)
 
