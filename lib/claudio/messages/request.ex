@@ -1803,6 +1803,11 @@ defmodule Claudio.Messages.Request do
   - `:max_uses` — cap the number of searches per request.
   - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
   - `:user_location` — approximate-location map for localized results.
+  - `:response_inclusion` — `"excluded"` drops search blocks consumed by a
+    completed code-execution call from the response (API default `"full"`).
+    Requires `version: :"20260318"` or later; passed through verbatim.
+  - `:allowed_callers` — `[:direct]`, `[:code_execution]` or raw strings (see
+    `add_tool/3`); accepted by every web search version.
 
   Server-tool output is typed as `server_tool_use` / `web_search_tool_result`
   blocks (see `Claudio.Messages.Response.get_server_tool_uses/1`).
@@ -1817,7 +1822,9 @@ defmodule Claudio.Messages.Request do
           :max_uses,
           :allowed_domains,
           :blocked_domains,
-          :user_location
+          :user_location,
+          :response_inclusion,
+          :allowed_callers
         ],
         "Request.add_web_search_tool/2"
       )
@@ -1828,8 +1835,9 @@ defmodule Claudio.Messages.Request do
       |> maybe_put("allowed_domains", Keyword.get(opts, :allowed_domains))
       |> maybe_put("blocked_domains", Keyword.get(opts, :blocked_domains))
       |> maybe_put("user_location", Keyword.get(opts, :user_location))
+      |> maybe_put("response_inclusion", Keyword.get(opts, :response_inclusion))
 
-    add_tool(request, tool)
+    add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
 
   @doc """
@@ -1843,6 +1851,11 @@ defmodule Claudio.Messages.Request do
   - `:allowed_domains` / `:blocked_domains` — domain filtering (lists).
   - `:citations` — `true` enables citations on fetched content.
   - `:max_content_tokens` — approximate cap on fetched content size.
+  - `:response_inclusion` — `"excluded"` drops fetch blocks consumed by a
+    completed code-execution call from the response (API default `"full"`).
+    Requires `version: :"20260318"` or later; passed through verbatim.
+  - `:allowed_callers` — `[:direct]`, `[:code_execution]` or raw strings (see
+    `add_tool/3`).
 
   Unlike web search (URLs Claude finds), web fetch can only retrieve URLs that
   already appeared in the conversation.
@@ -1858,7 +1871,9 @@ defmodule Claudio.Messages.Request do
           :allowed_domains,
           :blocked_domains,
           :max_content_tokens,
-          :citations
+          :citations,
+          :response_inclusion,
+          :allowed_callers
         ],
         "Request.add_web_fetch_tool/2"
       )
@@ -1870,8 +1885,9 @@ defmodule Claudio.Messages.Request do
       |> maybe_put("blocked_domains", Keyword.get(opts, :blocked_domains))
       |> maybe_put("max_content_tokens", Keyword.get(opts, :max_content_tokens))
       |> maybe_put_citations(Keyword.get(opts, :citations))
+      |> maybe_put("response_inclusion", Keyword.get(opts, :response_inclusion))
 
-    add_tool(request, tool)
+    add_tool(request, tool, Keyword.take(opts, [:allowed_callers]))
   end
 
   @code_execution_versions [:"20260521", :"20260120", :"20250825"]

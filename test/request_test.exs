@@ -1027,6 +1027,38 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "web tool response_inclusion / allowed_callers (B5)" do
+    test "web search passes response_inclusion and allowed_callers through" do
+      r =
+        Request.new("m")
+        |> Request.add_web_search_tool(
+          version: :"20260318",
+          response_inclusion: "excluded",
+          allowed_callers: [:direct]
+        )
+
+      [tool] = Request.to_map(r)["tools"]
+      assert tool["type"] == "web_search_20260318"
+      assert tool["response_inclusion"] == "excluded"
+      assert tool["allowed_callers"] == ["direct"]
+    end
+
+    test "web fetch passes response_inclusion and allowed_callers through" do
+      r =
+        Request.new("m")
+        |> Request.add_web_fetch_tool(
+          version: :"20260318",
+          response_inclusion: "excluded",
+          allowed_callers: [:direct]
+        )
+
+      [tool] = Request.to_map(r)["tools"]
+      assert tool["type"] == "web_fetch_20260318"
+      assert tool["response_inclusion"] == "excluded"
+      assert tool["allowed_callers"] == ["direct"]
+    end
+  end
+
   describe "add_web_fetch_tool/2 (S6)" do
     test "default emits web_fetch_20260209 with no beta" do
       request = Request.new("claude-opus-4-8") |> Request.add_web_fetch_tool()

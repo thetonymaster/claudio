@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`add_web_search_tool/2` / `add_web_fetch_tool/2`: `response_inclusion:`** (needs `version: :"20260318"`) **and `allowed_callers:`**.
 - **`Request.disable_thinking/2` `mode: :between_tools`** — Claude Sonnet 5.5's way to turn off
   up-front thinking (`thinking: {"type": "between_tools"}`). `disable_thinking/1` still sends
   `disabled`. The `set_tool_choice/2` docs now list Sonnet 5.5 among models that 400 on forced tool use.
