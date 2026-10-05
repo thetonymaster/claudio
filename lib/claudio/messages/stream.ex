@@ -243,6 +243,11 @@ defmodule Claudio.Messages.Stream do
     {[event], finish_span(span, :error, error_type)}
   end
 
+  defp span_event({:error, _reason} = event, span),
+    do: {[event], finish_span(span, :error, :parse_error)}
+
+  defp span_event(event, span), do: {[event], span}
+
   # Known API types become the same atoms `create` reports; an unknown identifier stays a
   # bounded string; anything else (empty, free text) is :unknown.
   defp sse_error_type(type) do
@@ -252,11 +257,6 @@ defmodule Claudio.Messages.Stream do
       string -> Claudio.Telemetry.bounded_type(string) || :unknown
     end
   end
-
-  defp span_event({:error, _reason} = event, span),
-    do: {[event], finish_span(span, :error, :parse_error)}
-
-  defp span_event(event, span), do: {[event], span}
 
   defp start_span(span, model, response_id) do
     link_model = if span.link, do: span.link[:model]
