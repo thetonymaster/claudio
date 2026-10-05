@@ -301,8 +301,21 @@ defmodule Claudio.Client do
   defp normalize_retry!(true), do: []
   defp normalize_retry!(false), do: :disabled
 
-  defp normalize_retry!(opts) when is_list(opts),
-    do: Claudio.Options.validate!(opts, @retry_keys, "Claudio.Client.new/2 :retry")
+  defp normalize_retry!(opts) when is_list(opts) do
+    opts = Claudio.Options.validate!(opts, @retry_keys, "Claudio.Client.new/2 :retry")
+
+    Enum.each(opts, fn
+      {_key, value} when is_integer(value) and value >= 0 ->
+        :ok
+
+      {key, value} ->
+        raise ArgumentError,
+              "Claudio.Client.new/2 :retry #{inspect(key)} must be a non-negative integer" <>
+                "#{if key == :max_retries, do: "", else: " (ms)"}; got #{inspect(value)}"
+    end)
+
+    opts
+  end
 
   defp normalize_retry!(other) do
     raise ArgumentError,

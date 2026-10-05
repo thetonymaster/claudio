@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `timeout` / `recv_timeout` must be a non-negative integer (ms) or `:infinity`; anything
   else raises `ArgumentError` when the client is built (per-client and app config alike).
   Previously a bad value failed on the first request with an error that did not name it.
+- `retry:` values (`delay`, `max_delay`, `max_retries`) must be non-negative integers; anything
+  else raises `ArgumentError` at `Client.new/2` (previously a bad `delay` raised `ArithmeticError`
+  from inside the request).
 
 ### Deprecated
 

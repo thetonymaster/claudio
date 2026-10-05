@@ -514,4 +514,21 @@ defmodule Claudio.ClientOptionsTest do
       assert_raise ArgumentError, ~r/max_retry/, fn -> new(%{retry: [max_retry: 2]}) end
     end
   end
+
+  describe "retry value validation" do
+    for {key, bad} <- [delay: "1s", delay: -5, max_delay: 1.5, max_retries: -1, max_retries: "3"] do
+      test "#{key}: #{inspect(bad)} raises at new/2" do
+        assert_raise ArgumentError,
+                     ~r/:retry #{inspect(unquote(key))} must be a non-negative integer/,
+                     fn ->
+                       new(%{retry: [{unquote(key), unquote(bad)}]})
+                     end
+      end
+    end
+
+    test "valid values pass" do
+      assert %Req.Request{} =
+               new(%{retry: [delay: 0, max_retries: 0, max_delay: 10]})
+    end
+  end
 end
