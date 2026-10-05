@@ -75,7 +75,7 @@ defmodule Claudio.APIError do
     detail =
       case body do
         text when is_binary(text) and text != "" ->
-          "a non-JSON body: " <> printable(binary_part(text, 0, min(byte_size(text), 200)))
+          "a non-JSON body: " <> printable(text)
 
         text when is_binary(text) or is_nil(text) ->
           "an empty body"
@@ -94,11 +94,16 @@ defmodule Claudio.APIError do
 
   @doc false
   @spec parse_type(term()) :: error_type() | String.t() | nil
+  def parse_type(""), do: nil
   def parse_type(type) when is_binary(type), do: Map.get(@type_atoms, type, type)
   def parse_type(_type), do: nil
 
   defp printable(text) do
-    if String.valid?(text), do: text, else: inspect(text, binaries: :as_binaries)
+    if String.valid?(text) do
+      String.slice(text, 0, 200)
+    else
+      inspect(binary_part(text, 0, min(byte_size(text), 200)), binaries: :as_binaries)
+    end
   end
 
   defp type_for_status(400), do: :invalid_request_error

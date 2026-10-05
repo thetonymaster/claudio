@@ -119,6 +119,19 @@ defmodule Claudio.APIErrorTest do
       assert String.valid?(e.message)
     end
 
+    test "a valid multibyte body stays readable at the 200-byte boundary" do
+      body = String.duplicate("a", 199) <> "é" <> "zz"
+      e = APIError.from_response(502, body)
+      assert String.valid?(e.message)
+      refute e.message =~ "<<"
+      assert e.message =~ "é"
+    end
+
+    test "an empty error.type falls back to the status" do
+      e = APIError.from_response(429, %{"error" => %{"type" => "", "message" => "m"}})
+      assert e.type == :rate_limit_error
+    end
+
     test "parse_type/1" do
       assert APIError.parse_type("overloaded_error") == :overloaded_error
       assert APIError.parse_type("brand_new_error") == "brand_new_error"
