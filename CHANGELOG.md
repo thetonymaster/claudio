@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `APIError.type` is an atom for `billing_error`, `request_too_large` and `timeout_error` (was a
+  string); a JSON error body without `error.type` is typed from the HTTP status, and its
+  top-level `message` is used.
 - **`Client.new/2` validates its config**: it raises `ArgumentError` on a missing/empty `:token` and on unknown config keys, and accepts a keyword list. `version: nil` now falls back to the default like the other keys (it used to drop the `anthropic-version` header).
 - Legacy `Claudio.Messages.create_message/2` now emits the `[:claudio, :messages, :create]` span.
   It recognises only the string key `"stream" => true` as streaming (as before); an atom

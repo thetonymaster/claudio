@@ -94,7 +94,35 @@ defmodule Claudio.APIErrorTest do
       error = APIError.from_response(500, body)
 
       assert error.type == :api_error
-      assert error.message == "Unknown error"
+      assert error.message == "Something went wrong"
+    end
+
+    test "documented error types are atoms" do
+      for {status, type} <- [
+            {413, "request_too_large"},
+            {402, "billing_error"},
+            {504, "timeout_error"}
+          ] do
+        body = %{"error" => %{"type" => type, "message" => "m"}}
+        assert APIError.from_response(status, body).type == String.to_atom(type)
+      end
+    end
+
+    test "a JSON body without error.type is typed by status" do
+      e = APIError.from_response(429, %{"message" => "gateway says slow down"})
+      assert e.type == :rate_limit_error
+      assert e.message == "gateway says slow down"
+    end
+
+    test "a non-UTF-8 body yields a valid UTF-8 message" do
+      e = APIError.from_response(502, <<0xFF, 0xFE, "bad utf8">>)
+      assert String.valid?(e.message)
+    end
+
+    test "parse_type/1" do
+      assert APIError.parse_type("overloaded_error") == :overloaded_error
+      assert APIError.parse_type("brand_new_error") == "brand_new_error"
+      assert APIError.parse_type(nil) == nil
     end
 
     test "handles unknown error types" do

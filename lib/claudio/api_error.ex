@@ -8,11 +8,19 @@ defmodule Claudio.APIError do
   @type error_type ::
           :invalid_request_error
           | :authentication_error
+          | :billing_error
           | :permission_error
           | :not_found_error
+          | :request_too_large
           | :rate_limit_error
           | :api_error
+          | :timeout_error
           | :overloaded_error
+
+  @known_types ~w(invalid_request_error authentication_error billing_error permission_error
+                  not_found_error request_too_large rate_limit_error api_error timeout_error
+                  overloaded_error)
+  @type_atoms Map.new(@known_types, &{&1, String.to_atom(&1)})
 
   @type t :: %__MODULE__{
           type: error_type() | String.t(),
@@ -47,20 +55,11 @@ defmodule Claudio.APIError do
         _ -> %{}
       end
 
-    type =
-      case error_info[:type] || error_info["type"] do
-        "invalid_request_error" -> :invalid_request_error
-        "authentication_error" -> :authentication_error
-        "permission_error" -> :permission_error
-        "not_found_error" -> :not_found_error
-        "rate_limit_error" -> :rate_limit_error
-        "api_error" -> :api_error
-        "overloaded_error" -> :overloaded_error
-        other when is_binary(other) -> other
-        _ -> :api_error
-      end
+    type = parse_type(error_info[:type] || error_info["type"]) || type_for_status(status_code)
 
-    message = error_info[:message] || error_info["message"] || "Unknown error"
+    message =
+      error_info[:message] || error_info["message"] || body[:message] || body["message"] ||
+        "Unknown error"
 
     %__MODULE__{
       type: type,
@@ -76,7 +75,7 @@ defmodule Claudio.APIError do
     detail =
       case body do
         text when is_binary(text) and text != "" ->
-          "a non-JSON body: " <> String.slice(text, 0, 200)
+          "a non-JSON body: " <> printable(binary_part(text, 0, min(byte_size(text), 200)))
 
         text when is_binary(text) or is_nil(text) ->
           "an empty body"
@@ -93,10 +92,23 @@ defmodule Claudio.APIError do
     }
   end
 
+  @doc false
+  @spec parse_type(term()) :: error_type() | String.t() | nil
+  def parse_type(type) when is_binary(type), do: Map.get(@type_atoms, type, type)
+  def parse_type(_type), do: nil
+
+  defp printable(text) do
+    if String.valid?(text), do: text, else: inspect(text, binaries: :as_binaries)
+  end
+
+  defp type_for_status(400), do: :invalid_request_error
   defp type_for_status(401), do: :authentication_error
+  defp type_for_status(402), do: :billing_error
   defp type_for_status(403), do: :permission_error
   defp type_for_status(404), do: :not_found_error
+  defp type_for_status(413), do: :request_too_large
   defp type_for_status(429), do: :rate_limit_error
+  defp type_for_status(504), do: :timeout_error
   defp type_for_status(529), do: :overloaded_error
   defp type_for_status(_status), do: :api_error
 
