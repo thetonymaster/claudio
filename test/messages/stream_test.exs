@@ -1103,7 +1103,26 @@ defmodule Claudio.Messages.StreamTest do
         ])
 
       [body] |> ClaudioStream.parse_events() |> Stream.run()
-      assert [{_, %{reason: :error, error_type: "overloaded_error"}}] = stops()
+      assert [{_, %{reason: :error, error_type: :overloaded_error}}] = stops()
+    end
+
+    for {type, expected} <- [
+          {"brand_new_error", "brand_new_error"},
+          {"", :unknown},
+          {"Free text: detail", :unknown}
+        ] do
+      test "an SSE error with type #{inspect(type)} reports #{inspect(expected)}" do
+        attach(@span)
+
+        body =
+          sse([
+            {"error",
+             %{"type" => "error", "error" => %{"type" => unquote(type), "message" => "x"}}}
+          ])
+
+        [body] |> ClaudioStream.parse_events() |> Stream.run()
+        assert [{_, %{reason: :error, error_type: unquote(expected)}}] = stops()
+      end
     end
 
     test "a malformed data line stops with :parse_error" do

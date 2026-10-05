@@ -57,7 +57,7 @@ The span covers the whole consumption: its clock starts when enumeration begins,
 | `reason` | Meaning | `error_type` |
 |---|---|---|
 | `:completed` | `message_stop` arrived | absent |
-| `:error` | an SSE `error` event | the error's `type` string from the API when it is an identifier (`[a-z][a-z0-9_]{0,63}`), `:unknown` for any other string, `:stream_error` when it has none |
+| `:error` | an SSE `error` event | the same atom as `create` for a known API error type (e.g. `:overloaded_error`); the API's string for an unknown type when it is an identifier (`[a-z][a-z0-9_]{0,63}`); `:unknown` for any other string; `:stream_error` when it has none |
 | `:error` | a malformed data line | `:parse_error` |
 | `:error` | upstream ended without `message_stop` | `:incomplete_stream` |
 | `:halted` | the consumer stopped early | absent |
@@ -86,7 +86,7 @@ A bounded value, never an `inspect` string; map it to OpenTelemetry `error.type`
 | `%Claudio.APIError{type: t}` | `t` (an atom such as `:rate_limit_error`, or the API's string for an unknown type when it is an identifier matching `[a-z][a-z0-9_]{0,63}`; any other string, which could be free text, becomes `:unknown`) |
 | `Req.TransportError` and other exceptions with a `reason` | the reason when it is an atom (`:timeout`, `:econnrefused`, `:closed`), else the exception module |
 | any other exception struct | its module (e.g. `Req.HTTPError`) |
-| SSE `error` event (stream) | the event's `type` string when it is such an identifier, `:unknown` for any other string, else `:stream_error` |
+| SSE `error` event (stream) | the same atom as for `APIError` when the type is a known API type, the type string when it is an unknown identifier, `:unknown` for any other string, else `:stream_error` |
 | malformed data line (stream) | `:parse_error` |
 | stream ended without `message_stop` | `:incomplete_stream` |
 | anything else | `:unknown` |

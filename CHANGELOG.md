@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stream `:stop` `error_type` is an atom for known API error types (as on `create`); unknown identifiers stay strings.
 - `Claudio.Messages.Response.get_text/1` accepts the legacy `Claudio.Messages.create_message/2` map.
 - Builder functions raise `ArgumentError` naming the fix for common mistakes
   (`add_message(:system, …)`, string roles, `nil` content, out-of-range sampling values, string

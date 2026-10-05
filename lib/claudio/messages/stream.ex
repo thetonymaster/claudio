@@ -234,13 +234,23 @@ defmodule Claudio.Messages.Stream do
     error_type =
       case data do
         %{"error" => %{"type" => type}} when is_binary(type) ->
-          Claudio.Telemetry.bounded_type(type) || :unknown
+          sse_error_type(type)
 
         _ ->
           :stream_error
       end
 
     {[event], finish_span(span, :error, error_type)}
+  end
+
+  # Known API types become the same atoms `create` reports; an unknown identifier stays a
+  # bounded string; anything else (empty, free text) is :unknown.
+  defp sse_error_type(type) do
+    case Claudio.APIError.parse_type(type) do
+      nil -> :unknown
+      atom when is_atom(atom) -> atom
+      string -> Claudio.Telemetry.bounded_type(string) || :unknown
+    end
   end
 
   defp span_event({:error, _reason} = event, span),
