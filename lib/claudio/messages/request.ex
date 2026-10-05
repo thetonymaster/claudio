@@ -894,8 +894,8 @@ defmodule Claudio.Messages.Request do
     thinking between tool calls. Claude Sonnet 5.5 uses `:between_tools` as its off
     switch (at `high` effort or below).
 
-  Claude Opus 5.5 can't disable thinking: `"disabled"` returns a 400 there. Omit
-  `thinking` and use `set_effort/2` instead.
+  On Claude Opus 5.5, thinking can't be disabled: `"disabled"` returns a 400 error.
+  Omit the `thinking` field and control thinking depth with `set_effort/2`.
   """
   @spec disable_thinking(t(), keyword()) :: t()
   def disable_thinking(%__MODULE__{} = request, opts \\ []) do
