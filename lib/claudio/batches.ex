@@ -265,6 +265,7 @@ defmodule Claudio.Batches do
   """
   @spec list(Req.Request.t(), keyword()) :: {:ok, map()} | {:error, APIError.t()}
   def list(client, opts \\ []) do
+    opts = Claudio.Options.validate!(opts, [:limit, :before_id, :after_id], "Batches.list/2")
     query_params = build_query_params(opts)
 
     case Req.get(client, url: "messages/batches", params: query_params) do
@@ -333,8 +334,8 @@ defmodule Claudio.Batches do
 
   ## Options
 
-  - `:poll_interval` - Seconds between status checks (default: 30)
-  - `:timeout` - Maximum seconds to wait (default: 86400 = 24 hours)
+  - `:poll_interval` - Seconds between status checks (default: 30). `poll_interval` and `timeout` are in **seconds**.
+  - `:timeout` - Maximum seconds to wait (default: 86400 = 24 hours). `poll_interval` and `timeout` are in **seconds**.
   - `:callback` - Function called with batch status on each poll
 
   ## Example
@@ -342,12 +343,8 @@ defmodule Claudio.Batches do
       {:ok, final_batch} = Claudio.Batches.wait_for_completion(
         client,
         batch_id,
-        poll_interval: 60,
-        timeout: 3600,
-        callback: fn status ->
-          IO.puts("Status: \#{status["processing_status"]}")
-          IO.inspect(status["request_counts"])
-        end
+        callback: &IO.inspect/1,
+        poll_interval: 5
       )
 
       {:ok, results} = Claudio.Batches.get_results(client, final_batch["id"])
@@ -355,6 +352,13 @@ defmodule Claudio.Batches do
   @spec wait_for_completion(Req.Request.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def wait_for_completion(client, batch_id, opts \\ []) do
+    opts =
+      Claudio.Options.validate!(
+        opts,
+        [:poll_interval, :timeout, :callback],
+        "Batches.wait_for_completion/3"
+      )
+
     poll_interval = Keyword.get(opts, :poll_interval, 30) * 1000
     timeout = Keyword.get(opts, :timeout, 86_400) * 1000
     callback = Keyword.get(opts, :callback)

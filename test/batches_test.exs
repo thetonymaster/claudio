@@ -108,6 +108,24 @@ defmodule Claudio.BatchesTest do
     assert {:ok, _} = Claudio.Batches.create(client, [%{custom_id: "a", params: request}])
   end
 
+  test "wait_for_completion/3 rejects unknown options" do
+    client = Claudio.Client.new(%{token: "t"})
+
+    assert_raise ArgumentError,
+                 ~r/Batches.wait_for_completion\/3: unknown option :poll_intervall/,
+                 fn ->
+                   Claudio.Batches.wait_for_completion(client, "b", poll_intervall: 5)
+                 end
+  end
+
+  test "list/2 rejects unknown options" do
+    client = Claudio.Client.new(%{token: "t"})
+
+    assert_raise ArgumentError, ~r/Batches.list\/2: unknown option :after/, fn ->
+      Claudio.Batches.list(client, after: "x")
+    end
+  end
+
   describe "get_results/2 (pre-release audit)" do
     defp serve_results(bypass, content_type, body) do
       Bypass.expect_once(bypass, "GET", "/messages/batches/b1/results", fn conn ->

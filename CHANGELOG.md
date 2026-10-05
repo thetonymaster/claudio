@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asserts on the step lists will see it.
 - `Claudio.Messages.Stream.parse_events/1` no longer raises on a malformed `message_start` /
   `message_delta` (a non-map `message` or `usage`): it passes the events through.
+- `Batches.wait_for_completion/3` and `Batches.list/2` raise on unknown options.
 - `Claudio.Messages.Stream.parse_events/1` also accepts the whole `%Req.Response{}`.
 - **The `:telemetry` requirement is now `~> 1.3`** (was `~> 1.0`): span stop measurements need
   1.3. Applications locked to an older `:telemetry` will be asked to update it.
