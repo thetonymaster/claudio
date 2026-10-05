@@ -57,7 +57,7 @@ def deps do
 end
 ```
 
-Claudio requires Elixir 1.15+. CI tests OTP 26+; an OTP 25 row is in the CI matrix.
+Claudio requires Elixir 1.15+. CI tests OTP 25 through 28.
 
 Then fetch dependencies:
 

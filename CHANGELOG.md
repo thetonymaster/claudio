@@ -383,7 +383,7 @@ Everything here can break a 0.6 caller; the details are in the sections below.
 - README and the getting-started guide: install snippet (`~> 0.7`), working streaming, Batches
   and telemetry examples (the old ones called functions or events that don't exist); CLAUDE.md
   arities and key-style notes corrected; the CHANGELOG is published on hexdocs; CI covers
-  Elixir 1.18 / OTP 27 and 1.19 / OTP 28.
+  Elixir 1.15 / OTP 25, 1.18 / OTP 27 and 1.19 / OTP 28.
 
 ## [0.6.0] - 2026-06-19
 
