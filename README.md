@@ -57,6 +57,8 @@ def deps do
 end
 ```
 
+Claudio requires Elixir 1.15+. CI tests OTP 26+; an OTP 25 row is in the CI matrix.
+
 Then fetch dependencies:
 
 ```bash
@@ -132,12 +134,21 @@ request =
 
 {:ok, stream_response} = Claudio.Messages.create(client, request)
 
-# Stream text in real-time
+# Print text as it arrives and get the final Response (usage, stop_reason, tool calls)
+{:ok, response} = Stream.to_response(stream_response, on_text: &IO.write/1)
+response.usage.output_tokens
+```
+
+If you only want the text chunks:
+
+```elixir
 stream_response
 |> Stream.parse_events()
 |> Stream.accumulate_text()
 |> Enum.each(&IO.write/1)
 ```
+
+A streaming body can be read **once**, and only by the process that called `Claudio.Messages.create/2`. Pick one consumer per response; use `:on_text` / `:on_event` rather than enumerating it twice.
 
 ### Tool/Function Calling
 
@@ -364,6 +375,7 @@ request =
   Request.new("claude-opus-5-5")
   |> Request.add_message(:user, "What's the weather in SF?")
   |> Request.add_tool(weather_tool)
+  |> Request.set_max_tokens(1024)
 
 # Agent.run handles the multi-turn loop automatically
 {:ok, final_response, history} = Agent.run(client, request, handlers)

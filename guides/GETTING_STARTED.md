@@ -77,7 +77,7 @@ client = Claudio.Client.new(%{
 client = Claudio.Client.new(%{
   token: api_key,
   version: "2023-06-01",
-  beta: ["prompt-caching-2024-07-31"]
+  beta: ["context-management-2025-06-27"]  # feature helpers declare their own betas; you rarely need this
 })
 ```
 
