@@ -98,8 +98,8 @@ defmodule Claudio.Batches do
       {:ok, completed} = Batches.wait_for_completion(
         client,
         batch_id,
-        &progress_callback/1,
-        poll_interval: 5_000  # Check every 5 seconds
+        callback: &progress_callback/1,
+        poll_interval: 5  # seconds
       )
       {:ok, batches} = Batches.list(client)
 
@@ -334,8 +334,10 @@ defmodule Claudio.Batches do
 
   ## Options
 
-  - `:poll_interval` - Seconds between status checks (default: 30). `poll_interval` and `timeout` are in **seconds**.
-  - `:timeout` - Maximum seconds to wait (default: 86400 = 24 hours). `poll_interval` and `timeout` are in **seconds**.
+  All time values are in **seconds**.
+
+  - `:poll_interval` - Seconds between status checks (default: 30)
+  - `:timeout` - Maximum seconds to wait (default: 86400 = 24 hours)
   - `:callback` - Function called with batch status on each poll
 
   ## Example
