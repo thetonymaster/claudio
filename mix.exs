@@ -75,9 +75,9 @@ defmodule Claudio.MixProject do
 
   defp description do
     """
-    An Elixir client library for the Anthropic API, providing comprehensive support
-    for Claude models including Messages API, Batches API, streaming, tool calling,
-    prompt caching, and vision capabilities.
+    Elixir client for the Anthropic Claude API: Messages (streaming, tools, prompt caching,
+    vision, PDFs, thinking, structured outputs), Batches, Files, Models, Skills, Admin,
+    Managed Agents (beta), MCP and A2A, with :telemetry events ready for OpenTelemetry.
     """
   end
 
@@ -87,6 +87,7 @@ defmodule Claudio.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @source_url,
+        "Changelog" => "https://hexdocs.pm/claudio/changelog.html",
         "Anthropic API Docs" => "https://docs.anthropic.com/"
       },
       maintainers: ["Antonio Cabrera"]
@@ -119,6 +120,7 @@ defmodule Claudio.MixProject do
           Claudio.Batches
         ],
         Core: [
+          Claudio,
           Claudio.Client,
           Claudio.APIError
         ],
@@ -145,7 +147,9 @@ defmodule Claudio.MixProject do
         ],
         Agent: [
           Claudio.Agent
-        ]
+        ],
+        MCP: [~r/^Claudio\.MCP/],
+        A2A: [~r/^Claudio\.A2A/]
       ]
     ]
   end

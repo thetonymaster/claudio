@@ -2,14 +2,9 @@ defmodule Claudio.A2A.Transport.GRPC do
   @moduledoc """
   gRPC transport for the A2A protocol (v0.3+).
 
-  Requires optional dependencies:
-
-      {:protox, "~> 1.7"}
-      {:grpc, "~> 0.11"}
-
-  > **Note:** This transport is not yet implemented. It will use protox for
-  > protobuf encoding and the grpc package for transport. See `a2a.proto`
-  > for the service definition.
+  > **Not implemented.** Every callback returns `{:error, :grpc_not_implemented}`.
+  > The module exists so the `Claudio.A2A.Transport` behaviour has a placeholder
+  > for the gRPC binding; use `Claudio.A2A.Transport.HTTP` (the default).
   """
 
   @behaviour Claudio.A2A.Transport

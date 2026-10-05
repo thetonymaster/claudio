@@ -443,7 +443,7 @@ alias Claudio.A2A.{Client, Message, Part}
 # Discover a remote agent's capabilities
 {:ok, card} = Client.discover("https://expert-agent.com")
 
-# Send a message over HTTP (default) or gRPC
+# Send a message over HTTP (the gRPC transport is not implemented)
 message = Message.new(:user, [Part.text("Analyze this dataset")])
 {:ok, task} = Client.send_message("https://expert-agent.com/a2a", message)
 

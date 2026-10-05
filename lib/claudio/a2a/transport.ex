@@ -5,7 +5,8 @@ defmodule Claudio.A2A.Transport do
   Claudio supports multiple transport bindings for the A2A protocol:
 
   - `Claudio.A2A.Transport.HTTP` — JSON-RPC 2.0 over HTTP (default)
-  - `Claudio.A2A.Transport.GRPC` — gRPC (requires optional `protox` + `grpc` deps)
+  - `Claudio.A2A.Transport.GRPC` — gRPC (not implemented; every callback returns
+    `{:error, :grpc_not_implemented}`)
 
   ## Usage
 
