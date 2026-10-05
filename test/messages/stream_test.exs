@@ -1345,6 +1345,71 @@ defmodule Claudio.Messages.StreamTest do
 
       assert [{_, %{reason: :completed}}] = stops()
     end
+
+    defp bypass_stream_client(bypass, model) do
+      Bypass.expect_once(bypass, "POST", "/messages", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, full_stream(model))
+      end)
+
+      Claudio.Client.new(
+        %{token: "t", version: "2023-06-01"},
+        "http://localhost:#{bypass.port}/"
+      )
+    end
+
+    defp streaming_request(model) do
+      Request.new(model)
+      |> Request.add_message(:user, "hi")
+      |> Request.set_max_tokens(16)
+      |> Request.enable_streaming()
+    end
+
+    test "a real async body consumed in a non-owner Task raises and the span ends :halted" do
+      bypass = Bypass.open()
+      model = "claude-owner-#{System.unique_integer([:positive])}"
+      attach(@span, filter: &(&1[:model] == model))
+
+      {:ok, resp} =
+        Claudio.Messages.create(bypass_stream_client(bypass, model), streaming_request(model))
+
+      error =
+        Task.async(fn ->
+          try do
+            resp |> ClaudioStream.parse_events() |> Stream.run()
+            :no_raise
+          rescue
+            e -> e
+          end
+        end)
+        |> Task.await()
+
+      assert %RuntimeError{message: message} = error
+      assert message =~ "expected to read body chunk in the process"
+
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :start], _, start}
+      assert_receive {:telemetry, [:claudio, :messages, :stream, :stop], _, %{reason: :halted}}
+      assert is_reference(start.telemetry_span_context)
+    end
+
+    test "an unconsumed streaming create/2 emits create :stop (stream: true) and no stream span" do
+      bypass = Bypass.open()
+      model = "claude-unconsumed"
+      attach(@span ++ [[:claudio, :messages, :create, :stop]])
+
+      assert {:ok, %Req.Response{}} =
+               Claudio.Messages.create(
+                 bypass_stream_client(bypass, model),
+                 streaming_request(model)
+               )
+
+      assert_received {:telemetry, [:claudio, :messages, :create, :stop], _,
+                       %{stream: true, status: :ok}}
+
+      refute_received {:telemetry, [:claudio, :messages, :stream, :start], _, _}
+      refute_received {:telemetry, [:claudio, :messages, :stream, :stop], _, _}
+    end
   end
 
   describe "stream span (audit hardening)" do

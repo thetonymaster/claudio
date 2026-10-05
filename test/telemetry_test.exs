@@ -395,6 +395,72 @@ defmodule Claudio.TelemetryTest do
     end
   end
 
+  describe "span failures (audit)" do
+    defp plug_client(body) do
+      Claudio.Client.new(%{token: "t", version: "2023-06-01"})
+      |> Req.merge(plug: fn conn -> Req.Test.json(conn, body) end)
+    end
+
+    test "an Erlang error inside the create span emits :exception with the raw atom reason" do
+      attach([[:claudio, :messages, :create, :exception]])
+
+      # A 200 whose `content` is a string: Response.parse_content/1 has no clause for it, which
+      # surfaces as a raw `:function_clause` (telemetry sees the Erlang error, not the struct).
+      client = plug_client(%{"content" => "x"})
+      payload = %{"model" => "m", "max_tokens" => 8, "messages" => []}
+
+      assert_raise FunctionClauseError, fn -> Claudio.Messages.create(client, payload) end
+
+      assert_receive {:telemetry, [:claudio, :messages, :create, :exception], measurements,
+                      %{kind: :error, reason: :function_clause, model: "m"}}
+
+      assert is_integer(measurements.duration)
+    end
+
+    test "count_tokens raising emits :exception" do
+      attach([[:claudio, :messages, :count_tokens, :exception]])
+
+      # A pid cannot be JSON-encoded: Req raises while building the request.
+      assert_raise Protocol.UndefinedError, fn ->
+        Claudio.Messages.count_tokens(plug_client(%{}), %{"model" => "m", "messages" => [self()]})
+      end
+
+      assert_receive {:telemetry, [:claudio, :messages, :count_tokens, :exception], _,
+                      %{kind: :error, reason: %Protocol.UndefinedError{}}}
+    end
+
+    @tag capture_log: true
+    test "a handler that raises on :http :start does not break create/2" do
+      test_pid = self()
+      id = "claudio-crashing-handler-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:claudio, :http, :request, :start],
+          fn _event, _measurements, _metadata, _config ->
+            if self() == test_pid, do: raise("boom from handler")
+          end,
+          nil
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      client = plug_client(%{"content" => []})
+
+      assert {:ok, %Claudio.Messages.Response{}} =
+               Claudio.Messages.create(client, %{
+                 "model" => "m",
+                 "max_tokens" => 8,
+                 "messages" => []
+               })
+
+      # telemetry detached the failing handler
+      assert :telemetry.list_handlers([:claudio, :http, :request, :start])
+             |> Enum.all?(&(&1.id != id))
+    end
+  end
+
   describe "error paths" do
     test "the API error body reaches only create :stop's deprecated `error`" do
       bypass = Bypass.open()
