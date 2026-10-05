@@ -305,4 +305,10 @@ defmodule Claudio.ToolsTest do
                    fn -> Tools.create_tool_result("id", "ok", false, %{}) end
     end
   end
+
+  test "define_tool/3 with an atom name says what it expected" do
+    assert_raise ArgumentError,
+                 ~r/define_tool\/3: expected name and description strings and an input_schema map; got :weather/,
+                 fn -> Tools.define_tool(:weather, "d", %{}) end
+  end
 end

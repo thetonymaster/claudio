@@ -142,6 +142,11 @@ defmodule Claudio.Messages.Request do
       ])
   """
   @spec add_message(t(), role(), content()) :: t()
+  def add_message(%__MODULE__{}, role, nil) when role in [:user, :assistant] do
+    raise ArgumentError,
+          "Request.add_message/3: content must be a string or a list of content blocks; got nil"
+  end
+
   def add_message(%__MODULE__{messages: messages} = request, role, content)
       when role in [:user, :assistant] do
     message = %{
@@ -162,6 +167,17 @@ defmodule Claudio.Messages.Request do
 
     # Replaying advisor blocks needs the advisor beta even without the tool (probed 2026-09-26).
     if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
+  end
+
+  def add_message(%__MODULE__{}, :system, _content) do
+    raise ArgumentError,
+          "Request.add_message/3: :system is not a message role. Use set_system/2 for the " <>
+            "system prompt, or add_system_message/3 for a mid-conversation system message"
+  end
+
+  def add_message(%__MODULE__{}, role, _content) do
+    raise ArgumentError,
+          "Request.add_message/3: role must be :user or :assistant; got #{inspect(role)}"
   end
 
   defp has_fallback_block?(content) when is_list(content) do
@@ -445,8 +461,14 @@ defmodule Claudio.Messages.Request do
       |> Request.set_max_tokens(1024)
   """
   @spec set_max_tokens(t(), integer()) :: t()
-  def set_max_tokens(%__MODULE__{} = request, max_tokens) when is_integer(max_tokens) do
+  def set_max_tokens(%__MODULE__{} = request, max_tokens)
+      when is_integer(max_tokens) and max_tokens > 0 do
     %{request | max_tokens: max_tokens}
+  end
+
+  def set_max_tokens(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_max_tokens/2: max_tokens must be a positive integer; got #{inspect(other)}"
   end
 
   @doc """
@@ -466,6 +488,11 @@ defmodule Claudio.Messages.Request do
     %{request | temperature: temperature / 1}
   end
 
+  def set_temperature(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_temperature/2: temperature must be a number between 0.0 and 1.0; got #{inspect(other)}"
+  end
+
   @doc """
   Sets top_p for nucleus sampling (0.0-1.0).
 
@@ -483,6 +510,11 @@ defmodule Claudio.Messages.Request do
     %{request | top_p: top_p / 1}
   end
 
+  def set_top_p(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_top_p/2: top_p must be a number between 0.0 and 1.0; got #{inspect(other)}"
+  end
+
   @doc """
   Sets top_k for sampling from top K options.
 
@@ -497,6 +529,11 @@ defmodule Claudio.Messages.Request do
   @spec set_top_k(t(), integer()) :: t()
   def set_top_k(%__MODULE__{} = request, top_k) when is_integer(top_k) and top_k > 0 do
     %{request | top_k: top_k}
+  end
+
+  def set_top_k(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_top_k/2: top_k must be a positive integer; got #{inspect(other)}"
   end
 
   @doc """
@@ -555,8 +592,9 @@ defmodule Claudio.Messages.Request do
     programmatic tool calling), or a raw string.
   """
   @spec add_tool(t(), map(), keyword()) :: t()
-  def add_tool(%__MODULE__{tools: tools} = request, tool, opts \\ [])
-      when is_map(tool) do
+  def add_tool(request, tool, opts \\ [])
+
+  def add_tool(%__MODULE__{tools: tools} = request, tool, opts) when is_map(tool) do
     opts =
       Claudio.Options.validate!(opts, [:defer_loading, :allowed_callers], "Request.add_tool/3")
 
@@ -566,6 +604,12 @@ defmodule Claudio.Messages.Request do
       |> put_tool_key("allowed_callers", allowed_callers!(Keyword.get(opts, :allowed_callers)))
 
     %{request | tools: (tools || []) ++ [tool]}
+  end
+
+  def add_tool(%__MODULE__{}, tool, _opts) do
+    raise ArgumentError,
+          "Request.add_tool/3: tool must be a map; got #{inspect(tool)}. " <>
+            "Build one with Claudio.Tools.define_tool/3"
   end
 
   defp defer_loading!(value) when is_boolean(value) or is_nil(value), do: value
@@ -659,6 +703,11 @@ defmodule Claudio.Messages.Request do
     %{request | tool_choice: %{"type" => "none"}}
   end
 
+  def set_tool_choice(%__MODULE__{}, other) do
+    raise ArgumentError,
+          "Request.set_tool_choice/2: expected :auto, :any, :none or {:tool, name}; got #{inspect(other)}"
+  end
+
   @doc """
   Sets request metadata.
 
@@ -688,6 +737,12 @@ defmodule Claudio.Messages.Request do
   @spec enable_thinking(t(), map()) :: t()
   def enable_thinking(%__MODULE__{} = request, config) when is_map(config) do
     %{request | thinking: config}
+  end
+
+  def enable_thinking(%__MODULE__{}, other) do
+    raise ArgumentError,
+          ~s(Request.enable_thinking/2: config must be a map such as %{"type" => "adaptive"}; ) <>
+            "got #{inspect(other)}. For adaptive thinking with options use enable_adaptive_thinking/2"
   end
 
   @thinking_displays [:summarized, :omitted, :updates]

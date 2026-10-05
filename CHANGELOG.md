@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Builder functions raise `ArgumentError` naming the fix for common mistakes
+  (`add_message(:system, …)`, string roles, `nil` content, out-of-range sampling values, string
+  `max_tokens` / `tool_choice`, keyword tools / thinking configs) instead of
+  `FunctionClauseError`. `set_max_tokens/2` now also rejects non-positive integers.
 - Cache helpers (`set_system_with_cache/3`, `add_message_with_cache/4`, `add_tool_with_cache/3`,
   `set_cache_control/2`) raise on unknown options and on a `ttl` other than `"5m"`/`"1h"`;
   `add_message_with_document/5` and `search_result_block/4` raise on unknown options

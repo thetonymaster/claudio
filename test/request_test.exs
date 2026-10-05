@@ -2232,4 +2232,74 @@ defmodule Claudio.Messages.RequestTest do
       end
     end
   end
+
+  describe "argument errors name the fix" do
+    setup do: %{r: Request.new("m")}
+
+    test "add_message with :system points to set_system / add_system_message", %{r: r} do
+      assert_raise ArgumentError, ~r/set_system\/2.*add_system_message\/3/s, fn ->
+        Request.add_message(r, :system, "x")
+      end
+    end
+
+    test "add_message with a string role", %{r: r} do
+      assert_raise ArgumentError, ~r/role must be :user or :assistant; got "user"/, fn ->
+        Request.add_message(r, "user", "x")
+      end
+    end
+
+    test "add_message with nil content", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/content must be a string or a list of content blocks; got nil/,
+                   fn -> Request.add_message(r, :user, nil) end
+    end
+
+    test "set_temperature out of range", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/set_temperature\/2: temperature must be a number between 0.0 and 1.0; got 1.5/,
+                   fn -> Request.set_temperature(r, 1.5) end
+    end
+
+    test "set_top_p out of range", %{r: r} do
+      assert_raise ArgumentError, ~r/set_top_p\/2/, fn -> Request.set_top_p(r, 2) end
+    end
+
+    test "set_top_k non-positive", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/set_top_k\/2: top_k must be a positive integer; got 0/,
+                   fn -> Request.set_top_k(r, 0) end
+    end
+
+    test "set_max_tokens with a string", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/set_max_tokens\/2: max_tokens must be a positive integer; got "1024"/,
+                   fn -> Request.set_max_tokens(r, "1024") end
+    end
+
+    test "set_max_tokens with zero", %{r: r} do
+      assert_raise ArgumentError, ~r/positive integer; got 0/, fn ->
+        Request.set_max_tokens(r, 0)
+      end
+    end
+
+    test "set_tool_choice with a string", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/set_tool_choice\/2: expected :auto, :any, :none or \{:tool, name\}; got "auto"/,
+                   fn -> Request.set_tool_choice(r, "auto") end
+    end
+
+    test "add_tool with a keyword list points to Tools.define_tool/3", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/add_tool\/3: tool must be a map.*Tools.define_tool\/3/s,
+                   fn ->
+                     Request.add_tool(r, name: "x")
+                   end
+    end
+
+    test "enable_thinking with a keyword list points to enable_adaptive_thinking/2", %{r: r} do
+      assert_raise ArgumentError,
+                   ~r/enable_thinking\/2: config must be a map.*enable_adaptive_thinking\/2/s,
+                   fn -> Request.enable_thinking(r, budget_tokens: 1024) end
+    end
+  end
 end

@@ -112,6 +112,12 @@ defmodule Claudio.Tools do
     }
   end
 
+  def define_tool(name, description, input_schema) do
+    raise ArgumentError,
+          "Tools.define_tool/3: expected name and description strings and an input_schema map; " <>
+            "got #{inspect(name)}, #{inspect(description)}, #{inspect(input_schema)}"
+  end
+
   @doc """
   Extracts tool use requests from a response.
 
