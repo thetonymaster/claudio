@@ -48,8 +48,8 @@ defmodule Claudio.ReleaseAuditIntegrationTest do
       |> Request.add_message(:assistant, replay)
       |> Request.add_message(:user, "Say ok.")
       |> Request.set_max_tokens(16)
-      |> Request.add_beta("mcp-client-2025-11-20")
 
+    # No add_beta: add_message/3 declares mcp-client-2025-11-20 for the replayed MCP blocks.
     assert {:ok, %Response{}} = Messages.create(client, request)
   end
 

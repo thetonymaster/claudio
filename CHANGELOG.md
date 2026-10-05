@@ -292,6 +292,9 @@ Everything here can break a 0.6 caller; the details are in the sections below.
   and cache counts were lost).
 - `Response.to_assistant_content/1` no longer sends `server_name` on a replayed
   `mcp_tool_result` — the API rejects it, so replaying any MCP-connector turn failed.
+- `Request.add_message/3` declares `mcp-client-2025-11-20` when its content holds an
+  `mcp_tool_use` or `mcp_tool_result` block; replaying an MCP call on a turn without
+  `add_mcp_server/2` was a 400.
 - `Request.add_message/3` with parsed `Response` content (e.g. `response.content`) sends each
   block in API shape (keeping a `cache_control` you added); it sent `"caller": null`, which the
   API rejects.

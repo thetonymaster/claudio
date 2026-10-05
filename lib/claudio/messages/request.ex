@@ -105,6 +105,9 @@ defmodule Claudio.Messages.Request do
   # Advisor tool; also needed to replay advisor blocks (probed 2026-09-26).
   @advisor_beta "advisor-tool-2026-03-01"
 
+  # MCP connector; also needed to replay mcp_tool_use / mcp_tool_result blocks (probed 2026-10-05).
+  @mcp_beta "mcp-client-2025-11-20"
+
   @doc """
   Creates a new request builder with the specified model.
 
@@ -136,6 +139,9 @@ defmodule Claudio.Messages.Request do
 
   Advisor blocks (`advisor_tool_result`, or a `server_tool_use` named `"advisor"`) declare
   `advisor-tool-2026-03-01`.
+
+  MCP blocks (`mcp_tool_use`, `mcp_tool_result`) declare `mcp-client-2025-11-20`, so a
+  history holding an MCP call can be replayed on a turn without `add_mcp_server/2`.
 
   ## Examples
 
@@ -179,7 +185,10 @@ defmodule Claudio.Messages.Request do
     request = add_compaction_replay_betas(request, content)
 
     # Replaying advisor blocks needs the advisor beta even without the tool (probed 2026-09-26).
-    if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
+    request = if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
+
+    # Replaying MCP blocks needs the connector beta even without a server (probed 2026-10-05).
+    if has_mcp_block?(content), do: add_beta(request, @mcp_beta), else: request
   end
 
   def add_message(%__MODULE__{}, :system, _content) do
@@ -237,6 +246,21 @@ defmodule Claudio.Messages.Request do
   end
 
   defp advisor_block?(_block), do: false
+
+  defp has_mcp_block?(content) when is_list(content) do
+    Enum.any?(content, fn
+      %{"type" => type} ->
+        type in ["mcp_tool_use", "mcp_tool_result", :mcp_tool_use, :mcp_tool_result]
+
+      %{type: type} ->
+        type in ["mcp_tool_use", "mcp_tool_result", :mcp_tool_use, :mcp_tool_result]
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_mcp_block?(_content), do: false
 
   defp edit_type(%{"type" => type}), do: to_string(type)
   defp edit_type(%{type: type}), do: to_string(type)
@@ -991,7 +1015,7 @@ defmodule Claudio.Messages.Request do
           request
       end
 
-    add_beta(request, "mcp-client-2025-11-20")
+    add_beta(request, @mcp_beta)
   end
 
   defp has_mcp_toolset?(tools, server_name) do

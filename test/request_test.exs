@@ -135,6 +135,33 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_message/3 with MCP blocks" do
+    # Live probe 2026-10-05: replaying mcp_tool_use without the beta is a 400
+    # ("Input tag 'mcp_tool_use' ... does not match any of the expected tags").
+    test "an mcp_tool_use or mcp_tool_result block declares the MCP connector beta" do
+      for block <- [
+            %{"type" => "mcp_tool_use", "id" => "m", "name" => "x", "server_name" => "s"},
+            %{"type" => "mcp_tool_result", "tool_use_id" => "m", "content" => []},
+            %{type: :mcp_tool_use, id: "m", name: "x", server_name: "s", input: %{}},
+            %{type: :mcp_tool_result, tool_use_id: "m", content: [], is_error: false}
+          ] do
+        request = Request.new("m") |> Request.add_message(:assistant, [block])
+        assert Request.required_betas(request) == ["mcp-client-2025-11-20"]
+      end
+    end
+
+    test "is declared once alongside add_mcp_server/2" do
+      block = %{"type" => "mcp_tool_use", "id" => "m", "name" => "x", "server_name" => "s"}
+
+      request =
+        Request.new("m")
+        |> Request.add_mcp_server(%{"type" => "url", "url" => "https://x", "name" => "s"})
+        |> Request.add_message(:assistant, [block])
+
+      assert Request.required_betas(request) == ["mcp-client-2025-11-20"]
+    end
+  end
+
   describe "set_system/2" do
     test "sets system prompt" do
       request =
