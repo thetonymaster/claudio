@@ -131,3 +131,22 @@ jobs:
 
     - name: Run unit tests
       run: mix test --exclude integration
+
+  # Runs the OpenTelemetry handler from guides/telemetry.md against stubbed calls.
+  otel-guide:
+    name: OTel guide handler
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        elixir-version: '1.19'
+        otp-version: '28'
+
+    - name: Check the OTel guide handler
+      run: elixir scripts/check_otel_guide.exs

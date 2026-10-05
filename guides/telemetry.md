@@ -62,7 +62,7 @@ The span covers the whole consumption: its clock starts when enumeration begins,
 | `:error` | upstream ended without `message_stop` | `:incomplete_stream` |
 | `:halted` | the consumer stopped early | absent |
 
-Three caveats. A suspended enumeration that is dropped without being halted emits `:start` but never `:stop` (it is a protocol limit). An exception raised mid-enumeration (by the consumer, or by the upstream body, for example a transport failure) also reports `:halted`, because the end-of-stream callback cannot tell it from an early stop. And a parse error ends the span while enumeration continues, so tokens and `stop_reason` seen later are not in that span.
+Four caveats. A suspended enumeration that is dropped without being halted emits `:start` but never `:stop` (it is a protocol limit). An exception raised mid-enumeration (by the consumer, or by the upstream body, for example a transport failure) also reports `:halted`, because the end-of-stream callback cannot tell it from an early stop. And a parse error ends the span while enumeration continues, so tokens and `stop_reason` seen later are not in that span. And a streaming response that is never consumed emits the `create` events (a `:stop` with `stream: true`) but no stream span, so the OpenTelemetry handler below records no span for it.
 
 ### `[:claudio, :http, :request]`
 
@@ -130,6 +130,7 @@ Each attempt is an `[:claudio, :http, :request]` start/stop pair with `attempt` 
 
 The OpenTelemetry GenAI semantic conventions are in *Development* status and may change. The attribute names below were checked on 2026-10-01 against `github.com/open-telemetry/semantic-conventions-genai`, `docs/gen-ai/anthropic.md`. The handler below compiled without warnings against `opentelemetry_api` 1.5.0, `opentelemetry_telemetry` 1.1.2 and `telemetry` 1.4.2 (checked 2026-10-01).
 
+<!-- otel-handler:start -->
 ```elixir
 defmodule MyApp.ClaudioOtel do
   @moduledoc "Bridges Claudio telemetry to OpenTelemetry GenAI spans."
@@ -160,6 +161,10 @@ defmodule MyApp.ClaudioOtel do
 
   # A raise during a streaming create (no span was started for it) is recorded the same way.
   def handle_event([:claudio, :messages, :create, :exception], %{duration: duration}, %{stream: true} = meta, _config) do
+    # :telemetry.span reports Erlang errors raw (`:function_clause`, `:badarg`, ...): normalise them
+    # to exception structs. :exit and :throw reasons are left as they are.
+    meta = %{meta | reason: Exception.normalize(meta.kind, meta.reason, meta.stacktrace)}
+
     span =
       Tracer.start_span(span_name(meta), %{
         kind: :client,
@@ -194,6 +199,10 @@ defmodule MyApp.ClaudioOtel do
   end
 
   def handle_event([:claudio, :messages, :create, :exception], _measurements, meta, _config) do
+    # :telemetry.span reports Erlang errors raw (`:function_clause`, `:badarg`, ...): normalise them
+    # to exception structs. :exit and :throw reasons are left as they are.
+    meta = %{meta | reason: Exception.normalize(meta.kind, meta.reason, meta.stacktrace)}
+
     ctx = OpentelemetryTelemetry.set_current_telemetry_span(@tracer_id, meta)
     Tracer.set_attribute("error.type", exception_type(meta))
     # `reason` and `stacktrace` can include request or response data (for example the arguments
@@ -261,6 +270,7 @@ defmodule MyApp.ClaudioOtel do
   defp compact(map), do: map |> Enum.reject(fn {_k, v} -> is_nil(v) end) |> Map.new()
 end
 ```
+<!-- otel-handler:end -->
 
 The handler skips the `create` span of a streaming call, except when it fails. A failed streaming `create` (a `:stop` with `status: :error`, or a `:exception`) is recorded as one error span, back-dated by the event's `duration`; for a `:exception` the span also records the exception. That span is started after the call has returned, so its parent is whatever OpenTelemetry context is current in the calling process: a root span unless the caller has a span open. That is expected, and it nests under the caller's span when there is one.
 
@@ -269,3 +279,24 @@ An unlinked stream (one you started from `response.body`) has no `request_model`
 `gen_ai.request.stream` is set (to `true`) only for streaming requests, as the conventions require; it is absent otherwise.
 
 HTTP client spans come from `OpentelemetryReq.attach(client, propagate_trace_headers: true)` on the client returned by `Claudio.Client.new/2`; Claudio's `[:claudio, :http, :request]` events are for metrics and logs. Finch's streaming path (`into: :self`) runs the request in a linked process, so check that HTTP spans and trace headers appear for streaming calls in your setup.
+
+### Context propagation
+
+Spans start in the calling process. When you call Claudio inside a `Task` (or any other process), the OpenTelemetry parent context is not carried over, so the call's spans become root spans. Start the task with `OpentelemetryProcessPropagator.Task` (from `opentelemetry_process_propagator`), or capture the context with `OpenTelemetry.Ctx.get_current/0` before spawning and pass it to `OpenTelemetry.Ctx.attach/1` inside the new process.
+
+### Trace headers to the API
+
+Without `OpentelemetryReq`, a Req request step can add the `traceparent` header for the current context:
+
+```elixir
+client =
+  Claudio.Client.new(%{token: token})
+  |> Req.Request.append_request_steps(
+    traceparent: fn request ->
+      headers = :otel_propagator_text_map.inject([])
+      Enum.reduce(headers, request, fn {k, v}, req -> Req.Request.put_header(req, k, v) end)
+    end
+  )
+```
+
+The step runs in the calling process, so for a non-streaming call with the handler above the header carries the `create` span.

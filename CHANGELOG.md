@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filters (`statuses: [...]` → `statuses[]=…`, `created_at: [gte: dt]` → `created_at[gte]=…`).
   `Claudio.ManagedAgents.stream/2` walks cursor-paged lists lazily. Raw-map returns, like
   `Claudio.Skills`.
+- **Telemetry guide (docs):** context propagation into `Task`s and a `traceparent` request
+  step for trace headers to the API.
 
 ### Changed
 
@@ -124,6 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Draining a streaming error body now receives only the messages of its own response (a selective
   receive on the body's ref). Unrelated messages in the caller's mailbox are no longer taken off
   and re-sent to the end, so their order is untouched.
+- Telemetry guide: the OpenTelemetry handler records Erlang errors (`:function_clause`, …) as
+  exceptions; it is now checked in CI (`scripts/check_otel_guide.exs`).
 
 ### Security
 
