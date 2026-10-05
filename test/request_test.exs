@@ -1567,7 +1567,7 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
-  describe "disable_thinking/1" do
+  describe "disable_thinking/2" do
     test "emits type disabled" do
       request = Request.new("claude-opus-5") |> Request.disable_thinking()
       assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
@@ -1580,6 +1580,28 @@ defmodule Claudio.Messages.RequestTest do
         |> Request.disable_thinking()
 
       assert Request.to_map(request)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "mode: :between_tools sends between_tools" do
+      r = Request.new("claude-sonnet-5-5") |> Request.disable_thinking(mode: :between_tools)
+      assert Request.to_map(r)["thinking"] == %{"type" => "between_tools"}
+    end
+
+    test "mode: :disabled is the explicit default" do
+      r = Request.new("m") |> Request.disable_thinking(mode: :disabled)
+      assert Request.to_map(r)["thinking"] == %{"type" => "disabled"}
+    end
+
+    test "rejects an unknown mode" do
+      assert_raise ArgumentError,
+                   ~r/disable_thinking\/2 :mode must be :disabled or :between_tools; got :off/,
+                   fn -> Request.disable_thinking(Request.new("m"), mode: :off) end
+    end
+
+    test "rejects an unknown option" do
+      assert_raise ArgumentError, ~r/unknown option :foo/, fn ->
+        Request.disable_thinking(Request.new("m"), foo: 1)
+      end
     end
   end
 

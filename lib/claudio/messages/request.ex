@@ -700,8 +700,8 @@ defmodule Claudio.Messages.Request do
       |> Request.set_tool_choice({:tool, "get_weather"})
       |> Request.set_tool_choice(:none)
 
-  `:any` and `{:tool, name}` return 400 on Claude Fable 5.1, Mythos 5.1 and
-  Opus 5.5. There, use `:auto` with a prompt instruction naming the tool,
+  `:any` and `{:tool, name}` return 400 on Claude Fable 5.1, Mythos 5.1,
+  Opus 5.5 and Sonnet 5.5. There, use `:auto` with a prompt instruction naming the tool,
   `add_strict_tool/2` for schema-valid arguments, or `set_output_format/2`
   when the forced call only existed to get JSON back.
   """
@@ -751,7 +751,7 @@ defmodule Claudio.Messages.Request do
   `%{"type" => "enabled", "budget_tokens" => n}` returns 400 on Claude Opus 4.7+,
   Opus 5.x, Sonnet 5 and Fable models; use `"adaptive"` there. This is the raw
   setter (replaces `thinking`); prefer `enable_adaptive_thinking/2` /
-  `disable_thinking/1`, and `set_effort/2` to steer how much the model thinks.
+  `disable_thinking/2`, and `set_effort/2` to steer how much the model thinks.
   """
   @spec enable_thinking(t(), map()) :: t()
   def enable_thinking(%__MODULE__{} = request, config) when is_map(config) do
@@ -885,12 +885,36 @@ defmodule Claudio.Messages.Request do
   end
 
   @doc """
-  Turns thinking off (`thinking: %{"type" => "disabled"}`), replacing any previous
-  `thinking` config. Models that always think reject this with a 400.
+  Turns up-front thinking off, replacing any previous `thinking` config.
+
+  ## Options
+
+  - `:mode` — `:disabled` (default) sends `%{"type" => "disabled"}`. `:between_tools`
+    sends `%{"type" => "between_tools"}`: no thinking before the first response, but
+    thinking between tool calls. Claude Sonnet 5.5 uses `:between_tools` as its off
+    switch (at `high` effort or below).
+
+  Claude Opus 5.5 can't disable thinking: `"disabled"` returns a 400 there. Omit
+  `thinking` and use `set_effort/2` instead.
   """
-  @spec disable_thinking(t()) :: t()
-  def disable_thinking(%__MODULE__{} = request) do
-    %{request | thinking: %{"type" => "disabled"}}
+  @spec disable_thinking(t(), keyword()) :: t()
+  def disable_thinking(%__MODULE__{} = request, opts \\ []) do
+    opts = Claudio.Options.validate!(opts, [:mode], "Request.disable_thinking/2")
+
+    type =
+      case Keyword.get(opts, :mode, :disabled) do
+        :disabled ->
+          "disabled"
+
+        :between_tools ->
+          "between_tools"
+
+        other ->
+          raise ArgumentError,
+                "Request.disable_thinking/2 :mode must be :disabled or :between_tools; got #{inspect(other)}"
+      end
+
+    %{request | thinking: %{"type" => type}}
   end
 
   @doc """

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Request.disable_thinking/2` `mode: :between_tools`** — Claude Sonnet 5.5's way to turn off
+  up-front thinking (`thinking: {"type": "between_tools"}`). `disable_thinking/1` still sends
+  `disabled`. The `set_tool_choice/2` docs now list Sonnet 5.5 among models that 400 on forced tool use.
 - **`Files.upload/3` accepts `expires_in_seconds:`** (sent as a multipart form field; the API
   documents 3600..7776000). `upload/3` now also rejects unknown options.
 - **A2A HTTP transport `:headers` option**: extra request headers (`[{name, value}]`, e.g. W3C
