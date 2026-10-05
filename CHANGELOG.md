@@ -82,6 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retries honour `Retry-After` on 529 (overloaded) as well as 429/503, and also when
+  `retry: [delay: …]` is set (previously a configured delay overrode the server's Retry-After).
 - `Claudio.Tools.tool_definition` and `tool_result` typespecs described atom-keyed maps;
   `define_tool/3` and `create_tool_result/4` return string-keyed maps. The types now match
   (documentation-only; no runtime change).

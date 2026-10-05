@@ -43,9 +43,10 @@ defmodule Claudio.Client do
   (overloaded) and connection timeouts/refusals — on every method, including the POSTs
   the Messages API uses:
 
-    * `retry: true` — 3 retries; honours Retry-After on 429/503, else backs off 1s, 2s, 4s
+    * `retry: true` — 3 retries; honours Retry-After (integer seconds) on 429, 503 and 529, else backs off 1s, 2s, 4s
     * `retry: [delay: 1000, max_retries: 3, max_delay: 10_000]` — delay doubles per
-      attempt, capped at `max_delay` (all in ms)
+      attempt, capped at `max_delay` (all in ms); Retry-After still wins when the server
+      sends it
     * `retry: false` — no retries at all (not even Req's GET/HEAD default)
 
   Without `retry:` (unset or `nil` at every level), Req's default applies: only GET/HEAD
@@ -222,16 +223,47 @@ defmodule Claudio.Client do
   defp req_retry_options(:disabled), do: [retry: false]
 
   defp req_retry_options(opts) do
-    [retry: &retryable?/2, max_retries: Keyword.get(opts, :max_retries, 3)] ++
-      case Keyword.get(opts, :delay) do
-        # Unset: Req honours Retry-After on 429/503, else backs off 1s, 2s, 4s, ...
-        nil ->
-          []
+    [
+      retry: fn request, response_or_exception ->
+        retry_decision(request, response_or_exception, opts)
+      end,
+      max_retries: Keyword.get(opts, :max_retries, 3)
+    ]
+  end
 
-        delay ->
-          max_delay = Keyword.get(opts, :max_delay, 10_000)
-          [retry_delay: fn attempt -> min(delay * Integer.pow(2, attempt), max_delay) end]
-      end
+  @retry_after_statuses [429, 503, 529]
+
+  # Req only reads Retry-After on 429/503 and ignores it when `:retry_delay` is set, so
+  # Claudio computes every delay itself: the server's Retry-After (integer seconds) on
+  # 429/503/529, else the backoff. `:retry_delay` must stay unset or Req raises.
+  defp retry_decision(request, response_or_exception, opts) do
+    if retryable?(request, response_or_exception) do
+      attempt = Req.Request.get_private(request, :req_retry_count, 0)
+      {:delay, retry_after_ms(response_or_exception) || backoff_ms(attempt, opts)}
+    else
+      false
+    end
+  end
+
+  # HTTP-date or unparseable values fall back to the backoff.
+  defp retry_after_ms(%Req.Response{status: status} = response)
+       when status in @retry_after_statuses do
+    with [value | _] <- Req.Response.get_header(response, "retry-after"),
+         {seconds, ""} when seconds >= 0 <- Integer.parse(String.trim(value)) do
+      seconds * 1000
+    else
+      _ -> nil
+    end
+  end
+
+  defp retry_after_ms(_other), do: nil
+
+  # Unset `delay:` mirrors Req's default schedule (1s, 2s, 4s, ...) minus its jitter.
+  defp backoff_ms(attempt, opts) do
+    case Keyword.get(opts, :delay) do
+      nil -> 1000 * Integer.pow(2, attempt)
+      delay -> min(delay * Integer.pow(2, attempt), Keyword.get(opts, :max_delay, 10_000))
+    end
   end
 
   @retryable_statuses [408, 429, 500, 502, 503, 504, 529]

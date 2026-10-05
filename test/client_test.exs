@@ -1,3 +1,34 @@
+defmodule Claudio.ClientTest.RetryProbeAdapter do
+  @moduledoc false
+  # Answers `status`/`headers` first, then a 200; records each call's monotonic time.
+  def run(request) do
+    {times, status, headers} = Req.Request.get_private(request, :retry_probe)
+    Agent.update(times, &[System.monotonic_time(:millisecond) | &1])
+
+    if length(Agent.get(times, & &1)) == 1 do
+      {request, Req.Response.new(status: status, headers: headers, body: "")}
+    else
+      body =
+        Jason.encode!(%{
+          "id" => "m",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "x",
+          "content" => [],
+          "stop_reason" => "end_turn",
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        })
+
+      {request,
+       Req.Response.new(
+         status: 200,
+         headers: [{"content-type", "application/json"}],
+         body: body
+       )}
+    end
+  end
+end
+
 defmodule Claudio.ClientTest do
   # Not async: these tests change global application env that every client reads.
   use ExUnit.Case, async: false
@@ -249,18 +280,7 @@ defmodule Claudio.ClientTest do
         else
           conn
           |> Plug.Conn.put_resp_content_type("application/json")
-          |> Plug.Conn.resp(
-            200,
-            Jason.encode!(%{
-              "id" => "m",
-              "type" => "message",
-              "role" => "assistant",
-              "model" => "x",
-              "content" => [],
-              "stop_reason" => "end_turn",
-              "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-            })
-          )
+          |> Plug.Conn.resp(200, Jason.encode!(ok_message_body()))
         end
       end)
 
@@ -291,6 +311,61 @@ defmodule Claudio.ClientTest do
       refute Claudio.Client.retryable?(nil, %Req.Response{status: 400})
       assert Claudio.Client.retryable?(nil, %Req.TransportError{reason: :timeout})
     end
+  end
+
+  describe "Retry-After" do
+    @tag :capture_log
+    test "529 with retry-after: 1 waits ~1s even with a small configured delay" do
+      gap = measure_retry_gap(529, [{"retry-after", "1"}], retry: [delay: 10, max_retries: 1])
+      assert gap >= 950
+    end
+
+    @tag :capture_log
+    test "429 retry-after wins over delay:" do
+      gap = measure_retry_gap(429, [{"retry-after", "1"}], retry: [delay: 10, max_retries: 1])
+      assert gap >= 950
+    end
+
+    @tag :capture_log
+    test "without retry-after the configured delay is used" do
+      gap = measure_retry_gap(503, [], retry: [delay: 10, max_retries: 1])
+      assert gap < 500
+    end
+
+    @tag :capture_log
+    test "an unparseable retry-after falls back to the backoff" do
+      gap = measure_retry_gap(429, [{"retry-after", "soon"}], retry: [delay: 10, max_retries: 1])
+      assert gap < 500
+    end
+  end
+
+  # Serves the first response from a Req adapter rather than Bypass: Plug cannot write a 529
+  # (unknown status), which would silently turn it into a 500.
+  defp measure_retry_gap(status, headers, client_opts) do
+    {:ok, times} = Agent.start_link(fn -> [] end)
+
+    client =
+      Map.new([token: "t", version: "2023-06-01"] ++ client_opts)
+      |> Claudio.Client.new("http://localhost:1/")
+      |> Req.merge(adapter: __MODULE__.RetryProbeAdapter)
+      |> Req.Request.put_private(:retry_probe, {times, status, headers})
+
+    request = Request.new("x") |> Request.add_message(:user, "hi") |> Request.set_max_tokens(8)
+    assert {:ok, _} = Claudio.Messages.create(client, request)
+    [second, first] = Agent.get(times, & &1)
+    second - first
+  end
+
+  defp ok_message_body do
+    %{
+      "id" => "m",
+      "type" => "message",
+      "role" => "assistant",
+      "model" => "x",
+      "content" => [],
+      "stop_reason" => "end_turn",
+      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+    }
   end
 
   describe "re-audit: retry and streaming" do
