@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Request.add_messages/2` adds a list of `{role, content}` messages in one call, in time linear in
+  their number (a loop of `add_message/3` is quadratic). It applies `add_message/3`'s checks,
+  content normalization and replay betas; errors name `add_messages/2`.
+
 ## [0.7.0] - 2026-10-05
 
 ### Upgrading from 0.6

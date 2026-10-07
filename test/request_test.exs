@@ -43,6 +43,81 @@ defmodule Claudio.Messages.RequestTest do
     end
   end
 
+  describe "add_messages/2" do
+    # Every content shape add_message/3 treats specially, in one conversation.
+    @conversation [
+      {:user, "What is the weather?"},
+      {:assistant,
+       [
+         %{"type" => "fallback", "from" => %{"model" => "a"}, "to" => %{"model" => "b"}},
+         %{"type" => "text", "text" => "Checking."}
+       ]},
+      {:user, [%{"type" => "text", "text" => "go on"}]},
+      {:assistant, [%{"type" => "compaction", "content" => "s", "signature" => "sig"}]},
+      {:assistant, [%{"type" => "compaction", "content" => "s"}]},
+      {:assistant, [%{type: :server_tool_use, id: "s", name: "advisor", input: %{}}]},
+      {:assistant,
+       [%{"type" => "mcp_tool_use", "id" => "m", "name" => "x", "server_name" => "s"}]},
+      {:user, [%{type: :text, text: "typed", citations: nil}]}
+    ]
+
+    defp one_by_one(request, messages),
+      do:
+        Enum.reduce(messages, request, fn {role, content}, acc ->
+          Request.add_message(acc, role, content)
+        end)
+
+    test "equals add_message/3 once per message: messages, order and betas" do
+      base =
+        Request.new("m")
+        |> Request.add_message(:user, "earlier")
+        |> Request.add_beta("context-management-2025-06-27")
+
+      assert Request.add_messages(base, @conversation) == one_by_one(base, @conversation)
+
+      assert Request.required_betas(Request.add_messages(base, @conversation)) == [
+               "context-management-2025-06-27",
+               "server-side-fallback-2026-07-01",
+               "compact-2026-09-04",
+               "compact-2026-01-12",
+               "advisor-tool-2026-03-01",
+               "mcp-client-2025-11-20"
+             ]
+    end
+
+    test "an empty list leaves the request as it is" do
+      request = Request.add_message(Request.new("m"), :user, "hi")
+      assert Request.add_messages(request, []) == request
+    end
+
+    test "raises as add_message/3 does, naming add_messages/2" do
+      request = Request.new("m")
+
+      assert_raise ArgumentError,
+                   "Request.add_messages/2: content must be a string or a list of content blocks; got nil",
+                   fn -> Request.add_messages(request, [{:user, "ok"}, {:assistant, nil}]) end
+
+      assert_raise ArgumentError,
+                   "Request.add_messages/2: :system is not a message role. Use set_system/2 for " <>
+                     "the system prompt, or add_system_message/3 for a mid-conversation system message",
+                   fn -> Request.add_messages(request, [{:system, "be terse"}]) end
+
+      assert_raise ArgumentError,
+                   ~s|Request.add_messages/2: role must be :user or :assistant; got "user"|,
+                   fn -> Request.add_messages(request, [{"user", "hi"}]) end
+
+      assert_raise ArgumentError,
+                   "Request.add_messages/2: each message must be a {role, content} tuple",
+                   fn -> Request.add_messages(request, [%{role: :user, content: "hi"}]) end
+    end
+
+    test "add_message/3 keeps its own name in its errors" do
+      assert_raise ArgumentError,
+                   "Request.add_message/3: content must be a string or a list of content blocks; got nil",
+                   fn -> Request.add_message(Request.new("m"), :user, nil) end
+    end
+  end
+
   describe "add_message/3 with a fallback block" do
     test "declares the fallback beta (the API rejects a replayed fallback block without it)" do
       for block <- [
