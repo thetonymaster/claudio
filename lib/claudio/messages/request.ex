@@ -161,19 +161,58 @@ defmodule Claudio.Messages.Request do
       ])
   """
   @spec add_message(t(), role(), content()) :: t()
-  def add_message(%__MODULE__{}, role, nil) when role in [:user, :assistant] do
-    raise ArgumentError,
-          "Request.add_message/3: content must be a string or a list of content blocks; got nil"
+  def add_message(%__MODULE__{messages: messages} = request, role, content) do
+    {message, request} = build_message(request, role, content, "add_message/3")
+    %{request | messages: messages ++ [message]}
   end
 
-  def add_message(%__MODULE__{messages: messages} = request, role, content)
-      when role in [:user, :assistant] do
+  @doc """
+  Adds `messages`, a list of `{role, content}` tuples, to the conversation in order.
+
+  The result equals calling `add_message/3` once per element: the same checks (each
+  raises `ArgumentError` naming `add_messages/2`), the same content normalization and
+  the same replay betas, declared in the same order. It takes time linear in the number
+  of messages, where a loop of `add_message/3` is quadratic (each call appends to the
+  list), so build a long conversation with it.
+
+  ## Example
+
+      Request.new("claude-opus-5-5")
+      |> Request.add_messages([
+        {:user, "What is the weather in Paris?"},
+        {:assistant, "Sunny."},
+        {:user, "And in Lyon?"}
+      ])
+  """
+  @spec add_messages(t(), [{role(), content()}]) :: t()
+  def add_messages(%__MODULE__{messages: messages} = request, new_messages)
+      when is_list(new_messages) do
+    {built, request} =
+      Enum.map_reduce(new_messages, request, fn
+        {role, content}, acc ->
+          build_message(acc, role, content, "add_messages/2")
+
+        _other, _acc ->
+          raise ArgumentError,
+                "Request.add_messages/2: each message must be a {role, content} tuple"
+      end)
+
+    %{request | messages: messages ++ built}
+  end
+
+  # One message in the API's shape, and the request with the betas its content needs.
+  # `fun` names the public function in error messages.
+  defp build_message(%__MODULE__{}, role, nil, fun) when role in [:user, :assistant] do
+    raise ArgumentError,
+          "Request.#{fun}: content must be a string or a list of content blocks; got nil"
+  end
+
+  defp build_message(%__MODULE__{} = request, role, content, _fun)
+       when role in [:user, :assistant] do
     message = %{
       "role" => to_string(role),
       "content" => normalize_content(content)
     }
-
-    request = %{request | messages: messages ++ [message]}
 
     # Replaying a `fallback` block (Response.to_assistant_content/1) needs the beta even
     # on a turn that does not set fallbacks (400 without it, probed 2026-09-25).
@@ -188,18 +227,20 @@ defmodule Claudio.Messages.Request do
     request = if has_advisor_block?(content), do: add_beta(request, @advisor_beta), else: request
 
     # Replaying MCP blocks needs the connector beta even without a server (probed 2026-10-05).
-    if has_mcp_block?(content), do: add_beta(request, @mcp_beta), else: request
+    request = if has_mcp_block?(content), do: add_beta(request, @mcp_beta), else: request
+
+    {message, request}
   end
 
-  def add_message(%__MODULE__{}, :system, _content) do
+  defp build_message(%__MODULE__{}, :system, _content, fun) do
     raise ArgumentError,
-          "Request.add_message/3: :system is not a message role. Use set_system/2 for the " <>
+          "Request.#{fun}: :system is not a message role. Use set_system/2 for the " <>
             "system prompt, or add_system_message/3 for a mid-conversation system message"
   end
 
-  def add_message(%__MODULE__{}, role, _content) do
+  defp build_message(%__MODULE__{}, role, _content, fun) do
     raise ArgumentError,
-          "Request.add_message/3: role must be :user or :assistant; got #{inspect(role)}"
+          "Request.#{fun}: role must be :user or :assistant; got #{inspect(role)}"
   end
 
   defp has_fallback_block?(content) when is_list(content) do
