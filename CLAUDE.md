@@ -135,7 +135,7 @@ The `Claudio.Messages.Response` module parses API responses into structured data
 - Parses content blocks (text, thinking, tool_use, tool_result, mcp_tool_use, mcp_tool_result, server_tool_use, web_search_tool_result, fallback, compaction, web_fetch_tool_result, code_execution_tool_result, bash_code_execution_tool_result, text_editor_code_execution_tool_result, tool_search_tool_result, advisor_tool_result, container_upload)
 - Converts stop_reason strings to atoms (:end_turn, :max_tokens, :tool_use, etc.)
 - **Tracks cache metrics** (cache_creation_input_tokens, cache_read_input_tokens)
-- **Preserves citations** on `text` blocks (the raw citation maps — `char_location`, `page_location`, `content_block_location`, `search_result_location`, `web_search_result_location` — kept verbatim for reading; not replayed by `to_assistant_content/1`)
+- **Preserves citations** on `text` blocks (the raw citation maps — `char_location`, `page_location`, `content_block_location`, `search_result_location`, `web_search_result_location` — kept verbatim; `to_assistant_content/1` replays a non-empty list)
 - Provides helper methods:
   - `get_text/1`: Extracts all text content
   - `get_tool_uses/1`: Extracts tool use requests

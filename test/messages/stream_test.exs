@@ -380,6 +380,15 @@ defmodule Claudio.Messages.StreamTest do
 
       assert %{"type" => "char_location", "cited_text" => "Paris is the capital"} = first_citation
       assert %{"type" => "char_location", "cited_text" => "second source"} = second_citation
+
+      # A streamed cited block replays with its citations, in order (Claudio 0.7.1).
+      assert Response.to_assistant_content(Response.from_map(message)) == [
+               %{
+                 "type" => "text",
+                 "text" => "Paris",
+                 "citations" => [first_citation, second_citation]
+               }
+             ]
     end
   end
 

@@ -350,6 +350,56 @@ defmodule Claudio.Messages.ResponseTest do
                }
              ]
     end
+
+    test "replays a text block's citations" do
+      citation = %{
+        "type" => "char_location",
+        "cited_text" => "The grass is green.",
+        "document_index" => 0,
+        "document_title" => "Example",
+        "start_char_index" => 0,
+        "end_char_index" => 20
+      }
+
+      response =
+        Response.from_map(%{
+          "content" => [
+            %{"type" => "text", "text" => "the grass is green", "citations" => [citation]}
+          ]
+        })
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "text", "text" => "the grass is green", "citations" => [citation]}
+             ]
+    end
+
+    test "a text block without citations, or with an empty list, replays without the key" do
+      response = %Response{
+        content: [
+          %{type: :text, text: "plain"},
+          %{type: :text, text: "empty", citations: []},
+          %{type: :text, text: "nil", citations: nil}
+        ]
+      }
+
+      assert Response.to_assistant_content(response) == [
+               %{"type" => "text", "text" => "plain"},
+               %{"type" => "text", "text" => "empty"},
+               %{"type" => "text", "text" => "nil"}
+             ]
+    end
+
+    test "a typed text block passed to add_message/3 keeps its citations" do
+      citation = %{"type" => "char_location", "cited_text" => "x", "document_index" => 0}
+
+      payload =
+        Request.new("claude-x")
+        |> Request.add_message(:assistant, [%{type: :text, text: "x", citations: [citation]}])
+        |> Request.to_map()
+
+      assert %{"messages" => [%{"content" => [block]}]} = payload
+      assert block == %{"type" => "text", "text" => "x", "citations" => [citation]}
+    end
   end
 
   describe "to_assistant_content/1 round-trip into a request payload" do
