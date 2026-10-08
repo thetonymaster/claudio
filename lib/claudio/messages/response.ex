@@ -427,9 +427,10 @@ defmodule Claudio.Messages.Response do
       request
       |> Request.add_message(:assistant, Response.to_assistant_content(response))
 
-  Emits string-keyed blocks that preserve `signature` (thinking) and `data`
-  (redacted_thinking) — both required by the API when continuing an
-  extended-thinking + tool-use conversation. Unknown block types are passed
+  Emits string-keyed blocks that preserve `signature` (thinking), `data`
+  (redacted_thinking) and a text block's `citations` — the API needs the first two
+  when continuing an extended-thinking + tool-use conversation, and preserved
+  thinking binds the turn as it was returned. Unknown block types are passed
   through unchanged (coverage grows in later specs).
 
   After a server-side fallback (`Request.set_fallbacks/2`) it applies the API's
@@ -652,8 +653,14 @@ defmodule Claudio.Messages.Response do
     %{type: :fallback, from: from, to: to, trigger: trigger, raw: raw}
   end
 
-  defp block_to_api(%{type: :text, text: text}) do
-    %{"type" => "text", "text" => text}
+  # A text block's citations go back with it: the API accepts them on an assistant
+  # text block, and preserved thinking binds the turn as it was returned. An absent,
+  # nil or empty list sends no key (the API's own text blocks omit it).
+  defp block_to_api(%{type: :text, text: text} = block) do
+    case block[:citations] do
+      [_ | _] = citations -> %{"type" => "text", "text" => text, "citations" => citations}
+      _none -> %{"type" => "text", "text" => text}
+    end
   end
 
   defp block_to_api(%{type: :thinking, thinking: thinking} = block) do
