@@ -716,7 +716,8 @@ backward-compatible — no breaking changes.
 - Async tests where possible for performance
 - Comprehensive test coverage of new functionality
 
-[Unreleased]: https://github.com/thetonymaster/claudio/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/thetonymaster/claudio/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/thetonymaster/claudio/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/thetonymaster/claudio/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thetonymaster/claudio/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thetonymaster/claudio/compare/v0.4.0...v0.5.0
