@@ -5,13 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.1]
 
 ### Added
 
 - `Request.add_messages/2` adds a list of `{role, content}` messages in one call, in time linear in
   their number (a loop of `add_message/3` is quadratic). It applies `add_message/3`'s checks,
   content normalization and replay betas; errors name `add_messages/2`.
+
+### Fixed
+
+- `Response.to_assistant_content/1` replays a text block's `citations`, and `Request.add_message/3`
+  sends them for a typed text block. They were parsed but dropped on replay, so a replayed cited turn
+  differed from the one the API returned.
 
 ## [0.7.0] - 2026-10-05
 
